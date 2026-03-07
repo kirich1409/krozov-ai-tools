@@ -4,6 +4,7 @@ import { z } from "zod";
 import { MavenCentralClient } from "./maven/client.js";
 import { getLatestVersionHandler } from "./tools/get-latest-version.js";
 import { checkVersionExistsHandler } from "./tools/check-version-exists.js";
+import { checkMultipleDependenciesHandler } from "./tools/check-multiple-dependencies.js";
 
 const server = new McpServer({
   name: "maven-central-mcp",
@@ -39,6 +40,21 @@ server.tool(
   },
   async (params) => {
     const result = await checkVersionExistsHandler(client, params);
+    return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+  },
+);
+
+server.tool(
+  "check_multiple_dependencies",
+  "Bulk lookup of latest versions for a list of Maven dependencies",
+  {
+    dependencies: z.array(z.object({
+      groupId: z.string().describe("Maven group ID"),
+      artifactId: z.string().describe("Maven artifact ID"),
+    })).describe("List of dependencies to check"),
+  },
+  async (params) => {
+    const result = await checkMultipleDependenciesHandler(client, params);
     return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
   },
 );
