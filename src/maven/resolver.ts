@@ -57,12 +57,17 @@ export async function resolveAll(
     }
   }
 
+  // Pick the most recent latest/release across all repos
+  const allLatest = successful.map((m) => m.latest).filter(Boolean) as string[];
+  const allRelease = successful.map((m) => m.release).filter(Boolean) as string[];
+  const lastVersion = orderedVersions[orderedVersions.length - 1];
+
   return {
     groupId,
     artifactId,
     versions: orderedVersions,
-    latest: successful[0].latest,
-    release: successful[0].release,
+    latest: allLatest.includes(lastVersion) ? lastVersion : allLatest[allLatest.length - 1] ?? lastVersion,
+    release: allRelease.includes(lastVersion) ? lastVersion : allRelease[allRelease.length - 1] ?? lastVersion,
     lastUpdated: successful[0].lastUpdated,
   };
 }

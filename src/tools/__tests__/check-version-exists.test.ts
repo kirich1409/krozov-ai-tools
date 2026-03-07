@@ -39,7 +39,7 @@ describe("checkVersionExistsHandler", () => {
     expect(result.exists).toBe(false);
   });
 
-  it("finds version in second repo", async () => {
+  it("finds version in second repo when first repo fails", async () => {
     const repos = [
       mockRepo("google", null),
       mockRepo("central", ["1.0.0"]),
@@ -51,5 +51,32 @@ describe("checkVersionExistsHandler", () => {
     });
     expect(result.exists).toBe(true);
     expect(result.repository).toBe("central");
+  });
+
+  it("finds version in second repo when first repo has artifact but not the version", async () => {
+    const repos = [
+      mockRepo("google", ["1.0.0", "2.0.0"]),
+      mockRepo("central", ["1.0.0", "3.0.0"]),
+    ];
+    const result = await checkVersionExistsHandler(repos, {
+      groupId: "io.ktor",
+      artifactId: "ktor-server-core",
+      version: "3.0.0",
+    });
+    expect(result.exists).toBe(true);
+    expect(result.repository).toBe("central");
+  });
+
+  it("returns false when version not in any repo", async () => {
+    const repos = [
+      mockRepo("google", ["1.0.0"]),
+      mockRepo("central", ["2.0.0"]),
+    ];
+    const result = await checkVersionExistsHandler(repos, {
+      groupId: "io.ktor",
+      artifactId: "ktor-server-core",
+      version: "9.9.9",
+    });
+    expect(result.exists).toBe(false);
   });
 });

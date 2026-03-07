@@ -68,4 +68,34 @@ describe("resolveAll", () => {
   it("returns empty result for empty repos list", async () => {
     await expect(resolveAll([], "io.ktor", "ktor-core")).rejects.toThrow();
   });
+
+  it("picks latest/release from the last version in merged list", async () => {
+    const repo1: MavenRepository = {
+      name: "repo1",
+      url: "https://repo1.example.com",
+      fetchMetadata: vi.fn().mockResolvedValue({
+        groupId: "io.ktor",
+        artifactId: "ktor-core",
+        versions: ["1.0.0", "2.0.0"],
+        latest: "2.0.0",
+        release: "2.0.0",
+      } as MavenMetadata),
+    };
+    const repo2: MavenRepository = {
+      name: "repo2",
+      url: "https://repo2.example.com",
+      fetchMetadata: vi.fn().mockResolvedValue({
+        groupId: "io.ktor",
+        artifactId: "ktor-core",
+        versions: ["2.0.0", "3.0.0"],
+        latest: "3.0.0",
+        release: "3.0.0",
+      } as MavenMetadata),
+    };
+
+    const result = await resolveAll([repo1, repo2], "io.ktor", "ktor-core");
+    expect(result.versions).toEqual(["1.0.0", "2.0.0", "3.0.0"]);
+    expect(result.latest).toBe("3.0.0");
+    expect(result.release).toBe("3.0.0");
+  });
 });

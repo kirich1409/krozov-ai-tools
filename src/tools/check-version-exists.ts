@@ -1,6 +1,5 @@
 import { classifyVersion } from "../version/classify.js";
 import type { MavenRepository } from "../maven/repository.js";
-import { resolveFirst } from "../maven/resolver.js";
 
 export interface CheckVersionExistsInput {
   groupId: string;
@@ -21,25 +20,28 @@ export async function checkVersionExistsHandler(
   repos: MavenRepository[],
   input: CheckVersionExistsInput,
 ): Promise<CheckVersionExistsResult> {
-  const resolved = await resolveFirst(repos, input.groupId, input.artifactId);
-
-  if (!resolved) {
-    return {
-      groupId: input.groupId,
-      artifactId: input.artifactId,
-      version: input.version,
-      exists: false,
-    };
+  for (const repo of repos) {
+    try {
+      const metadata = await repo.fetchMetadata(input.groupId, input.artifactId);
+      if (metadata.versions.includes(input.version)) {
+        return {
+          groupId: input.groupId,
+          artifactId: input.artifactId,
+          version: input.version,
+          exists: true,
+          stability: classifyVersion(input.version),
+          repository: repo.name,
+        };
+      }
+    } catch {
+      continue;
+    }
   }
-
-  const exists = resolved.metadata.versions.includes(input.version);
 
   return {
     groupId: input.groupId,
     artifactId: input.artifactId,
     version: input.version,
-    exists,
-    stability: exists ? classifyVersion(input.version) : undefined,
-    repository: exists ? resolved.repository.name : undefined,
+    exists: false,
   };
 }
