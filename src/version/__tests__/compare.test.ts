@@ -18,6 +18,11 @@ describe("getUpgradeType", () => {
     expect(getUpgradeType("1.0.0", "1.0.0")).toBe("none");
   });
 
+  it("returns none for downgrades", () => {
+    expect(getUpgradeType("2.0.0", "1.5.0")).toBe("none");
+    expect(getUpgradeType("1.5.0", "1.3.9")).toBe("none");
+  });
+
   it("handles two-segment versions", () => {
     expect(getUpgradeType("1.0", "2.0")).toBe("major");
     expect(getUpgradeType("1.0", "1.1")).toBe("minor");

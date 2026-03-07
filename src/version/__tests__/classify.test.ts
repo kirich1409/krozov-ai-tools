@@ -31,6 +31,11 @@ describe("classifyVersion", () => {
     expect(classifyVersion("1.0-CR1")).toBe("rc");
   });
 
+  it("does not false-positive on short-form patterns", () => {
+    expect(classifyVersion("1.0-bar")).toBe("stable");
+    expect(classifyVersion("1.0-ace")).toBe("stable");
+  });
+
   it("classifies milestone versions", () => {
     expect(classifyVersion("1.0-M1")).toBe("milestone");
     expect(classifyVersion("1.0-milestone-2")).toBe("milestone");

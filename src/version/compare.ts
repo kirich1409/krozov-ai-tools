@@ -15,8 +15,8 @@ export function getUpgradeType(current: string, latest: string): UpgradeType {
   while (cur.length < maxLen) cur.push(0);
   while (lat.length < maxLen) lat.push(0);
 
-  if (lat[0] > cur[0]) return "major";
-  if (lat[1] > cur[1]) return "minor";
-  if (lat[2] > cur[2]) return "patch";
+  if (lat[0] !== cur[0]) return lat[0] > cur[0] ? "major" : "none";
+  if (lat[1] !== cur[1]) return lat[1] > cur[1] ? "minor" : "none";
+  if (lat[2] !== cur[2]) return lat[2] > cur[2] ? "patch" : "none";
   return "none";
 }

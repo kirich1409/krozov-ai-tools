@@ -2,8 +2,8 @@ import type { StabilityType } from "./types.js";
 
 const STABILITY_PATTERNS: [RegExp, StabilityType][] = [
   [/[-.]?SNAPSHOT$/i, "snapshot"],
-  [/[-.](?:alpha|a)[-.]?\d*/i, "alpha"],
-  [/[-.](?:beta|b)[-.]?\d*/i, "beta"],
+  [/[-.](?:alpha|a(?=\d|[-.]|$))[-.]?\d*/i, "alpha"],
+  [/[-.](?:beta|b(?=\d|[-.]|$))[-.]?\d*/i, "beta"],
   [/[-.](?:M|milestone)[-.]?\d*/i, "milestone"],
   [/[-.](?:RC|CR)[-.]?\d*/i, "rc"],
 ];
