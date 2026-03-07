@@ -2,7 +2,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
-import { HttpMavenRepository, MAVEN_CENTRAL } from "./maven/repository.js";
+import { HttpMavenRepository, MAVEN_CENTRAL, WELL_KNOWN_URLS } from "./maven/repository.js";
 import type { MavenRepository } from "./maven/repository.js";
 import { findProjectRoot } from "./project/find-project-root.js";
 import { discoverRepositories } from "./discovery/discover.js";
@@ -32,8 +32,11 @@ function getRepositories(): MavenRepository[] {
     }
   }
 
-  // Maven Central always last as fallback (skip if already discovered)
-  if (!repos.some((r) => r.url === MAVEN_CENTRAL.url)) {
+  // Add Maven Central as fallback only if no custom (non-well-known) repos found.
+  // Custom repos (e.g. Nexus, Artifactory) typically proxy Maven Central,
+  // so adding it would cause redundant queries and potential version mismatches.
+  const hasCustomRepo = repos.some((r) => !WELL_KNOWN_URLS.has(r.url));
+  if (!hasCustomRepo && !repos.some((r) => r.url === MAVEN_CENTRAL.url)) {
     repos.push(MAVEN_CENTRAL);
   }
 

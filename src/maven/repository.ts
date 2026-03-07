@@ -60,3 +60,9 @@ export const GRADLE_PLUGIN_PORTAL = new HttpMavenRepository(
   "Gradle Plugin Portal",
   "https://plugins.gradle.org/m2",
 );
+
+export const WELL_KNOWN_URLS = new Set([
+  MAVEN_CENTRAL.url,
+  GOOGLE_MAVEN.url,
+  GRADLE_PLUGIN_PORTAL.url,
+]);
