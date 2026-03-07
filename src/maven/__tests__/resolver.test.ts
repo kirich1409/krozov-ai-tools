@@ -1,12 +1,13 @@
 import { describe, it, expect, vi } from "vitest";
 import { resolveFirst, resolveAll } from "../resolver.js";
 import type { MavenRepository } from "../repository.js";
+import { MAVEN_CENTRAL, GOOGLE_MAVEN } from "../repository.js";
 import type { MavenMetadata } from "../types.js";
 
-function mockRepo(name: string, versions: string[] | null): MavenRepository {
+function mockRepo(name: string, versions: string[] | null, url?: string): MavenRepository {
   return {
     name,
-    url: `https://${name}.example.com`,
+    url: url ?? `https://${name}.example.com`,
     fetchMetadata: versions === null
       ? vi.fn().mockRejectedValue(new Error("Not found"))
       : vi.fn().mockResolvedValue({
@@ -97,5 +98,27 @@ describe("resolveAll", () => {
     expect(result.versions).toEqual(["1.0.0", "2.0.0", "3.0.0"]);
     expect(result.latest).toBe("3.0.0");
     expect(result.release).toBe("3.0.0");
+  });
+
+  it("prefers custom repo results over well-known when both have the artifact", async () => {
+    const nexus = mockRepo("nexus", ["1.0.0", "2.0.0"]);
+    const central = mockRepo("central", ["1.0.0", "2.0.0", "3.0.0"], MAVEN_CENTRAL.url);
+    const result = await resolveAll([nexus, central], "io.ktor", "ktor-core");
+    // Nexus result preferred — 3.0.0 from Central is excluded
+    expect(result.versions).toEqual(["1.0.0", "2.0.0"]);
+  });
+
+  it("falls back to well-known repos when custom repos dont have the artifact", async () => {
+    const nexus = mockRepo("nexus", null);
+    const central = mockRepo("central", ["1.0.0", "2.0.0"], MAVEN_CENTRAL.url);
+    const result = await resolveAll([nexus, central], "io.ktor", "ktor-core");
+    expect(result.versions).toEqual(["1.0.0", "2.0.0"]);
+  });
+
+  it("merges all well-known repos when no custom repos are present", async () => {
+    const central = mockRepo("central", ["1.0.0"], MAVEN_CENTRAL.url);
+    const google = mockRepo("google", ["1.0.0", "2.0.0"], GOOGLE_MAVEN.url);
+    const result = await resolveAll([central, google], "io.ktor", "ktor-core");
+    expect(result.versions).toEqual(["1.0.0", "2.0.0"]);
   });
 });
