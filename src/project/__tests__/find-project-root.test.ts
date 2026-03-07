@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { findProjectRoot, BUILD_FILE_MARKERS } from "../find-project-root.js";
+import { findProjectRoot } from "../find-project-root.js";
 import * as fs from "node:fs";
 
 vi.mock("node:fs");

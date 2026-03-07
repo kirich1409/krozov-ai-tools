@@ -9,17 +9,26 @@
   },
   "scripts": {
     "build": "tsc",
+    "lint": "eslint src/",
     "test": "vitest run",
     "dev": "tsc --watch"
   },
-  "keywords": ["mcp", "maven", "maven-central", "dependencies", "jvm"],
+  "keywords": [
+    "mcp",
+    "maven",
+    "maven-central",
+    "dependencies",
+    "jvm"
+  ],
   "author": "",
   "license": "MIT",
   "repository": {
     "type": "git",
     "url": "https://github.com/kirich1409/maven-central-mcp"
   },
-  "files": ["dist"],
+  "files": [
+    "dist"
+  ],
   "engines": {
     "node": ">=18"
   },
@@ -28,8 +37,11 @@
     "zod": "^4.3.6"
   },
   "devDependencies": {
+    "@eslint/js": "^10.0.1",
     "@types/node": "^25.3.5",
+    "eslint": "^10.0.3",
     "typescript": "^5.9.3",
+    "typescript-eslint": "^8.56.1",
     "vitest": "^4.0.18"
   }
 }
