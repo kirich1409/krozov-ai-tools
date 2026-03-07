@@ -2,7 +2,10 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
-import { MavenCentralClient } from "./maven/client.js";
+import { HttpMavenRepository, MAVEN_CENTRAL } from "./maven/repository.js";
+import type { MavenRepository } from "./maven/repository.js";
+import { findProjectRoot } from "./project/find-project-root.js";
+import { discoverRepositories } from "./discovery/discover.js";
 import { getLatestVersionHandler } from "./tools/get-latest-version.js";
 import { checkVersionExistsHandler } from "./tools/check-version-exists.js";
 import { checkMultipleDependenciesHandler } from "./tools/check-multiple-dependencies.js";
@@ -10,10 +13,33 @@ import { compareDependencyVersionsHandler } from "./tools/compare-dependency-ver
 
 const server = new McpServer({
   name: "maven-central-mcp",
-  version: "0.1.0",
+  version: "0.2.0",
 });
 
-const client = new MavenCentralClient();
+let cachedRepos: MavenRepository[] | null = null;
+
+function getRepositories(): MavenRepository[] {
+  if (cachedRepos) return cachedRepos;
+
+  const repos: MavenRepository[] = [];
+  const projectRoot = findProjectRoot(process.cwd());
+
+  if (projectRoot) {
+    const discovery = discoverRepositories(projectRoot);
+    console.error(`Discovered ${discovery.repositories.length} repositories from ${discovery.buildSystem} project at ${projectRoot}`);
+    for (const config of discovery.repositories) {
+      repos.push(new HttpMavenRepository(config.name, config.url));
+    }
+  }
+
+  // Maven Central always last as fallback (skip if already discovered)
+  if (!repos.some((r) => r.url === MAVEN_CENTRAL.url)) {
+    repos.push(MAVEN_CENTRAL);
+  }
+
+  cachedRepos = repos;
+  return repos;
+}
 
 server.tool(
   "get_latest_version",
@@ -27,7 +53,7 @@ server.tool(
       .describe("Version stability filter (default: PREFER_STABLE)"),
   },
   async (params) => {
-    const result = await getLatestVersionHandler(client, params);
+    const result = await getLatestVersionHandler(getRepositories(), params);
     return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
   },
 );
@@ -41,7 +67,7 @@ server.tool(
     version: z.string().describe("Version to check"),
   },
   async (params) => {
-    const result = await checkVersionExistsHandler(client, params);
+    const result = await checkVersionExistsHandler(getRepositories(), params);
     return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
   },
 );
@@ -56,7 +82,7 @@ server.tool(
     })).describe("List of dependencies to check"),
   },
   async (params) => {
-    const result = await checkMultipleDependenciesHandler(client, params);
+    const result = await checkMultipleDependenciesHandler(getRepositories(), params);
     return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
   },
 );
@@ -72,7 +98,7 @@ server.tool(
     })).describe("Dependencies with current versions to compare"),
   },
   async (params) => {
-    const result = await compareDependencyVersionsHandler(client, params);
+    const result = await compareDependencyVersionsHandler(getRepositories(), params);
     return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
   },
 );
