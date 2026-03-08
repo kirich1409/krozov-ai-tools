@@ -13,6 +13,7 @@ import { compareDependencyVersionsHandler } from "./tools/compare-dependency-ver
 import { getDependencyChangesHandler } from "./tools/get-dependency-changes.js";
 import { scanProjectDependenciesHandler } from "./tools/scan-project-dependencies.js";
 import { getDependencyVulnerabilitiesHandler } from "./tools/get-dependency-vulnerabilities.js";
+import { searchArtifactsHandler } from "./tools/search-artifacts.js";
 
 const server = new McpServer({
   name: "maven-central-mcp",
@@ -147,6 +148,19 @@ server.tool(
   },
   async (params) => {
     const result = await getDependencyVulnerabilitiesHandler(params);
+    return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+  },
+);
+
+server.tool(
+  "search_artifacts",
+  "Search Maven Central for artifacts by keyword. Use when looking for libraries by name or functionality.",
+  {
+    query: z.string().describe("Search query (library name, keyword)"),
+    limit: z.number().int().min(1).max(100).optional().describe("Max results (default: 10, max: 100)"),
+  },
+  async (params) => {
+    const result = await searchArtifactsHandler(params);
     return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
   },
 );
