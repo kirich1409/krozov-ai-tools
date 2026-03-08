@@ -19,7 +19,7 @@ Scan the current project for Maven/Gradle dependencies and report available upda
    - For Gradle files: find `implementation`, `api`, `compileOnly`, `testImplementation` etc. with group:artifact:version
    - For `pom.xml`: find `<dependency>` blocks with `<groupId>`, `<artifactId>`, `<version>`
 
-3. Call the `check_multiple_dependencies` MCP tool (from maven-mcp server) with all extracted dependencies.
+3. Call the `compare_dependency_versions` MCP tool (from maven-mcp server) with ALL extracted dependencies including their current versions. The MCP server searches Maven Central, Google Maven, and Gradle Plugin Portal automatically — do NOT skip any dependencies based on their group ID.
 
 4. Present results as a markdown table:
 
@@ -34,3 +34,4 @@ Scan the current project for Maven/Gradle dependencies and report available upda
 - Always check `libs.versions.toml` first — it's the modern Gradle standard for version management.
 - Dependencies in `libs.versions.toml` may use version references in build files — resolve them.
 - Skip dependencies without explicit versions (e.g., BOM-managed or platform dependencies).
+- **Send ALL dependencies to the MCP tool** — the server handles Google Maven, Gradle Plugin Portal, and custom repositories automatically. Do NOT filter, skip, or separate dependencies by group ID.

@@ -13,7 +13,7 @@ import { compareDependencyVersionsHandler } from "./tools/compare-dependency-ver
 
 const server = new McpServer({
   name: "maven-central-mcp",
-  version: "0.2.2",
+  version: "0.2.4",
 });
 
 let cachedRepos: MavenRepository[] | null = null;

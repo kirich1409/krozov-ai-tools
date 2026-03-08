@@ -1,11 +1,11 @@
 {
   "name": "maven-central-mcp",
-  "version": "0.2.2",
+  "version": "0.2.4",
   "description": "MCP server for Maven Central dependency intelligence",
   "main": "./dist/index.js",
   "type": "module",
   "bin": {
-    "maven-central-mcp": "dist/index.js"
+    "maven-central-mcp": "./dist/index.js"
   },
   "scripts": {
     "build": "tsc",
