@@ -14,6 +14,7 @@ import { getDependencyChangesHandler } from "./tools/get-dependency-changes.js";
 import { scanProjectDependenciesHandler } from "./tools/scan-project-dependencies.js";
 import { getDependencyVulnerabilitiesHandler } from "./tools/get-dependency-vulnerabilities.js";
 import { searchArtifactsHandler } from "./tools/search-artifacts.js";
+import { auditProjectDependenciesHandler } from "./tools/audit-project-dependencies.js";
 
 const server = new McpServer({
   name: "maven-central-mcp",
@@ -161,6 +162,19 @@ server.tool(
   },
   async (params) => {
     const result = await searchArtifactsHandler(params);
+    return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+  },
+);
+
+server.tool(
+  "audit_project_dependencies",
+  "Full project dependency audit: scans build files, compares versions against latest, checks for vulnerabilities. One-stop tool for dependency health check.",
+  {
+    projectPath: z.string().optional().describe("Path to project root (default: auto-detect)"),
+    includeVulnerabilities: z.boolean().optional().describe("Check for CVEs via OSV (default: true)"),
+  },
+  async (params) => {
+    const result = await auditProjectDependenciesHandler(getRepositories(), params);
     return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
   },
 );
