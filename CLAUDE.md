@@ -34,6 +34,15 @@ src/
     types.ts            # RepositoryConfig, DiscoveryResult
   project/
     find-project-root.ts  # Walks up from cwd to find build file markers
+  dependencies/
+    scan.ts             # Orchestrator: detects build system, delegates to parsers, returns ScannedDependency[]
+    gradle-deps-parser.ts # Parses build.gradle[.kts] for dependency declarations
+    maven-deps-parser.ts  # Parses pom.xml for dependency declarations
+    toml-parser.ts      # Parses gradle/libs.versions.toml version catalogs
+  search/
+    maven-search.ts     # Maven Central Solr Search API client (keyword search)
+  vulnerabilities/
+    osv-client.ts       # OSV.dev batch API client for CVE/vulnerability checking
   tools/                # MCP tool handlers (one file per tool)
   github/
     pom-scm.ts          # POM SCM parser → GitHub owner/repo extraction
@@ -57,6 +66,10 @@ src/
 - `get_latest_version`, `check_multiple_dependencies`, `compare_dependency_versions` -> `resolveAll` (parallel, merged versions)
 - `check_version_exists` -> sequential iteration, checks each repo for the specific version
 - `get_dependency_changes` -> `resolveAll` (versions) + POM fetch → GitHub API → releases/changelog
+- `scan_project_dependencies` -> local only (no network), delegates to `dependencies/scan.ts`
+- `search_artifacts` -> Maven Central Solr Search API (no repo resolution)
+- `get_dependency_vulnerabilities` -> OSV batch API (`api.osv.dev/v1/querybatch`)
+- `audit_project_dependencies` -> `scanDependencies` + `resolveAll` (memoized per GA) + `queryOsvBatch` (deduplicated per GAV)
 
 **Deduplication responsibility:** Parsers return raw results; `discoverRepositories()` in `discover.ts` handles URL deduplication.
 
@@ -75,6 +88,7 @@ src/
 - Tool handlers accept `MavenRepository[]` as first argument (not a single client)
 - `findLatestVersion()` in `version/classify.ts` is the single source of truth for stable version selection logic
 - `get_dependency_changes` fetches POM from Maven repos to discover GitHub SCM URL; falls back to guessing from `groupId` pattern (`io.github.*`/`com.github.*`)
+- `audit_project_dependencies` is an orchestrator: scan → version compare → vulnerability check; memoizes `resolveAll` per GA and deduplicates OSV queries per GAV
 - GitHub API: unauthenticated = 60 req/h; set `GITHUB_TOKEN` env for 5000 req/h
 
 ## PR Workflow
