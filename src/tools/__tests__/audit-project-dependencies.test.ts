@@ -21,20 +21,23 @@ function mockRepo(versions: string[]): MavenRepository {
   };
 }
 
+function mockGradleProject(content: string) {
+  mockedFs.existsSync.mockImplementation((p: fs.PathLike) => {
+    if (p.toString().endsWith("build.gradle.kts")) return true;
+    return false;
+  });
+  mockedFs.readFileSync.mockReturnValue(content);
+}
+
 describe("auditProjectDependenciesHandler", () => {
-  beforeEach(() => vi.restoreAllMocks());
+  beforeEach(() => vi.clearAllMocks());
 
   it("scans, compares, and checks vulnerabilities", async () => {
-    mockedFs.existsSync.mockImplementation((p: fs.PathLike) => {
-      if (p.toString().endsWith("build.gradle.kts")) return true;
-      return false;
-    });
-    mockedFs.readFileSync.mockReturnValue(`
+    mockGradleProject(`
 dependencies {
     implementation("io.ktor:ktor-client-core:3.0.0")
 }`);
 
-    // OSV response
     mockFetch.mockResolvedValueOnce({
       ok: true,
       json: () => Promise.resolve({ results: [{ vulns: [] }] }),
@@ -54,16 +57,74 @@ dependencies {
   });
 
   it("skips deps without version", async () => {
-    mockedFs.existsSync.mockImplementation((p: fs.PathLike) => {
-      if (p.toString().endsWith("build.gradle.kts")) return true;
-      return false;
-    });
-    mockedFs.readFileSync.mockReturnValue(`implementation("io.ktor:ktor-bom")`);
+    mockGradleProject(`implementation("io.ktor:ktor-bom")`);
 
     const repos = [mockRepo([])];
     const result = await auditProjectDependenciesHandler(repos, { projectPath: "/project" });
 
     expect(result.summary.total).toBe(1);
     expect(result.dependencies[0].upgradeType).toBeUndefined();
+  });
+
+  it("skips vulnerability check when includeVulnerabilities is false", async () => {
+    mockGradleProject(`implementation("io.ktor:ktor-client-core:3.0.0")`);
+
+    const repos = [mockRepo(["3.0.0", "3.1.1"])];
+    const result = await auditProjectDependenciesHandler(repos, {
+      projectPath: "/project",
+      includeVulnerabilities: false,
+    });
+
+    expect(mockFetch).not.toHaveBeenCalled();
+    expect(result.dependencies[0].vulnerabilities).toBeUndefined();
+  });
+
+  it("handles resolution failure gracefully", async () => {
+    mockGradleProject(`implementation("io.ktor:ktor-client-core:3.0.0")`);
+
+    const failingRepo: MavenRepository = {
+      name: "central",
+      url: "https://repo1.maven.org/maven2",
+      fetchMetadata: vi.fn().mockResolvedValue(null),
+    };
+
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: () => Promise.resolve({ results: [{ vulns: [] }] }),
+    });
+
+    const result = await auditProjectDependenciesHandler([failingRepo], {
+      projectPath: "/project",
+    });
+
+    expect(result.summary.total).toBe(1);
+    expect(result.dependencies[0].upgradeType).toBeUndefined();
+    expect(result.dependencies[0].latestVersion).toBeUndefined();
+  });
+
+  it("reports vulnerabilities in summary count", async () => {
+    mockGradleProject(`implementation("io.ktor:ktor-client-core:3.0.0")`);
+
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: () => Promise.resolve({
+        results: [{
+          vulns: [{
+            id: "GHSA-1234",
+            summary: "test vuln",
+            database_specific: { severity: "HIGH" },
+            affected: [{ ranges: [{ type: "ECOSYSTEM", events: [{ fixed: "3.1.0" }] }] }],
+            references: [],
+          }],
+        }],
+      }),
+    });
+
+    const repos = [mockRepo(["3.0.0", "3.1.1"])];
+    const result = await auditProjectDependenciesHandler(repos, { projectPath: "/project" });
+
+    expect(result.summary.vulnerable).toBe(1);
+    expect(result.dependencies[0].vulnerabilities).toHaveLength(1);
+    expect(result.dependencies[0].vulnerabilities![0].id).toBe("GHSA-1234");
   });
 });

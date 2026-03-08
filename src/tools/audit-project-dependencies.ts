@@ -1,4 +1,5 @@
 import type { MavenRepository } from "../maven/repository.js";
+import type { UpgradeType } from "../version/types.js";
 import { scanDependencies } from "../dependencies/scan.js";
 import { findProjectRoot } from "../project/find-project-root.js";
 import { resolveAll } from "../maven/resolver.js";
@@ -16,7 +17,7 @@ export interface AuditDependency {
   artifactId: string;
   currentVersion?: string;
   latestVersion?: string;
-  upgradeType?: string;
+  upgradeType?: UpgradeType;
   vulnerabilities?: { id: string; severity?: string; fixedVersion?: string }[];
 }
 
@@ -52,10 +53,10 @@ export async function auditProjectDependenciesHandler(
       try {
         const metadata = await resolveAll(repos, dep.groupId, dep.artifactId);
         const latest = findLatestVersionForCurrent(metadata.versions, dep.version!);
-        const upgradeType = latest ? getUpgradeType(dep.version!, latest) : "none";
+        const upgradeType = latest ? getUpgradeType(dep.version!, latest) : "none" as const;
         return { dep, latest, upgradeType };
       } catch {
-        return { dep, latest: undefined, upgradeType: "none" as const };
+        return { dep, latest: undefined, upgradeType: undefined };
       }
     }),
   );
@@ -74,17 +75,23 @@ export async function auditProjectDependenciesHandler(
     auditDeps.push({ groupId: dep.groupId, artifactId: dep.artifactId });
   }
 
-  // Vulnerability check
+  // Vulnerability check — correlate by groupId:artifactId key, not positional index
   if (includeVulns && depsWithVersion.length > 0) {
     const vulnResults = await queryOsvBatch(
       depsWithVersion.map((d) => ({
         groupId: d.groupId, artifactId: d.artifactId, version: d.version!,
       })),
     );
-    for (let i = 0; i < vulnResults.length; i++) {
-      auditDeps[i].vulnerabilities = vulnResults[i].vulnerabilities.map((v) => ({
-        id: v.id, severity: v.severity, fixedVersion: v.fixedVersion,
-      }));
+    for (let i = 0; i < depsWithVersion.length; i++) {
+      const dep = depsWithVersion[i];
+      const target = auditDeps.find(
+        (a) => a.groupId === dep.groupId && a.artifactId === dep.artifactId,
+      );
+      if (target) {
+        target.vulnerabilities = vulnResults[i].vulnerabilities.map((v) => ({
+          id: v.id, severity: v.severity, fixedVersion: v.fixedVersion,
+        }));
+      }
     }
   }
 
