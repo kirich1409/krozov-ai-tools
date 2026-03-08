@@ -2,7 +2,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
-import { HttpMavenRepository, MAVEN_CENTRAL } from "./maven/repository.js";
+import { HttpMavenRepository, MAVEN_CENTRAL, GOOGLE_MAVEN, GRADLE_PLUGIN_PORTAL } from "./maven/repository.js";
 import type { MavenRepository } from "./maven/repository.js";
 import { findProjectRoot } from "./project/find-project-root.js";
 import { discoverRepositories } from "./discovery/discover.js";
@@ -32,9 +32,11 @@ function getRepositories(): MavenRepository[] {
     }
   }
 
-  // Maven Central always last as fallback (skip if already discovered)
-  if (!repos.some((r) => r.url === MAVEN_CENTRAL.url)) {
-    repos.push(MAVEN_CENTRAL);
+  // Add well-known repos as fallback (skip if already discovered)
+  for (const fallback of [GOOGLE_MAVEN, GRADLE_PLUGIN_PORTAL, MAVEN_CENTRAL]) {
+    if (!repos.some((r) => r.url === fallback.url)) {
+      repos.push(fallback);
+    }
   }
 
   cachedRepos = repos;
