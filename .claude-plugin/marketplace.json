@@ -1,0 +1,21 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "maven-mcp",
+  "description": "Maven dependency intelligence for Claude Code",
+  "owner": {
+    "name": "kirich1409"
+  },
+  "plugins": [
+    {
+      "name": "maven-mcp",
+      "description": "Maven dependency intelligence — auto-registers MCP server, provides /check-deps and /latest-version skills",
+      "author": {
+        "name": "kirich1409"
+      },
+      "version": "0.1.0",
+      "category": "development",
+      "homepage": "https://github.com/kirich1409/maven-central-mcp",
+      "source": ".."
+    }
+  ]
+}
