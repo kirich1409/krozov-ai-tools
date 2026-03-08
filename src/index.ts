@@ -10,6 +10,7 @@ import { getLatestVersionHandler } from "./tools/get-latest-version.js";
 import { checkVersionExistsHandler } from "./tools/check-version-exists.js";
 import { checkMultipleDependenciesHandler } from "./tools/check-multiple-dependencies.js";
 import { compareDependencyVersionsHandler } from "./tools/compare-dependency-versions.js";
+import { getDependencyChangesHandler } from "./tools/get-dependency-changes.js";
 
 const server = new McpServer({
   name: "maven-central-mcp",
@@ -101,6 +102,21 @@ server.tool(
   },
   async (params) => {
     const result = await compareDependencyVersionsHandler(getRepositories(), params);
+    return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+  },
+);
+
+server.tool(
+  "get_dependency_changes",
+  "Show what changed between two versions of a dependency. Fetches release notes from GitHub and changelog files. Returns raw change descriptions for each intermediate version — summarize the most important changes for the user.",
+  {
+    groupId: z.string().describe("Maven group ID (e.g. io.ktor)"),
+    artifactId: z.string().describe("Maven artifact ID (e.g. ktor-server-core)"),
+    fromVersion: z.string().describe("Current version"),
+    toVersion: z.string().describe("Target version to upgrade to"),
+  },
+  async (params) => {
+    const result = await getDependencyChangesHandler(getRepositories(), params);
     return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
   },
 );
