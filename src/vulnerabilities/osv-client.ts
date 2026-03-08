@@ -21,6 +21,42 @@ export interface DependencyVulnerabilities {
   vulnerabilities: VulnerabilityInfo[];
 }
 
+interface OsvSeverity {
+  type: string;
+  score: string;
+}
+
+interface OsvEvent {
+  introduced?: string;
+  fixed?: string;
+}
+
+interface OsvRange {
+  type: string;
+  events: OsvEvent[];
+}
+
+interface OsvAffected {
+  ranges?: OsvRange[];
+}
+
+interface OsvReference {
+  type: string;
+  url: string;
+}
+
+interface OsvVulnerability {
+  id: string;
+  summary?: string;
+  severity?: OsvSeverity[];
+  affected?: OsvAffected[];
+  references?: OsvReference[];
+}
+
+interface OsvBatchResponse {
+  results: { vulns?: OsvVulnerability[] }[];
+}
+
 function cvssToSeverity(score: number): string {
   if (score >= 9.0) return "CRITICAL";
   if (score >= 7.0) return "HIGH";
@@ -28,13 +64,13 @@ function cvssToSeverity(score: number): string {
   return "LOW";
 }
 
-function extractSeverity(vuln: any): string | undefined {
-  const cvss = vuln.severity?.find((s: any) => s.type === "CVSS_V3" || s.type === "CVSS_V4");
+function extractSeverity(vuln: OsvVulnerability): string | undefined {
+  const cvss = vuln.severity?.find((s) => s.type === "CVSS_V3" || s.type === "CVSS_V4");
   if (cvss?.score) return cvssToSeverity(parseFloat(cvss.score));
   return undefined;
 }
 
-function extractFixedVersion(vuln: any): string | undefined {
+function extractFixedVersion(vuln: OsvVulnerability): string | undefined {
   for (const affected of vuln.affected ?? []) {
     for (const range of affected.ranges ?? []) {
       if (range.type !== "ECOSYSTEM") continue;
@@ -46,8 +82,8 @@ function extractFixedVersion(vuln: any): string | undefined {
   return undefined;
 }
 
-function extractUrl(vuln: any): string {
-  const advisory = vuln.references?.find((r: any) => r.type === "ADVISORY");
+function extractUrl(vuln: OsvVulnerability): string {
+  const advisory = vuln.references?.find((r) => r.type === "ADVISORY");
   return advisory?.url ?? `https://osv.dev/vulnerability/${vuln.id}`;
 }
 
@@ -69,13 +105,13 @@ export async function queryOsvBatch(deps: DependencyRef[]): Promise<DependencyVu
       return deps.map((dep) => ({ ...dep, vulnerabilities: [] }));
     }
 
-    const data = await response.json();
+    const data = (await response.json()) as OsvBatchResponse;
 
     return deps.map((dep, i) => {
       const vulns = data.results[i]?.vulns ?? [];
       return {
         ...dep,
-        vulnerabilities: vulns.map((v: any) => ({
+        vulnerabilities: vulns.map((v) => ({
           id: v.id,
           summary: v.summary ?? "",
           severity: extractSeverity(v),
