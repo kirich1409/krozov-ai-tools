@@ -26,7 +26,7 @@ src/
   maven/
     repository.ts       # MavenRepository interface + HttpMavenRepository (works with any Maven repo)
     resolver.ts         # resolveFirst (sequential) / resolveAll (parallel + merge) strategies
-    types.ts            # MavenMetadata, MavenSearchResponse
+    types.ts            # MavenMetadata
   discovery/
     discover.ts         # Orchestrator: scans project build files, returns RepositoryConfig[]
     gradle-parser.ts    # Regex-based parser for build.gradle[.kts] / settings.gradle[.kts]
@@ -54,7 +54,7 @@ src/
   cache/
     file-cache.ts        # Persistent JSON file cache (~/.cache/maven-central-mcp/)
   version/
-    classify.ts         # classifyVersion() + findLatestVersion() — stability detection
+    classify.ts         # classifyVersion() + findLatestVersion() + findLatestVersionForCurrent() — stability detection
     compare.ts          # getUpgradeType() — major/minor/patch comparison
     range.ts            # filterVersionRange() — extract versions between two bounds
     types.ts            # StabilityType, StabilityFilter, UpgradeType
@@ -86,7 +86,7 @@ src/
 - Tests colocated in `__tests__/` directories next to source
 - No XML parser dependency — all XML parsing is regex-based
 - Tool handlers that resolve versions accept `MavenRepository[]` as first argument; tools that don't need repo resolution (`scan_project_dependencies`, `search_artifacts`, `get_dependency_vulnerabilities`) accept only input
-- `findLatestVersion()` in `version/classify.ts` is the single source of truth for stable version selection logic
+- `findLatestVersion()` and `findLatestVersionForCurrent()` in `version/classify.ts` are the version selection functions; `findLatestVersion` is used by `get_latest_version` and `check_multiple_dependencies`, while `findLatestVersionForCurrent` is used by `compare_dependency_versions` and `audit_project_dependencies`
 - `get_dependency_changes` fetches POM from Maven repos to discover GitHub SCM URL; falls back to guessing from `groupId` pattern (`io.github.*`/`com.github.*`)
 - `audit_project_dependencies` is an orchestrator: scan → version compare → vulnerability check; memoizes `resolveAll` per GA and deduplicates OSV queries per GAV
 - GitHub API: unauthenticated = 60 req/h; set `GITHUB_TOKEN` env for 5000 req/h

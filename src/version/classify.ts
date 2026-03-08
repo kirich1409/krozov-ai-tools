@@ -27,15 +27,21 @@ function stabilityRank(stability: StabilityType): number {
   return STABILITY_RANK.indexOf(stability);
 }
 
+function lastWhere(versions: string[], predicate: (v: string) => boolean): string | undefined {
+  for (let i = versions.length - 1; i >= 0; i--) {
+    if (predicate(versions[i])) return versions[i];
+  }
+  return undefined;
+}
+
 export function findLatestVersion(
   versions: string[],
-  filter: StabilityFilter = "STABLE_ONLY",
+  filter: StabilityFilter = "PREFER_STABLE",
 ): string | undefined {
-  const reversed = [...versions].reverse();
-  if (filter === "ALL") return reversed[0];
-  const stable = reversed.find((v) => classifyVersion(v) === "stable");
+  if (filter === "ALL") return versions[versions.length - 1];
+  const stable = lastWhere(versions, (v) => classifyVersion(v) === "stable");
   if (filter === "STABLE_ONLY") return stable;
-  return stable ?? reversed[0];
+  return stable ?? versions[versions.length - 1];
 }
 
 /**
@@ -49,6 +55,5 @@ export function findLatestVersionForCurrent(
 ): string | undefined {
   const currentStability = classifyVersion(currentVersion);
   const maxRank = stabilityRank(currentStability);
-  const reversed = [...versions].reverse();
-  return reversed.find((v) => stabilityRank(classifyVersion(v)) <= maxRank);
+  return lastWhere(versions, (v) => stabilityRank(classifyVersion(v)) <= maxRank);
 }

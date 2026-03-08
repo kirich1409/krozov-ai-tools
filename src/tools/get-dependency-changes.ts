@@ -73,14 +73,9 @@ export async function getDependencyChangesHandler(
 
   // Step 3: Discover GitHub repo
   const scmCacheKey = `scm/${groupId}/${artifactId}`;
-  let ghRepo: GitHubRepo | null | undefined = await cache.get<GitHubRepo>(scmCacheKey);
-
-  if (ghRepo === undefined) {
-    ghRepo = await discoverGitHubRepo(repos, groupId, artifactId, toVersion, githubClient);
-    if (ghRepo) {
-      await cache.set(scmCacheKey, ghRepo);
-    }
-  }
+  const ghRepo = await cache.getOrFetch<GitHubRepo | null>(scmCacheKey, undefined, () =>
+    discoverGitHubRepo(repos, groupId, artifactId, toVersion, githubClient),
+  );
 
   if (!ghRepo) {
     return { ...baseResult, repositoryNotFound: true };
@@ -90,12 +85,11 @@ export async function getDependencyChangesHandler(
   const repositoryUrl = `https://github.com/${owner}/${repo}`;
 
   // Step 4: Fetch GitHub releases (with cache)
-  const releasesCacheKey = `releases/${owner}/${repo}`;
-  let releases: GitHubRelease[] | undefined = await cache.get<GitHubRelease[]>(releasesCacheKey, TTL_24H);
-  if (releases === undefined) {
-    releases = await githubClient.fetchReleases(owner, repo);
-    await cache.set(releasesCacheKey, releases);
-  }
+  const releases = await cache.getOrFetch<GitHubRelease[]>(
+    `releases/${owner}/${repo}`,
+    TTL_24H,
+    () => githubClient.fetchReleases(owner, repo),
+  );
 
   // Step 5: Match releases to versions
   const changes: VersionChange[] = [];
@@ -117,14 +111,11 @@ export async function getDependencyChangesHandler(
   // Step 6: For unmatched versions, try CHANGELOG.md
   let changelogUrl: string | undefined;
   if (unmatchedVersions.length > 0) {
-    const changelogCacheKey = `changelog/${owner}/${repo}`;
-    let changelogContent: string | null | undefined = await cache.get<string | null>(changelogCacheKey, TTL_24H);
-    if (changelogContent === undefined) {
-      changelogContent = await githubClient.fetchChangelog(owner, repo);
-      if (changelogContent !== null) {
-        await cache.set(changelogCacheKey, changelogContent);
-      }
-    }
+    const changelogContent = await cache.getOrFetch<string | null>(
+      `changelog/${owner}/${repo}`,
+      TTL_24H,
+      () => githubClient.fetchChangelog(owner, repo),
+    );
 
     if (changelogContent) {
       changelogUrl = `https://github.com/${owner}/${repo}/blob/main/CHANGELOG.md`;

@@ -2,12 +2,11 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { getDependencyChangesHandler } from "../get-dependency-changes.js";
 import type { MavenRepository } from "../../maven/repository.js";
 
-// Mock node:fs to prevent FileCache from writing to disk
-vi.mock("node:fs", () => ({
-  existsSync: vi.fn().mockReturnValue(false),
-  readFileSync: vi.fn().mockReturnValue(""),
-  writeFileSync: vi.fn(),
-  mkdirSync: vi.fn(),
+// Mock node:fs/promises to prevent FileCache from writing to disk
+vi.mock("node:fs/promises", () => ({
+  readFile: vi.fn().mockRejectedValue(new Error("ENOENT")),
+  writeFile: vi.fn().mockResolvedValue(undefined),
+  mkdir: vi.fn().mockResolvedValue(undefined),
 }));
 
 function mockRepo(versions: string[]): MavenRepository {

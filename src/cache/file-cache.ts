@@ -1,4 +1,4 @@
-import * as fs from "node:fs";
+import { readFile, writeFile, mkdir } from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 
@@ -13,14 +13,8 @@ export class FileCache {
   constructor(private readonly baseDir: string = DEFAULT_CACHE_DIR) {}
 
   async get<T>(key: string, ttlMs?: number): Promise<T | undefined> {
-    const filePath = this.filePath(key);
-
-    if (!fs.existsSync(filePath)) {
-      return undefined;
-    }
-
     try {
-      const raw = fs.readFileSync(filePath, "utf-8");
+      const raw = await readFile(this.filePath(key), "utf-8");
       const entry: CacheEntry<T> = JSON.parse(raw);
 
       if (ttlMs !== undefined && Date.now() - entry.timestamp > ttlMs) {
@@ -35,10 +29,25 @@ export class FileCache {
 
   async set<T>(key: string, data: T): Promise<void> {
     const filePath = this.filePath(key);
-    fs.mkdirSync(path.dirname(filePath), { recursive: true });
+    await mkdir(path.dirname(filePath), { recursive: true });
 
     const entry: CacheEntry<T> = { data, timestamp: Date.now() };
-    fs.writeFileSync(filePath, JSON.stringify(entry));
+    await writeFile(filePath, JSON.stringify(entry));
+  }
+
+  async getOrFetch<T>(
+    key: string,
+    ttlMs: number | undefined,
+    fetchFn: () => Promise<T>,
+  ): Promise<T> {
+    const cached = await this.get<T>(key, ttlMs);
+    if (cached !== undefined) return cached;
+
+    const data = await fetchFn();
+    if (data !== null && data !== undefined) {
+      await this.set(key, data);
+    }
+    return data;
   }
 
   private filePath(key: string): string {

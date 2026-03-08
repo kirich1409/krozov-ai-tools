@@ -11,21 +11,16 @@ const ACCEPT_HEADER = "application/vnd.github.v3+json";
 const CHANGELOG_NAMES = ["CHANGELOG.md", "changelog.md", "CHANGES.md"];
 
 export class GitHubClient {
-  private readonly token?: string;
+  private readonly headers: Record<string, string>;
 
   constructor(token?: string) {
-    this.token = token;
-  }
-
-  private buildHeaders(): Record<string, string> {
-    const headers: Record<string, string> = {
+    this.headers = {
       Accept: ACCEPT_HEADER,
       "User-Agent": USER_AGENT,
     };
-    if (this.token) {
-      headers["Authorization"] = `Bearer ${this.token}`;
+    if (token) {
+      this.headers["Authorization"] = `Bearer ${token}`;
     }
-    return headers;
   }
 
   async fetchReleases(owner: string, repo: string): Promise<GitHubRelease[]> {
@@ -33,7 +28,7 @@ export class GitHubClient {
       const response = await fetch(
         `${GITHUB_API}/repos/${owner}/${repo}/releases?per_page=100`,
         {
-          headers: this.buildHeaders(),
+          headers: this.headers,
           signal: AbortSignal.timeout(15_000),
         }
       );
@@ -50,7 +45,7 @@ export class GitHubClient {
         const response = await fetch(
           `${GITHUB_API}/repos/${owner}/${repo}/contents/${name}`,
           {
-            headers: this.buildHeaders(),
+            headers: this.headers,
             signal: AbortSignal.timeout(10_000),
           }
         );
@@ -69,7 +64,7 @@ export class GitHubClient {
       const response = await fetch(
         `${GITHUB_API}/repos/${owner}/${repo}`,
         {
-          headers: this.buildHeaders(),
+          headers: this.headers,
           signal: AbortSignal.timeout(10_000),
         }
       );
