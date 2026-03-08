@@ -12,6 +12,7 @@ import { checkMultipleDependenciesHandler } from "./tools/check-multiple-depende
 import { compareDependencyVersionsHandler } from "./tools/compare-dependency-versions.js";
 import { getDependencyChangesHandler } from "./tools/get-dependency-changes.js";
 import { scanProjectDependenciesHandler } from "./tools/scan-project-dependencies.js";
+import { getDependencyVulnerabilitiesHandler } from "./tools/get-dependency-vulnerabilities.js";
 
 const server = new McpServer({
   name: "maven-central-mcp",
@@ -130,6 +131,22 @@ server.tool(
   },
   async (params) => {
     const result = await scanProjectDependenciesHandler(params);
+    return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+  },
+);
+
+server.tool(
+  "get_dependency_vulnerabilities",
+  "Check Maven dependencies for known vulnerabilities (CVEs) via OSV database. Supports batch checking.",
+  {
+    dependencies: z.array(z.object({
+      groupId: z.string().describe("Maven group ID"),
+      artifactId: z.string().describe("Maven artifact ID"),
+      version: z.string().describe("Version to check"),
+    })).describe("Dependencies to check for vulnerabilities"),
+  },
+  async (params) => {
+    const result = await getDependencyVulnerabilitiesHandler(params);
     return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
   },
 );
