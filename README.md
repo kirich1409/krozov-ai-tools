@@ -2,7 +2,7 @@
 
 MCP server for Maven dependency intelligence. Provides AI assistants with structured, live dependency data from Maven repositories (Maven Central, Google Maven, custom repos).
 
-Works with any JVM build tool that uses Maven coordinates (Maven, Gradle, SBT, etc). Auto-discovers repositories from project build files.
+Works with any JVM build tool that uses Maven coordinates (Maven, Gradle, SBT, etc). Auto-discovers custom repositories from Gradle and Maven project build files.
 
 ## Quick Start
 
