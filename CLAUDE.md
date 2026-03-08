@@ -14,6 +14,7 @@ MCP server for Maven dependency intelligence. Provides tools to query artifact v
 npm run build          # TypeScript compilation (tsc)
 npm run test           # Run all tests (vitest run)
 npx vitest run src/tools/__tests__/get-latest-version.test.ts  # Single test file
+npm run lint           # ESLint
 npm run dev            # Watch mode (tsc --watch)
 ```
 
@@ -61,6 +62,11 @@ src/
 
 **Well-known repo constants** are defined once in `repository.ts` (`MAVEN_CENTRAL`, `GOOGLE_MAVEN`, `GRADLE_PLUGIN_PORTAL`) and referenced from `gradle-parser.ts`.
 
+## Environment
+
+- `GITHUB_TOKEN` — optional, enables higher GitHub API rate limits (5000 req/h vs 60) for `get_dependency_changes` tool
+- Persistent cache: `~/.cache/maven-central-mcp/` — SCM mappings (permanent), releases/changelog (24h TTL)
+
 ## Conventions
 
 - ESM (`"type": "module"` in package.json), all imports use `.js` extension
@@ -68,6 +74,12 @@ src/
 - No XML parser dependency — all XML parsing is regex-based
 - Tool handlers accept `MavenRepository[]` as first argument (not a single client)
 - `findLatestVersion()` in `version/classify.ts` is the single source of truth for stable version selection logic
+- `get_dependency_changes` fetches POM from Maven repos to discover GitHub SCM URL; falls back to guessing from `groupId` pattern (`io.github.*`/`com.github.*`)
+- GitHub API: unauthenticated = 60 req/h; set `GITHUB_TOKEN` env for 5000 req/h
+
+## PR Workflow
+
+Always work on changes in a separate branch using a worktree (`.worktrees/`). Create a **draft PR** early and push changes as you go. When implementation is complete: run checks locally (build, test, lint), fix any issues, then mark the PR as ready for review. After that, wait for CI checks to pass and review comments. Fix any failures or address reviewer feedback — do everything needed to get the PR merged. Ask the user if something is unclear or requires a decision.
 
 ## Worktrees
 
