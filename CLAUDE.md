@@ -35,7 +35,7 @@ src/
   project/
     find-project-root.ts  # Walks up from cwd to find build file markers
   dependencies/
-    scan.ts             # Orchestrator: detects build system, delegates to parsers, returns ScannedDependency[]
+    scan.ts             # Orchestrator: detects build system, delegates to parsers, returns ScanResult { buildSystem, dependencies }
     gradle-deps-parser.ts # Parses build.gradle[.kts] for dependency declarations
     maven-deps-parser.ts  # Parses pom.xml for dependency declarations
     toml-parser.ts      # Parses gradle/libs.versions.toml version catalogs
@@ -85,7 +85,7 @@ src/
 - ESM (`"type": "module"` in package.json), all imports use `.js` extension
 - Tests colocated in `__tests__/` directories next to source
 - No XML parser dependency — all XML parsing is regex-based
-- Tool handlers accept `MavenRepository[]` as first argument (not a single client)
+- Tool handlers that resolve versions accept `MavenRepository[]` as first argument; tools that don't need repo resolution (`scan_project_dependencies`, `search_artifacts`, `get_dependency_vulnerabilities`) accept only input
 - `findLatestVersion()` in `version/classify.ts` is the single source of truth for stable version selection logic
 - `get_dependency_changes` fetches POM from Maven repos to discover GitHub SCM URL; falls back to guessing from `groupId` pattern (`io.github.*`/`com.github.*`)
 - `audit_project_dependencies` is an orchestrator: scan → version compare → vulnerability check; memoizes `resolveAll` per GA and deduplicates OSV queries per GAV
