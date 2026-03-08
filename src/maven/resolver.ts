@@ -1,5 +1,5 @@
 import type { MavenRepository } from "./repository.js";
-import { WELL_KNOWN_URLS } from "./repository.js";
+import { PROXY_TARGET_URLS } from "./repository.js";
 import type { MavenMetadata } from "./types.js";
 
 export interface ResolveFirstResult {
@@ -42,21 +42,20 @@ export async function resolveAll(
     }),
   );
 
-  // Prefer results from custom repos (Nexus, Artifactory) over well-known ones.
-  // Custom repos often proxy Maven Central; using their metadata avoids
-  // duplicates and stale version mismatches from proxy caching delays.
-  // Falls back to well-known results only if no custom repo has the artifact.
-  //
-  // Tradeoff: if multiple custom repos exist and only some have the artifact,
-  // well-known results are still excluded. This may miss versions when a
-  // non-proxy custom repo (e.g. internal-only) is mixed with Maven Central.
-  // In practice this is rare — custom repos are typically proxies.
-  const primary = results.filter(
-    (r, i): r is MavenMetadata => r !== null && !WELL_KNOWN_URLS.has(repos[i].url),
+  // Custom repos (Nexus, Artifactory) typically proxy Maven Central.
+  // When a custom repo returns results for an artifact, skip Maven Central
+  // results to avoid duplicates and stale metadata from proxy caching.
+  // Google Maven and Gradle Plugin Portal are NOT proxy targets —
+  // they host unique artifacts and always contribute results.
+  const all = results.map((r, i) => ({ result: r, repo: repos[i] }));
+  const hasCustomResult = all.some(
+    ({ result, repo }) => result !== null && !PROXY_TARGET_URLS.has(repo.url),
   );
-  const successful = primary.length > 0
-    ? primary
-    : results.filter((r): r is MavenMetadata => r !== null);
+  const successful = all
+    .filter(({ result, repo }) =>
+      result !== null && !(hasCustomResult && PROXY_TARGET_URLS.has(repo.url)),
+    )
+    .map(({ result }) => result!);
 
   if (successful.length === 0) {
     throw new Error(`Artifact ${groupId}:${artifactId} not found in any repository`);

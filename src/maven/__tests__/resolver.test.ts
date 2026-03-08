@@ -130,4 +130,13 @@ describe("resolveAll", () => {
     const result = await resolveAll([central, google], "io.ktor", "ktor-core");
     expect(result.versions).toEqual(["1.0.0", "2.0.0"]);
   });
+
+  it("keeps Google Maven results when custom repo is present", async () => {
+    const nexus = mockRepo("nexus", ["1.0.0"]);
+    const google = mockRepo("google", ["1.0.0", "2.0.0"], GOOGLE_MAVEN.url);
+    const central = mockRepo("central", ["1.0.0", "3.0.0"], MAVEN_CENTRAL.url);
+    const result = await resolveAll([nexus, google, central], "io.ktor", "ktor-core");
+    // Nexus + Google kept, Maven Central excluded (proxy target)
+    expect(result.versions).toEqual(["1.0.0", "2.0.0"]);
+  });
 });

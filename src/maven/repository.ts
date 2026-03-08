@@ -61,8 +61,10 @@ export const GRADLE_PLUGIN_PORTAL = new HttpMavenRepository(
   "https://plugins.gradle.org/m2",
 );
 
-export const WELL_KNOWN_URLS = new Set([
+// URLs commonly proxied by corporate repos (Nexus, Artifactory).
+// When a custom repo returns results, these are deprioritized to avoid
+// duplicate/stale metadata. Google Maven and Gradle Plugin Portal are NOT
+// included — they host unique artifacts not typically proxied.
+export const PROXY_TARGET_URLS = new Set([
   MAVEN_CENTRAL.url,
-  GOOGLE_MAVEN.url,
-  GRADLE_PLUGIN_PORTAL.url,
 ]);
