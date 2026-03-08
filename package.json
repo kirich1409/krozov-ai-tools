@@ -1,6 +1,6 @@
 {
   "name": "maven-central-mcp",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "MCP server for Maven Central dependency intelligence",
   "main": "index.js",
   "type": "module",
