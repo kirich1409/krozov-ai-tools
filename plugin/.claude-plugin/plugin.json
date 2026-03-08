@@ -4,8 +4,8 @@
   "description": "Maven dependency intelligence — auto-registers MCP server, provides /check-deps and /latest-version skills",
   "mcpServers": {
     "maven-mcp": {
-      "command": "node",
-      "args": ["${CLAUDE_PLUGIN_ROOT}/dist/index.js"]
+      "command": "npx",
+      "args": ["-y", "maven-central-mcp"]
     }
   },
   "skills": "skills",

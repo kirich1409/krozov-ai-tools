@@ -15,7 +15,7 @@
       "version": "0.1.0",
       "category": "development",
       "homepage": "https://github.com/kirich1409/maven-central-mcp",
-      "source": "."
+      "source": "./plugin"
     }
   ]
 }

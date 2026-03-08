@@ -29,8 +29,7 @@
   "files": [
     "dist",
     ".claude-plugin",
-    "skills",
-    "hooks"
+    "plugin"
   ],
   "engines": {
     "node": ">=18"
