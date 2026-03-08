@@ -12,7 +12,7 @@ describe("getDependencyVulnerabilitiesHandler", () => {
       ok: true,
       json: () => Promise.resolve({
         results: [
-          { vulns: [{ id: "CVE-2024-001", summary: "XSS bug", severity: [{ type: "CVSS_V3", score: "7.5" }], affected: [{ ranges: [{ type: "ECOSYSTEM", events: [{ introduced: "0" }, { fixed: "1.5.0" }] }] }], references: [{ type: "ADVISORY", url: "https://example.com" }] }] },
+          { vulns: [{ id: "CVE-2024-001", summary: "XSS bug", severity: [{ type: "CVSS_V3", score: "CVSS:3.1/AV:N/AC:L/PR:N/UI:R/S:U/C:H/I:H/A:N" }], database_specific: { severity: "HIGH" }, affected: [{ ranges: [{ type: "ECOSYSTEM", events: [{ introduced: "0" }, { fixed: "1.5.0" }] }] }], references: [{ type: "ADVISORY", url: "https://example.com" }] }] },
           { vulns: [] },
         ],
       }),

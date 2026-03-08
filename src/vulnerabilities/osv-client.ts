@@ -51,6 +51,7 @@ interface OsvVulnerability {
   severity?: OsvSeverity[];
   affected?: OsvAffected[];
   references?: OsvReference[];
+  database_specific?: { severity?: string };
 }
 
 interface OsvBatchResponse {
@@ -65,8 +66,17 @@ function cvssToSeverity(score: number): string {
 }
 
 function extractSeverity(vuln: OsvVulnerability): string | undefined {
+  // Prefer database_specific.severity (GitHub Advisory provides this)
+  const dbSeverity = vuln.database_specific?.severity?.toUpperCase();
+  if (dbSeverity && ["CRITICAL", "HIGH", "MEDIUM", "LOW"].includes(dbSeverity)) {
+    return dbSeverity;
+  }
+  // Fallback: check if severity score looks numeric (some sources provide numeric scores)
   const cvss = vuln.severity?.find((s) => s.type === "CVSS_V3" || s.type === "CVSS_V4");
-  if (cvss?.score) return cvssToSeverity(parseFloat(cvss.score));
+  if (cvss?.score) {
+    const numericScore = parseFloat(cvss.score);
+    if (!isNaN(numericScore)) return cvssToSeverity(numericScore);
+  }
   return undefined;
 }
 

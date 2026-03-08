@@ -19,7 +19,8 @@ describe("queryOsvBatch", () => {
               {
                 id: "GHSA-1234-abcd",
                 summary: "Remote code execution",
-                severity: [{ type: "CVSS_V3", score: "9.8" }],
+                severity: [{ type: "CVSS_V3", score: "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H" }],
+                database_specific: { severity: "CRITICAL" },
                 affected: [{
                   ranges: [{ type: "ECOSYSTEM", events: [{ introduced: "0" }, { fixed: "2.0.1" }] }],
                 }],
