@@ -19,7 +19,7 @@ export function classifyVersion(version: string): StabilityType {
 
 export function findLatestVersion(
   versions: string[],
-  filter: StabilityFilter = "PREFER_STABLE",
+  filter: StabilityFilter = "STABLE_ONLY",
 ): string | undefined {
   const reversed = [...versions].reverse();
   if (filter === "ALL") return reversed[0];

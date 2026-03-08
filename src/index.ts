@@ -52,7 +52,7 @@ server.tool(
     stabilityFilter: z
       .enum(["STABLE_ONLY", "PREFER_STABLE", "ALL"])
       .optional()
-      .describe("Version stability filter (default: PREFER_STABLE)"),
+      .describe("Version stability filter (default: STABLE_ONLY)"),
   },
   async (params) => {
     const result = await getLatestVersionHandler(getRepositories(), params);

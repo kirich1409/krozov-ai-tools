@@ -32,13 +32,30 @@ Scan the current project for Maven/Gradle dependencies and report available upda
 
 Do NOT pass dependencies as a string. Do NOT add extra parameters like `stabilityFilter` or `includeSecurityScan` — they don't exist on this tool.
 
-4. Present results as a markdown table:
+4. Present results as a markdown table showing only dependencies with available updates:
 
-   | Artifact | Current | Latest | Upgrade |
-   |----------|---------|--------|---------|
+   | Artifact | Current | Latest Stable | Upgrade |
+   |----------|---------|---------------|---------|
    | io.ktor:ktor-client-core | 3.1.2 | 3.1.3 | PATCH |
 
 5. If all dependencies are up to date, say so.
+
+6. After presenting the table, ask the user: "Do you want me to update the versions in the build files? After updating I will verify the project builds successfully."
+
+## Stability policy
+
+- By default, only report **stable** versions. The MCP server returns stable versions by default.
+- Do NOT suggest alpha, beta, RC, milestone, or snapshot versions unless the user explicitly asks for unstable/pre-release versions.
+- If the user asks for unstable versions, call `get_latest_version` with `stabilityFilter: "ALL"` for each dependency.
+
+## After updating versions
+
+When the user confirms they want to update versions:
+1. Edit the build files with new versions
+2. Run the project build command to verify everything compiles:
+   - Gradle: `./gradlew assembleDebug` or `./gradlew build`
+   - Maven: `mvn compile`
+3. Report build result. If it fails, investigate and fix or revert.
 
 ## Important
 
