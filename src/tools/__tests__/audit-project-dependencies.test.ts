@@ -184,4 +184,49 @@ dependencies {
     expect(result.dependencies[1].vulnerabilities![0].id).toBe("GHSA-5678");
     expect(result.summary.vulnerable).toBe(2);
   });
+
+  it("assigns different vulns to correct versioned entries for same GA", async () => {
+    mockGradleProject(`
+dependencies {
+    implementation("io.ktor:ktor-client-core:3.0.0")
+    testImplementation("io.ktor:ktor-client-core:3.1.0")
+}`);
+
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: () => Promise.resolve({
+        results: [
+          {
+            vulns: [{
+              id: "GHSA-OLD",
+              summary: "old vuln",
+              database_specific: { severity: "HIGH" },
+              affected: [{ ranges: [{ type: "ECOSYSTEM", events: [{ fixed: "3.0.1" }] }] }],
+              references: [],
+            }],
+          },
+          {
+            vulns: [],
+          },
+        ],
+      }),
+    });
+
+    const repos = [mockRepo(["3.0.0", "3.1.0", "3.1.1"])];
+    const result = await auditProjectDependenciesHandler(repos, {
+      projectPath: "/project",
+      includeVulnerabilities: true,
+    });
+
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+    expect(result.dependencies).toHaveLength(2);
+    // 3.0.0 should have the vulnerability
+    expect(result.dependencies[0].currentVersion).toBe("3.0.0");
+    expect(result.dependencies[0].vulnerabilities).toHaveLength(1);
+    expect(result.dependencies[0].vulnerabilities![0].id).toBe("GHSA-OLD");
+    // 3.1.0 should have no vulnerabilities
+    expect(result.dependencies[1].currentVersion).toBe("3.1.0");
+    expect(result.dependencies[1].vulnerabilities).toHaveLength(0);
+    expect(result.summary.vulnerable).toBe(1);
+  });
 });
