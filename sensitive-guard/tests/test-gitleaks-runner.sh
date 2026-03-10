@@ -6,6 +6,8 @@ source "$SCRIPT_DIR/../src/utils.sh"
 source "$SCRIPT_DIR/../src/gitleaks-runner.sh"
 
 FIXTURES="$SCRIPT_DIR/fixtures"
+TMP_DIR=$(mktemp -d)
+trap 'rm -rf "$TMP_DIR"' EXIT
 
 # Skip tests if gitleaks not installed
 if ! command -v gitleaks &>/dev/null; then
@@ -13,9 +15,23 @@ if ! command -v gitleaks &>/dev/null; then
   exit 0
 fi
 
+# Create temp secret file (private keys are detected by gitleaks
+# but not blocked by GitHub push protection)
+SECRET_FILE="$TMP_DIR/secret-file.env"
+cat > "$SECRET_FILE" << 'SECRETS'
+PRIVATE_KEY="-----BEGIN EC PRIVATE KEY-----
+MHQCAQEEIBkg4LVWM9nuwNSk3yByxZpOBnipMrvPGaLK0mTJiEBgoAoGCCqGSM49
+AwEHoUQDQgAEY1GlPyRPrzGm1oU8+JGSCdSVxSFsECpHMbOqzErFNBDzERJBNqxe
+-----END EC PRIVATE KEY-----"
+PRIVATE_KEY2="-----BEGIN DSA PRIVATE KEY-----
+MIIBugIBAAKBgQDGKqtm0c4nPBbCPSuzFJJJLN5wzlNDy0sVpZWfWlX0YMWh0gSs
+-----END DSA PRIVATE KEY-----"
+SAFE_VALUE=hello-world
+SECRETS
+
 # Test: detect secrets in file
 test_start "detects secrets in file"
-FINDINGS=$(sg_run_gitleaks "$FIXTURES/secret-file.env" "")
+FINDINGS=$(sg_run_gitleaks "$SECRET_FILE" "")
 COUNT=$(echo "$FINDINGS" | jq 'length')
 if [[ "$COUNT" -ge 2 ]]; then
   test_pass
