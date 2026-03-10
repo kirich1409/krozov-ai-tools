@@ -3,8 +3,9 @@
 
 sg_sha256() {
   local value="$1"
-  # Trim leading/trailing whitespace
-  value="$(echo "$value" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
+  # Trim leading/trailing whitespace using bash parameter expansion (safe, no subprocess, no escape interpretation)
+  value="${value#"${value%%[![:space:]]*}"}"
+  value="${value%"${value##*[![:space:]]}"}"
   # Use shasum (macOS) or sha256sum (Linux)
   if command -v shasum &>/dev/null; then
     printf '%s' "$value" | shasum -a 256 | cut -d' ' -f1
@@ -55,10 +56,10 @@ sg_resolve_path() {
 
 sg_is_binary() {
   local file_path="$1"
-  # Quick check: if file contains null bytes, it's binary
-  # Use od (octal dump) which is portable across macOS and Linux
-  if od -An -tx1 "$file_path" 2>/dev/null | grep -q '00'; then
-    return 0  # is binary
+  # Check first 8KB for null bytes — if present, file is binary
+  # perl -0777 slurps all input; exits 0 if null byte found (binary), 1 if not (text)
+  if head -c 8192 "$file_path" 2>/dev/null | perl -0777 -ne 'exit(/\x00/ ? 0 : 1)' 2>/dev/null; then
+    return 0  # is binary (null byte found)
   fi
   return 1  # is text
 }
