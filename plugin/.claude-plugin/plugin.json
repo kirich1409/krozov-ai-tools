@@ -5,7 +5,7 @@
   "mcpServers": {
     "maven-mcp": {
       "command": "npx",
-      "args": ["-y", "maven-central-mcp"]
+      "args": ["-y", "@krozov/maven-central-mcp"]
     }
   },
   "skills": "./skills"

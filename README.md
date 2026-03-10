@@ -1,16 +1,22 @@
-# maven-central-mcp
+# krozov-ai-tools
+
+Collection of AI tools by Kirill Rozov.
+
+## Packages
+
+### @krozov/maven-central-mcp
 
 MCP server for Maven dependency intelligence. Provides AI assistants with structured, live dependency data from Maven repositories (Maven Central, Google Maven, custom repos).
 
 Works with any JVM build tool that uses Maven coordinates (Maven, Gradle, SBT, etc). Auto-discovers custom repositories from Gradle and Maven project build files.
 
-## Quick Start
+#### Quick Start
 
 ```bash
-npx maven-central-mcp
+npx @krozov/maven-central-mcp
 ```
 
-### Claude Desktop
+##### Claude Desktop
 
 Add to your Claude Desktop config (`~/Library/Application Support/Claude/claude_desktop_config.json`):
 
@@ -19,13 +25,13 @@ Add to your Claude Desktop config (`~/Library/Application Support/Claude/claude_
   "mcpServers": {
     "maven-central": {
       "command": "npx",
-      "args": ["maven-central-mcp"]
+      "args": ["@krozov/maven-central-mcp"]
     }
   }
 }
 ```
 
-### VS Code
+##### VS Code
 
 Create `.vscode/mcp.json` in your workspace:
 
@@ -35,13 +41,13 @@ Create `.vscode/mcp.json` in your workspace:
     "maven-central": {
       "type": "stdio",
       "command": "npx",
-      "args": ["maven-central-mcp"]
+      "args": ["@krozov/maven-central-mcp"]
     }
   }
 }
 ```
 
-## Tools
+#### Tools
 
 | Tool | Description |
 |------|-------------|
@@ -55,7 +61,7 @@ Create `.vscode/mcp.json` in your workspace:
 | `get_dependency_vulnerabilities` | Check dependencies for known vulnerabilities (CVEs) via OSV database |
 | `audit_project_dependencies` | Full project dependency audit: scan build files, compare versions, check vulnerabilities |
 
-## Features
+#### Features
 
 - **Version intelligence** — stability-aware version selection, upgrade type classification (major/minor/patch)
 - **Project scanning** — parse Gradle (`build.gradle.kts`, `build.gradle`), Maven (`pom.xml`), and version catalogs (`libs.versions.toml`)
@@ -64,7 +70,7 @@ Create `.vscode/mcp.json` in your workspace:
 - **Change tracking** — fetches GitHub release notes and changelogs between versions
 - **Artifact search** — keyword search across Maven Central
 
-## Environment Variables
+#### Environment Variables
 
 | Variable | Required | Description |
 |----------|----------|-------------|
