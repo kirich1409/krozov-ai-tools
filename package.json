@@ -1,5 +1,5 @@
 {
-  "name": "maven-central-mcp",
+  "name": "@krozov/maven-central-mcp",
   "version": "0.2.6",
   "description": "MCP server for Maven Central dependency intelligence",
   "main": "./dist/index.js",
@@ -24,7 +24,7 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/kirich1409/maven-central-mcp.git"
+    "url": "git+https://github.com/kirich1409/krozov-ai-tools.git"
   },
   "files": [
     "dist",
