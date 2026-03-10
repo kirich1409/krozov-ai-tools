@@ -1,0 +1,8 @@
+# Config file with PII
+admin_email=admin@example.com
+backup_contact=john.doe@company.org
+ssn=123-45-6789
+payment_card=4532-1234-5678-8901
+iban=DE89370400440532013000
+safe_value=hello-world
+version=1.2.3.4
