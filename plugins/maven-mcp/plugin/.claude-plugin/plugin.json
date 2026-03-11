@@ -1,6 +1,6 @@
 {
   "name": "maven-mcp",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Maven dependency intelligence — auto-registers MCP server, provides /check-deps and /latest-version skills",
   "mcpServers": {
     "maven-mcp": {
