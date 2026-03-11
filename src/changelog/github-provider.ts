@@ -9,23 +9,27 @@ import { FileCache } from "../cache/file-cache.js";
 
 const TTL_24H = 24 * 60 * 60 * 1000;
 
+const VERSION_RE = /^\d+(?:\.\d+)*(?:[.-].*)?$/;
+
 /**
  * Extract version from a Git tag using the same strategies as matchReleaseToVersion:
- * 1. Exact (no prefix) — return as-is
- * 2. v-prefix — strip leading "v"
- * 3. Suffix after `-` or `/` — extract the trailing version part
+ * 1. v-prefix — strip leading "v" only when followed by a digit (e.g. "v1.2.3")
+ * 2. Suffix after `-` or `/` — extract trailing part only if it looks like a version
+ * 3. Exact — return tag as-is
  */
 function normalizeTag(tag: string): string {
-  if (tag.startsWith("v")) {
+  if (tag.length > 1 && tag[0] === "v" && tag[1] >= "0" && tag[1] <= "9") {
     return tag.slice(1);
   }
   const dashIdx = tag.lastIndexOf("-");
   if (dashIdx !== -1) {
-    return tag.slice(dashIdx + 1);
+    const suffix = tag.slice(dashIdx + 1);
+    if (VERSION_RE.test(suffix)) return suffix;
   }
   const slashIdx = tag.lastIndexOf("/");
   if (slashIdx !== -1) {
-    return tag.slice(slashIdx + 1);
+    const suffix = tag.slice(slashIdx + 1);
+    if (VERSION_RE.test(suffix)) return suffix;
   }
   return tag;
 }
