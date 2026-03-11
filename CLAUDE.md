@@ -54,6 +54,9 @@ src/
   agp/
     url.ts               # AGP version → developer.android.com URL mapping
     release-notes-parser.ts  # Parse AGP release notes HTML (data-text headings)
+  firebase/
+    url.ts               # Firebase artifactId → slug mapping, release notes URL
+    release-notes-parser.ts  # Parse Firebase release notes HTML (slug-filtered headings)
   html/
     to-text.ts           # Shared htmlToText utility (strip tags, unescape entities)
   cache/
