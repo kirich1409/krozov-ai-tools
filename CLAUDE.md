@@ -51,6 +51,11 @@ src/
     changelog-parser.ts  # Parse CHANGELOG.md sections by version
     tag-matcher.ts       # Match GitHub release tags to Maven versions
     discover-repo.ts     # Orchestrator: POM → guess → validate
+  agp/
+    url.ts               # AGP version → developer.android.com URL mapping
+    release-notes-parser.ts  # Parse AGP release notes HTML (data-text headings)
+  html/
+    to-text.ts           # Shared htmlToText utility (strip tags, unescape entities)
   cache/
     file-cache.ts        # Persistent JSON file cache (~/.cache/maven-central-mcp/)
   version/
