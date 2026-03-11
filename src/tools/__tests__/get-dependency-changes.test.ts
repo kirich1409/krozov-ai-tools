@@ -162,6 +162,38 @@ describe("getDependencyChangesHandler", () => {
     expect(result.changes).toEqual([]);
   });
 
+  it("returns changes from AGP release notes", async () => {
+    const repo = mockRepo(["8.5.0", "8.5.1", "8.5.2"]);
+
+    const html = `
+      <h3 id="fixed-issues-agp-8.5.2" data-text="Android Gradle plugin 8.5.2" tabindex="-1">Android Gradle plugin 8.5.2</h3>
+      <p>Fixed critical build issue.</p>
+      <h3 id="fixed-issues-agp-8.5.1" data-text="Android Gradle plugin 8.5.1" tabindex="-1">Android Gradle plugin 8.5.1</h3>
+      <p>Minor improvements.</p>
+      <h3 id="fixed-issues-agp-8.5.0" data-text="Android Gradle plugin 8.5.0" tabindex="-1">Android Gradle plugin 8.5.0</h3>
+      <p>Initial release.</p>
+    `;
+    globalThis.fetch = vi.fn().mockResolvedValueOnce(
+      new Response(html, { status: 200 }),
+    ) as typeof fetch;
+
+    const result = await getDependencyChangesHandler([repo], {
+      groupId: "com.android.tools.build",
+      artifactId: "gradle",
+      fromVersion: "8.5.0",
+      toVersion: "8.5.2",
+    });
+
+    expect(result.repositoryNotFound).toBeUndefined();
+    expect(result.repositoryUrl).toContain("agp-8-5-0-release-notes");
+    expect(result.changes).toHaveLength(2);
+    expect(result.changes[0].version).toBe("8.5.1");
+    expect(result.changes[0].body).toContain("Minor improvements");
+    expect(result.changes[0].releaseUrl).toContain("#fixed-issues-agp-8.5.1");
+    expect(result.changes[1].version).toBe("8.5.2");
+    expect(result.changes[1].body).toContain("Fixed critical build issue");
+  });
+
   it("returns changes from AndroidX release notes", async () => {
     const repo = mockRepo(["1.15.0", "1.16.0", "1.17.0"]);
 

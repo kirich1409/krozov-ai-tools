@@ -4,6 +4,7 @@ import { filterVersionRange } from "../version/range.js";
 import { resolveChangelog } from "../changelog/resolver.js";
 import type { ChangelogProvider } from "../changelog/types.js";
 import { AndroidXChangelogProvider } from "../changelog/androidx-provider.js";
+import { AgpChangelogProvider } from "../changelog/agp-provider.js";
 import { GitHubChangelogProvider } from "../changelog/github-provider.js";
 
 export interface DependencyChangesInput {
@@ -33,6 +34,7 @@ export interface DependencyChangesResult {
 
 const defaultProviders: ChangelogProvider[] = [
   new AndroidXChangelogProvider(),
+  new AgpChangelogProvider(),
   new GitHubChangelogProvider(),
 ];
 
