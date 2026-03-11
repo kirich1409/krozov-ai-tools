@@ -2,3 +2,4 @@ node_modules/
 dist/
 .worktrees/
 docs/plans/
+*.tgz

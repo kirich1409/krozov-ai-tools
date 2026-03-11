@@ -1,7 +1,7 @@
 {
   "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
-  "name": "maven-mcp",
-  "description": "Maven dependency intelligence for Claude Code",
+  "name": "krozov-ai-tools",
+  "description": "Claude Code plugins by krozov",
   "owner": {
     "name": "kirich1409"
   },
@@ -15,7 +15,18 @@
       "version": "0.2.0",
       "category": "development",
       "homepage": "https://github.com/kirich1409/krozov-ai-tools",
-      "source": "./plugin"
+      "source": "./plugins/maven-mcp/plugin"
+    },
+    {
+      "name": "sensitive-guard",
+      "description": "Prevents sensitive data (secrets, PII) from reaching AI servers by scanning files before they are read into conversation",
+      "author": {
+        "name": "kirich1409"
+      },
+      "version": "0.1.0",
+      "category": "security",
+      "homepage": "https://github.com/kirich1409/krozov-ai-tools",
+      "source": "./plugins/sensitive-guard"
     }
   ]
 }

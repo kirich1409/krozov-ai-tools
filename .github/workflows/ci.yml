@@ -9,6 +9,9 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: plugins/maven-mcp
     strategy:
       matrix:
         node-version: [20, 22]
@@ -21,6 +24,7 @@ jobs:
         with:
           node-version: ${{ matrix.node-version }}
           cache: npm
+          cache-dependency-path: plugins/maven-mcp/package-lock.json
 
       - run: npm ci
       - run: npm run lint

@@ -8,6 +8,9 @@ jobs:
   publish:
     runs-on: ubuntu-latest
     environment: NPM Publishing
+    defaults:
+      run:
+        working-directory: plugins/maven-mcp
 
     permissions:
       contents: read
@@ -20,6 +23,7 @@ jobs:
         with:
           node-version: 22
           cache: npm
+          cache-dependency-path: plugins/maven-mcp/package-lock.json
           registry-url: https://registry.npmjs.org
 
       - name: Verify version matches tag
