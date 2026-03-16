@@ -38,6 +38,7 @@ Custom repositories are auto-discovered from Gradle `settings.gradle(.kts)`/`bui
 ## Prerequisites
 
 - **Node.js** 18+ (required)
+- **jq** (required when hooks are enabled) — used by the PostToolUse hook script (`plugin/hooks/post-edit-deps.sh`) to parse JSON input
 - **GITHUB_TOKEN** (optional) — set this environment variable to raise GitHub API rate limits from 60 to 5000 requests/hour, used by the `get_dependency_changes` tool to fetch changelogs and release notes
 
 ## Installation
