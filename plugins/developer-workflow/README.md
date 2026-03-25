@@ -18,7 +18,7 @@ Use after implementation is complete, before creating the PR.
 
 Drives an existing PR/MR to merge:
 - Monitors CI/CD checks; fixes failures caused by current changes
-- Triages reviewer comments autonomously (major → fix, minor → respond only)
+- Triages reviewer comments autonomously (BLOCKING/IMPORTANT → fix, OPTIONAL → acknowledge, OUT OF SCOPE → ask user)
 - Responds to and resolves every comment thread
 - Requests re-review after fixes, loops until merge requirements are met
 - Asks the user only when a problem is outside the current PR scope
