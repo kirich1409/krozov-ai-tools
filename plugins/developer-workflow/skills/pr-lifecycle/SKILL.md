@@ -143,7 +143,10 @@ Use GitHub web UI for resolving ("Resolve conversation" button) — `gh` CLI doe
 Request re-review only from reviewers whose BLOCKING or IMPORTANT comments were fixed:
 
 ```bash
+# GitHub
 gh pr edit <PR_NUMBER> --add-reviewer @username1,@username2
+# GitLab
+glab mr update <MR_NUMBER> --reviewer @username1,@username2
 ```
 
 Do not request re-review for OPTIONAL deferred items or INVALID comments.
@@ -157,10 +160,13 @@ Do not request re-review for OPTIONAL deferred items or INVALID comments.
 
 ## Tools Priority
 
-**gh CLI → REST API → GitHub MCP**
+**GitHub/GitLab CLI → REST API → MCP**
 
-```bash
-gh pr view <PR_NUMBER> --comments   # read comments
-gh pr comment <PR_NUMBER> --body "…" # reply
-gh pr edit <PR_NUMBER> --add-reviewer @user  # re-review
-```
+Detect platform from remote URL and use the matching CLI:
+
+| Platform | CLI | Read comments | Reply | Re-review |
+|----------|-----|---------------|-------|-----------|
+| GitHub | `gh` | `gh pr view <N> --comments` | `gh pr comment <N> --body "…"` | `gh pr edit <N> --add-reviewer @user` |
+| GitLab | `glab` | `glab mr view <N> --comments` | `glab mr note <N> --message "…"` | `glab mr update <N> --reviewer @user` |
+
+Fall back to REST API if CLI unavailable, then MCP as last resort.
