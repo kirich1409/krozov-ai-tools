@@ -52,7 +52,7 @@ export class AndroidXChangelogProvider implements ChangelogProvider {
 
       const html = await response.text();
       const entries = parseAndroidXReleaseNotes(html);
-      if (entries.size === 0) return [];
+      if (entries.size === 0) return null;
 
       return [...entries.entries()];
     } catch {
