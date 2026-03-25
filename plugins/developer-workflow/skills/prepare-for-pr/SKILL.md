@@ -36,6 +36,8 @@ git diff $BASE...HEAD
 | 6 | `go.mod` | `go build ./...` | `golangci-lint run` | `go test ./...` |
 | 7 | `pyproject.toml` / `setup.py` | `pip install -e .` | `ruff check .` | `pytest` |
 
+**Monorepo / subdirectory projects:** if all changed files are under a single subdirectory that has its own build file, prefer that subdirectory's build system over the root. Example: all changes under `plugins/maven-mcp/` which has its own `package.json` → run `npm` commands from that subdirectory, not a root `Makefile`.
+
 ## Quality Loop
 
 **Track all issues found and their status (open / fixed / deferred) across iterations.** On re-entry, only report NEW issues. Deferred issues are removed from the fix queue — never re-prompted.
@@ -67,14 +69,14 @@ digraph prepare_for_pr {
     build -> build_pass;
     build_pass -> simplify [label="yes"];
     build_pass -> scope_build [label="no"];
-    scope_build -> fix [label="fix decided"];
+    scope_build -> fix [label="fix decided\n(in scope OR obvious fix)"];
     scope_build -> done [label="user exits"];
     fix -> build;
     simplify -> selfrev -> lint;
     lint -> new_issues;
     new_issues -> scope_issues [label="yes"];
     new_issues -> assess [label="no"];
-    scope_issues -> fix [label="fix decided"];
+    scope_issues -> fix [label="fix decided\n(in scope OR obvious fix)"];
     scope_issues -> assess [label="user defers\n(mark deferred, continue)"];
     assess -> fix [label="yes — non-deferred\nnon-minor remain"];
     assess -> commit [label="no"];

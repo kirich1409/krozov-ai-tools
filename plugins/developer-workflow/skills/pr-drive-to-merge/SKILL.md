@@ -61,7 +61,7 @@ digraph cicd {
     passing -> investigate [label="no"];
     investigate -> our_fault;
     our_fault -> fix [label="yes"];
-    our_fault -> ask [label="no — stop"];
+    our_fault -> ask [label="no — pause\nuntil user decides"];
     fix -> wait;
     undraft -> review;
 }
@@ -215,8 +215,9 @@ REPO=$(gh repo view --json nameWithOwner -q .nameWithOwner)
 gh api --method POST /repos/$REPO/pulls/$PR_NUMBER/requested_reviewers \
   -f "reviewers[]=username1" -f "reviewers[]=username2"
 
-# GitLab
-glab mr update <MR_NUMBER> --reviewer @username1,@username2
+# GitLab — re-request review (replace reviewers, which triggers re-review notification)
+glab mr update <MR_NUMBER> --reviewer username1,username2
+# To add without removing existing: --reviewer +username1,+username2
 ```
 
 ## Merge Requirements Checklist
