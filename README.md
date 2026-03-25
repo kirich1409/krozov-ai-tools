@@ -15,6 +15,7 @@ Install a plugin:
 ```
 /plugin install maven-mcp@krozov-ai-tools
 /plugin install sensitive-guard@krozov-ai-tools
+/plugin install developer-workflow@krozov-ai-tools
 ```
 
 ## Plugins
@@ -31,7 +32,7 @@ Maven dependency intelligence for JVM projects. Auto-registers an MCP server tha
 - Changelog tracking — GitHub releases, AndroidX, AGP, Firebase release notes
 - Artifact search across Maven Central
 
-**Skills:** `/check-deps`, `/latest-version`
+**Skills:** `/check-deps`, `/latest-version`, `/dependency-changes`
 
 See [`plugins/maven-mcp/`](plugins/maven-mcp/) for full documentation.
 
@@ -47,6 +48,18 @@ Prevents sensitive data (secrets, PII) from reaching AI servers. Scans files via
 - Configurable patterns and tools
 
 See [`plugins/sensitive-guard/`](plugins/sensitive-guard/) for full documentation.
+
+### developer-workflow
+
+Developer workflow skills — preparing branches for code review and managing the full PR lifecycle.
+
+**Features:**
+- `prepare-for-pr` — quality loop (build → simplify → self-review → lint/tests) before creating a PR
+- `pr-drive-to-merge` — drives an existing PR/MR to merge: monitors CI/CD, triages reviewer comments, responds and resolves threads, loops until merge requirements are met
+
+**Skills:** `/prepare-for-pr`, `/pr-drive-to-merge`
+
+See [`plugins/developer-workflow/`](plugins/developer-workflow/) for full documentation.
 
 ## License
 

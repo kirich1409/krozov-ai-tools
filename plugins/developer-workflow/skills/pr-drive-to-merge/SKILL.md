@@ -61,7 +61,7 @@ digraph cicd {
     passing -> investigate [label="no"];
     investigate -> our_fault;
     our_fault -> fix [label="yes"];
-    our_fault -> ask [label="no — stop"];
+    our_fault -> ask [label="no — pause\nuntil user decides"];
     fix -> wait;
     undraft -> review;
 }
@@ -215,8 +215,10 @@ REPO=$(gh repo view --json nameWithOwner -q .nameWithOwner)
 gh api --method POST /repos/$REPO/pulls/$PR_NUMBER/requested_reviewers \
   -f "reviewers[]=username1" -f "reviewers[]=username2"
 
-# GitLab
-glab mr update <MR_NUMBER> --reviewer @username1,@username2
+# GitLab — re-request review via REST API (glab mr update has no --reviewer flag)
+glab api /projects/:fullpath/merge_requests/:iid \
+  --method PUT -f "reviewer_ids[]=<user_id1>" -f "reviewer_ids[]=<user_id2>"
+# Get user IDs: glab api /users?username=<username> | jq '.[0].id'
 ```
 
 ## Merge Requirements Checklist

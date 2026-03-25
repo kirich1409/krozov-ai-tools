@@ -27,6 +27,15 @@ Use after the PR is created.
 
 ## Installation
 
+Via marketplace (recommended):
+
+```
+/plugin marketplace add kirich1409/krozov-ai-tools
+/plugin install developer-workflow@krozov-ai-tools
+```
+
+Or locally from the repo root:
+
 ```bash
 claude plugin install plugins/developer-workflow
 ```
