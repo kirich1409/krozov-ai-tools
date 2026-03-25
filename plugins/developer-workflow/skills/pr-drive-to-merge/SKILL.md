@@ -215,10 +215,9 @@ REPO=$(gh repo view --json nameWithOwner -q .nameWithOwner)
 gh api --method POST /repos/$REPO/pulls/$PR_NUMBER/requested_reviewers \
   -f "reviewers[]=username1" -f "reviewers[]=username2"
 
-# GitLab — re-request review via REST API (glab mr update has no --reviewer flag)
-glab api /projects/:fullpath/merge_requests/:iid \
-  --method PUT -f "reviewer_ids[]=<user_id1>" -f "reviewer_ids[]=<user_id2>"
-# Get user IDs: glab api /users?username=<username> | jq '.[0].id'
+# GitLab — re-request review (replace reviewers, which triggers re-review notification)
+glab mr update <MR_NUMBER> --reviewer username1,username2
+# To add without removing existing: --reviewer +username1,+username2
 ```
 
 ## Merge Requirements Checklist
