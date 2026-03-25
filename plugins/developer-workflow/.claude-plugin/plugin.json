@@ -1,6 +1,6 @@
 {
   "name": "developer-workflow",
-  "version": "0.1.0",
-  "description": "Developer workflow skills — prepare branches for PR and manage the full PR lifecycle through CI/CD and code review",
+  "version": "0.2.0",
+  "description": "Developer workflow skills — safe code migration, PR preparation, and full PR lifecycle through CI/CD and code review",
   "skills": "./skills"
 }
