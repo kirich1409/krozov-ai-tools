@@ -39,6 +39,17 @@ Drives an existing PR/MR to merge:
 
 Use after the PR is created.
 
+### `kmp-migration`
+
+Guides a full migration of an Android module to Kotlin Multiplatform (KMP):
+- Assesses the module, confirms target platforms, checks Kotlin version and module isolation
+- Audits every dependency for KMP compatibility using `maven-mcp` tools
+- Walks through plugin setup, source set restructuring, and dependency splitting
+- Covers iOS framework exposure (CocoaPods, SPM, direct XCFramework)
+- Verifies all targets compile and tests pass; cleans up Android-only artifacts
+
+Use when migrating a module to share code with iOS, JVM, or other platforms.
+
 ## Installation
 
 Via marketplace (recommended):
