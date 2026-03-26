@@ -62,6 +62,7 @@ digraph cicd {
     investigate -> our_fault;
     our_fault -> fix [label="yes"];
     our_fault -> ask [label="no — pause\nuntil user decides"];
+    ask -> fetch_status [label="user decides"];
     fix -> wait;
     undraft -> review;
 }
@@ -84,7 +85,8 @@ digraph review {
     notify_stale [label="Notify user, ask\nhow to proceed.\nPause.", shape=box];
     read_all [label="Read ALL comments\n(reviews + inline review comments)", shape=box];
     any_comments [label="Unaddressed comments?", shape=diamond];
-    clarify [label="Any comment unclear?\nStop — clarify ALL unclear\nitems before proceeding.", shape=diamond];
+    clarify [label="Any comment unclear?", shape=diamond];
+    ask_clarify [label="Ask user, await\nclarification", shape=box];
     categorize [label="Categorize + show table\n(BLOCKING/IMPORTANT/OPTIONAL\n/INVALID/OUT OF SCOPE)", shape=box];
     oos [label="OUT OF SCOPE\ncomments?", shape=diamond];
     ask_oos [label="Ask user for each\nOUT OF SCOPE comment.\nPause until resolved.", shape=box];
@@ -113,7 +115,8 @@ digraph review {
     any_comments -> clarify [label="yes"];
     any_comments -> merge_check [label="no, approved"];
     clarify -> categorize [label="all clear"];
-    clarify -> wait [label="unclear — pause\nuntil resolved"];
+    clarify -> ask_clarify [label="yes"];
+    ask_clarify -> categorize;
     categorize -> oos;
     oos -> ask_oos [label="yes — pause\nuntil resolved"];
     oos -> any_fix [label="no"];
@@ -145,9 +148,7 @@ glab api /projects/:fullpath/merge_requests/:iid/discussions
 
 ## Handling Unclear Feedback
 
-If any comment is unclear, stop — do not implement anything yet. Ask for clarification on ALL unclear items at once.
-
-**Example:**
+Ask for clarification on ALL unclear items at once — not one at a time. **Example:**
 ```
 Reviewer: "Fix 1-6"
 You understand 1,2,3,6. Unclear on 4,5.
@@ -216,10 +217,7 @@ Proceeding with BLOCKING + IMPORTANT fixes. Waiting on your input for OUT OF SCO
 
 ## Responding to Comments
 
-**Always respond in the same language as the PR and review comments.**
-**Respond after pushing fixes** — reference the actual commit hash.
-**Respond to every comment individually — never a single summary.**
-**Reply in the comment thread, not as a top-level PR comment.**
+**Reply in the comment thread, not as a top-level PR comment.** For fixed comments: respond after pushing, referencing the commit hash. For all others: respond inline immediately.
 
 ```bash
 # GitHub — reply in an inline review comment thread
@@ -249,11 +247,7 @@ Trigger conditions are the same as the verification checklist above — push bac
 - Reference working tests or existing code as evidence
 - Involve the user if the disagreement is architectural
 
-**If you pushed back and were wrong:**
-```
-"Checked [X] — confirmed it does [Y]. Fixed in [commit hash]."
-```
-State the correction factually. No apology, no over-explaining.
+Use the response table template for the correction — state it factually, no apology, no over-explaining.
 
 ## Resolving Threads
 
