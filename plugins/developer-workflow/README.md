@@ -14,9 +14,9 @@ Guides safe, verified technology migrations in Gradle/Android/Kotlin/KMP project
 - Verifies nothing changed; presents visual diffs to user for approval
 - Cleans up old technology: dead code, unused Gradle deps, stale imports
 
-Examples: Java Date → Kotlin Date, XML layouts → Jetpack Compose, data binding → view binding, Android → Kotlin Multiplatform.
+Examples: Java Date → Kotlin Date, XML layouts → Jetpack Compose, data binding → view binding, RxJava → coroutines.
 
-Use when migrating any code from one technology to another.
+Use when migrating code from one technology to another within an existing project.
 
 ### `prepare-for-pr`
 
