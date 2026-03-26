@@ -1,8 +1,22 @@
 # developer-workflow
 
-Claude Code plugin with skills for developer workflow habits — preparing branches for code review and managing the full PR lifecycle.
+Claude Code plugin with skills for developer workflow habits — safe code migration, preparing branches for code review, and managing the full PR lifecycle.
 
 ## Skills
+
+### `code-migration`
+
+Guides safe, verified technology migrations in Gradle/Android/Kotlin/KMP projects:
+- Discovers what needs migrating by reading the target (file, class, directory, or module)
+- Chooses the right strategy: **in-place** (small, well-tested targets) or **parallel** (many callers, large scope, module restructuring)
+- Snapshots current behavior before touching any code (tests / screenshots / API checklist)
+- Migrates with green builds at every step
+- Verifies nothing changed; presents visual diffs to user for approval
+- Cleans up old technology: dead code, unused Gradle deps, stale imports
+
+Examples: Java Date → Kotlin Date, XML layouts → Jetpack Compose, data binding → view binding, RxJava → coroutines.
+
+Use when migrating code from one technology to another within an existing project.
 
 ### `prepare-for-pr`
 
