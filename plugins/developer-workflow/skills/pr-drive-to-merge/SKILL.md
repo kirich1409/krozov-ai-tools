@@ -18,15 +18,15 @@ Before starting, detect the PR and platform:
 ```bash
 # GitHub — fetch all needed fields in one call
 PR_INFO=$(gh pr view --json number,baseRefName,isDraft)
-PR_NUMBER=$(echo $PR_INFO | jq -r .number)
-BASE=$(echo $PR_INFO | jq -r .baseRefName)
-IS_DRAFT=$(echo $PR_INFO | jq -r .isDraft)
+PR_NUMBER=$(echo "$PR_INFO" | jq -r .number)
+BASE=$(echo "$PR_INFO" | jq -r .baseRefName)
+IS_DRAFT=$(echo "$PR_INFO" | jq -r .isDraft)
 
 # GitLab — detect MR number and base branch
 MR_INFO=$(glab mr view --output json)
-MR_NUMBER=$(echo $MR_INFO | jq .iid)
-BASE=$(echo $MR_INFO | jq -r .target_branch)
-IS_DRAFT=$(echo $MR_INFO | jq .draft)
+MR_NUMBER=$(echo "$MR_INFO" | jq .iid)
+BASE=$(echo "$MR_INFO" | jq -r .target_branch)
+IS_DRAFT=$(echo "$MR_INFO" | jq .draft)
 ```
 
 **Platform detection:** check `git remote get-url origin`.
@@ -71,12 +71,6 @@ digraph cicd {
 ```
 
 **Invoking `prepare-for-pr` for fixes:** invoke it as a sub-skill. It runs its own quality loop, commits fixes, and exits when clean. If it pauses for user input, this skill also pauses. After it exits, push: `git push`.
-
-**After every push — check branch is up to date with base:**
-```bash
-git fetch origin $BASE && git status  # look for "behind"
-```
-If behind: rebase immediately (`git rebase origin/$BASE && git push --force-with-lease`) rather than deferring to merge time. Resolve any conflicts that touch files within this PR's scope; for conflicts outside scope, ask the user.
 
 ## Phase 2: Code Review Cycle
 
@@ -135,8 +129,6 @@ gh api repos/{owner}/{repo}/pulls/{number}/comments
 # GitLab — all discussions (includes inline)
 glab api /projects/:fullpath/merge_requests/:iid/discussions
 ```
-
-**Stale detection:** while waiting for re-review, if no new review activity appears after 4 hours, notify the user with the PR link and ask how to proceed (ping the reviewer, wait longer, or merge without the re-review). Pause until the user responds.
 
 ## Handling Unclear Feedback
 
@@ -280,7 +272,7 @@ When all boxes are checked, **stop and ask the user for confirmation**:
 
 Only merge after explicit confirmation. Exception: if the user already pre-approved the merge earlier in the conversation (e.g. "merge it when it's ready"), proceed without asking again.
 
-**Branch behind base — update and handle conflicts:**
+**Branch behind base** — check after every push and before merging. If behind:
 ```bash
 # GitHub
 gh pr update-branch <PR_NUMBER>
