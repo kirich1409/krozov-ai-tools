@@ -7,6 +7,25 @@ on:
     branches: [main]
 
 jobs:
+  validate-marketplace:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check all plugins are registered in marketplace.json
+        run: |
+          set -euo pipefail
+          MARKETPLACE=".claude-plugin/marketplace.json"
+          REGISTERED=$(jq -r '.plugins[].name' "$MARKETPLACE")
+          MISSING=0
+          for dir in plugins/*/; do
+            name=$(basename "$dir")
+            if ! echo "$REGISTERED" | grep -Fxq "$name"; then
+              echo "ERROR: '$name' is in plugins/ but missing from $MARKETPLACE"
+              MISSING=1
+            fi
+          done
+          exit "$MISSING"
+
   build:
     runs-on: ubuntu-latest
     defaults:
