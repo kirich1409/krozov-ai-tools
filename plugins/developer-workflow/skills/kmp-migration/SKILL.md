@@ -241,17 +241,7 @@ android {
 
 > **Note on `kotlinOptions` / `compilations.all`:** If your project's Kotlin version is below 1.9, you may see this older style. It still works but is deprecated — prefer `compilerOptions { }` above.
 
-**If targeting iOS**, also configure the framework that Xcode will consume. Add this inside the `kotlin { }` block after the target declarations:
-
-```kotlin
-// iOS framework configuration — needed for Xcode to import this module
-listOf(iosX64(), iosArm64(), iosSimulatorArm64()).forEach { target ->
-    target.binaries.framework {
-        baseName = "ModuleName"   // the import name in Swift: import ModuleName
-        isStatic = true           // static linking is simpler for most projects
-    }
-}
-```
+**If targeting iOS**, configure the framework that Xcode will consume. Choose based on your integration approach:
 
 **iOS integration options:**
 
@@ -261,9 +251,26 @@ listOf(iosX64(), iosArm64(), iosSimulatorArm64()).forEach { target ->
 | **CocoaPods** | Apply `kotlin("native.cocoapods")` plugin, add podspec config, run `pod install` | Teams already using CocoaPods |
 | **Swift Package Manager** | Embed XCFramework as a binary target in `Package.swift` | Teams using SPM |
 
-For direct XCFramework, add to the `kotlin { }` block:
+For **CocoaPods or SPM**, add this inside the `kotlin { }` block:
 ```kotlin
-xcFramework { baseName = "ModuleName" }
+listOf(iosX64(), iosArm64(), iosSimulatorArm64()).forEach { target ->
+    target.binaries.framework {
+        baseName = "ModuleName"   // the import name in Swift: import ModuleName
+        isStatic = true           // static linking is simpler for most projects
+    }
+}
+```
+
+For **direct XCFramework**, wire each iOS target to an `XCFramework` instance inside the `kotlin { }` block:
+```kotlin
+val xcf = XCFramework("ModuleName")
+listOf(iosX64(), iosArm64(), iosSimulatorArm64()).forEach { target ->
+    target.binaries.framework {
+        baseName = "ModuleName"
+        isStatic = true
+        xcf.add(this)
+    }
+}
 ```
 Then run `./gradlew assembleXCFramework` — the output is in `build/XCFrameworks/`.
 
@@ -313,7 +320,7 @@ expect fun currentTimeMillis(): Long
 actual fun currentTimeMillis(): Long = System.currentTimeMillis()
 
 // iosMain
-actual fun currentTimeMillis(): Long = NSDate().timeIntervalSince1970.toLong() * 1000
+actual fun currentTimeMillis(): Long = (NSDate().timeIntervalSince1970 * 1000.0).toLong()
 ```
 
 **`actual typealias` shortcut** — when a platform already provides exactly the type you need, use `typealias` instead of writing a full `actual` implementation:
@@ -386,7 +393,7 @@ kotlin {
 
 ```bash
 ./gradlew :module:compileCommonMainKotlinMetadata   # commonMain compiles alone
-./gradlew :module:compileDebugKotlin                # full Android target
+./gradlew :module:compileDebugKotlinAndroid          # full Android target
 ./gradlew :module:assemble                          # full module build
 ```
 
