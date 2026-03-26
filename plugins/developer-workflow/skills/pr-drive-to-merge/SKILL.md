@@ -89,7 +89,7 @@ digraph review {
     oos [label="OUT OF SCOPE\ncomments?", shape=diamond];
     ask_oos [label="Ask user for each\nOUT OF SCOPE comment.\nPause until resolved.", shape=box];
     any_fix [label="Any BLOCKING or\nIMPORTANT comments?", shape=diamond];
-    verify [label="Verify each suggestion\nagainst codebase reality\n(see Verification section)", shape=box];
+    verify [label="Verify ALL BLOCKING/IMPORTANT\nsuggestions before fixing any\n(see Verification section)", shape=box];
     fix [label="Fix → prepare-for-pr → push", shape=box];
     respond [label="Respond to every comment\nindividually in thread\n(in PR language)\nReference pushed commit hash", shape=box];
     resolve [label="Resolve threads", shape=box];
@@ -107,6 +107,7 @@ digraph review {
     reviewers -> wait [label="yes"];
     wait -> stale_check;
     stale_check -> notify_stale [label="yes"];
+    notify_stale -> wait [label="user responds"];
     stale_check -> read_all [label="no"];
     read_all -> any_comments;
     any_comments -> clarify [label="yes"];
@@ -144,13 +145,7 @@ glab api /projects/:fullpath/merge_requests/:iid/discussions
 
 ## Handling Unclear Feedback
 
-```
-IF any comment is unclear:
-  STOP — do not implement anything yet
-  Ask for clarification on ALL unclear items at once
-
-WHY: Items may be related. Partial understanding = wrong implementation.
-```
+If any comment is unclear, stop — do not implement anything yet. Ask for clarification on ALL unclear items at once.
 
 **Example:**
 ```
@@ -237,7 +232,7 @@ gh api repos/{owner}/{repo}/pulls/{number}/comments/{comment_id}/replies \
 | Category | Response template |
 |----------|------------------|
 | BLOCKING/IMPORTANT (fixed) | `Fixed in [commit hash]. [What changed and why.]` |
-| BLOCKING/IMPORTANT (pushed back, then verified correct) | `You were right — checked [X] and it does [Y]. Fixed in [commit hash].` |
+| BLOCKING/IMPORTANT (pushed back, then verified correct) | `Checked [X] — confirmed it does [Y]. Fixed in [commit hash].` |
 | BLOCKING/IMPORTANT (pushing back) | `[Technical reasoning]. [Evidence from codebase.] Leaving as-is.` |
 | OPTIONAL | `Not addressing in this PR to keep it focused on [goal].` *(If genuinely useful: "Logged as [issue link] for follow-up.")* |
 | INVALID (outdated) | `This was addressed in [commit]. [File/code] now [does X].` |
@@ -246,12 +241,7 @@ gh api repos/{owner}/{repo}/pulls/{number}/comments/{comment_id}/replies \
 
 ## When to Push Back
 
-Push back when:
-- Suggestion breaks existing functionality
-- Reviewer lacks full context (e.g., missed why the code is the way it is)
-- Violates YAGNI (unused feature)
-- Technically incorrect for this stack or platform
-- Conflicts with architectural decisions made for this PR
+Trigger conditions are the same as the verification checklist above — push back when any check fails. See "Verifying Suggestions Before Implementing".
 
 **How to push back:**
 - Use technical reasoning, not defensiveness
@@ -261,7 +251,7 @@ Push back when:
 
 **If you pushed back and were wrong:**
 ```
-"You were right — checked [X] and it does [Y]. Fixed in [commit hash]."
+"Checked [X] — confirmed it does [Y]. Fixed in [commit hash]."
 ```
 State the correction factually. No apology, no over-explaining.
 
