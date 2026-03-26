@@ -114,7 +114,7 @@ digraph review {
     read_all -> any_comments;
     any_comments -> clarify [label="yes"];
     any_comments -> merge_check [label="no, approved"];
-    clarify -> categorize [label="all clear"];
+    clarify -> categorize [label="no"];
     clarify -> ask_clarify [label="yes"];
     ask_clarify -> categorize;
     categorize -> oos;
