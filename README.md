@@ -1,5 +1,9 @@
 # krozov-ai-tools
 
+[![CI](https://github.com/kirich1409/krozov-ai-tools/actions/workflows/ci.yml/badge.svg)](https://github.com/kirich1409/krozov-ai-tools/actions/workflows/ci.yml)
+[![npm](https://img.shields.io/npm/v/@krozov/maven-central-mcp)](https://www.npmjs.com/package/@krozov/maven-central-mcp)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE.md)
+
 Claude Code plugin marketplace by Kirill Rozov.
 
 ## Installation
@@ -51,13 +55,15 @@ See [`plugins/sensitive-guard/`](plugins/sensitive-guard/) for full documentatio
 
 ### developer-workflow
 
-Developer workflow skills — preparing branches for code review and managing the full PR lifecycle.
+Developer workflow skills — preparing branches for code review, managing the full PR lifecycle, and safely migrating technology in Android/Kotlin/KMP projects.
 
 **Features:**
 - `prepare-for-pr` — quality loop (build → simplify → self-review → lint/tests) before creating a PR
 - `pr-drive-to-merge` — drives an existing PR/MR to merge: monitors CI/CD, triages reviewer comments, responds and resolves threads, loops until merge requirements are met
+- `code-migration` — safe in-place or parallel migration of any technology in Gradle/Android/Kotlin projects
+- `kmp-migration` — full Kotlin Multiplatform migration for Android modules
 
-**Skills:** `/prepare-for-pr`, `/pr-drive-to-merge`
+**Skills:** `/prepare-for-pr`, `/pr-drive-to-merge`, `/code-migration`, `/kmp-migration`
 
 See [`plugins/developer-workflow/`](plugins/developer-workflow/) for full documentation.
 

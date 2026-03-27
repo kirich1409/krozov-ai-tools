@@ -1,0 +1,41 @@
+name: Bug Report
+description: Something isn't working as expected
+labels: ["bug"]
+body:
+  - type: dropdown
+    id: plugin
+    attributes:
+      label: Plugin
+      options:
+        - maven-mcp
+        - sensitive-guard
+        - developer-workflow
+    validations:
+      required: true
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Description
+      description: What happened? What did you expect?
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Steps to Reproduce
+      placeholder: |
+        1. ...
+        2. ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      placeholder: |
+        - Claude Code version:
+        - Plugin version:
+        - OS:

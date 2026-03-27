@@ -34,7 +34,7 @@
       "author": {
         "name": "kirich1409"
       },
-      "version": "0.1.0",
+      "version": "0.2.0",
       "category": "development",
       "homepage": "https://github.com/kirich1409/krozov-ai-tools",
       "source": "./plugins/developer-workflow"
