@@ -16,15 +16,17 @@ Takes an existing PR/MR and drives it to merge autonomously. Loops through CI/CD
 Before starting, detect the PR and platform:
 
 ```bash
-# GitHub — detect PR number and base branch
-PR_NUMBER=$(gh pr view --json number -q .number)
-BASE=$(gh pr view --json baseRefName -q .baseRefName)
-IS_DRAFT=$(gh pr view --json isDraft -q .isDraft)
+# GitHub — fetch all needed fields in one call
+PR_INFO=$(gh pr view --json number,baseRefName,isDraft)
+PR_NUMBER=$(echo "$PR_INFO" | jq -r .number)
+BASE=$(echo "$PR_INFO" | jq -r .baseRefName)
+IS_DRAFT=$(echo "$PR_INFO" | jq -r .isDraft)
 
 # GitLab — detect MR number and base branch
-MR_NUMBER=$(glab mr view --output json | jq .iid)
-BASE=$(glab mr view --output json | jq -r .target_branch)
-IS_DRAFT=$(glab mr view --output json | jq .draft)
+MR_INFO=$(glab mr view --output json)
+MR_NUMBER=$(echo "$MR_INFO" | jq .iid)
+BASE=$(echo "$MR_INFO" | jq -r .target_branch)
+IS_DRAFT=$(echo "$MR_INFO" | jq .draft)
 ```
 
 **Platform detection:** check `git remote get-url origin`.
@@ -62,6 +64,7 @@ digraph cicd {
     investigate -> our_fault;
     our_fault -> fix [label="yes"];
     our_fault -> ask [label="no — pause\nuntil user decides"];
+    ask -> fetch_status [label="user decides"];
     fix -> wait;
     undraft -> review;
 }
@@ -76,53 +79,49 @@ digraph review {
     rankdir=TB;
 
     start [label="CI/CD passing", shape=doublecircle];
-    reviewers [label="Reviewers assigned?", shape=diamond];
-    approvals_req [label="Approvals required\nby repo rules?", shape=diamond];
-    ask_assign [label="Notify user: approvals required\nbut no reviewers assigned.\nPause until user assigns.", shape=box];
-    wait [label="Poll for new reviews/comments\nevery ~5 min", shape=box];
-    stale_check [label="No activity for\n>4 hours?", shape=diamond];
-    notify_stale [label="Notify user, ask\nhow to proceed.\nPause.", shape=box];
     read_all [label="Read ALL comments\n(reviews + inline review comments)", shape=box];
-    any_comments [label="Unaddressed comments?", shape=diamond];
+    any_comments [label="Any unaddressed\ncomments?", shape=diamond];
     categorize [label="Categorize + show table\n(BLOCKING/IMPORTANT/OPTIONAL\n/INVALID/OUT OF SCOPE)", shape=box];
-    oos [label="OUT OF SCOPE\ncomments?", shape=diamond];
-    ask_oos [label="Ask user for each\nOUT OF SCOPE comment.\nPause until resolved.", shape=box];
+    oos_present [label="OUT OF SCOPE\ncomments?", shape=diamond];
+    ask_oos [label="Ask user for each OUT OF SCOPE\ncomment. Pause until resolved.", shape=box];
+    respond_optional [label="Respond to OPTIONAL and\nnon-praise INVALID immediately", shape=box];
     any_fix [label="Any BLOCKING or\nIMPORTANT comments?", shape=diamond];
-    fix [label="Fix → prepare-for-pr → push", shape=box];
-    respond [label="Respond to every comment\nindividually (in PR language)\nReference pushed commit hash", shape=box];
-    resolve [label="Resolve threads", shape=box];
-    fixes_made [label="Fixes were made?", shape=diamond];
-    rereview [label="Request re-review", shape=box];
-    ci_loop [label="Back to CI/CD monitoring", shape=box];
-    merge_check [label="Merge requirements met?", shape=diamond];
+    push [label="Fix → prepare-for-pr → push", shape=box];
+    respond_fixed [label="Respond to BLOCKING/IMPORTANT\nwith commit hash", shape=box];
+    resolve [label="Resolve all threads", shape=box];
+    fixes_made [label="Push was made\n(BLOCKING/IMPORTANT fixed)?", shape=diamond];
+    rereview [label="Request re-review from reviewers\nwhose comments led to changes", shape=box];
+    wait [label="Wait for re-review\n(poll every ~5 min)", shape=box];
+    stale_check [label="No activity for\n>4 hours?", shape=diamond];
+    notify_stale [label="Notify user, ask\nhow to proceed. Pause.", shape=box];
+    new_comments [label="New unaddressed\ncomments?", shape=diamond];
+    confirm_merge [label="Verify merge requirements checklist.\nIf all met, ask user:\n'Ready to merge — should I go ahead?'", shape=box];
     done [label="MERGE", shape=doublecircle];
 
-    start -> reviewers;
-    reviewers -> approvals_req [label="no"];
-    approvals_req -> ask_assign [label="yes — stop"];
-    approvals_req -> merge_check [label="no"];
-    ask_assign -> wait [label="user assigns reviewers"];
-    reviewers -> wait [label="yes"];
-    wait -> stale_check;
-    stale_check -> notify_stale [label="yes"];
-    stale_check -> read_all [label="no"];
+    start -> read_all;
     read_all -> any_comments;
     any_comments -> categorize [label="yes"];
-    any_comments -> merge_check [label="no, approved"];
-    categorize -> oos;
-    oos -> ask_oos [label="yes — pause\nuntil resolved"];
-    oos -> any_fix [label="no"];
-    ask_oos -> any_fix [label="user decided"];
-    any_fix -> fix [label="yes"];
-    any_fix -> respond [label="no — skip fix"];
-    fix -> respond;
-    respond -> resolve;
+    any_comments -> confirm_merge [label="no"];
+    categorize -> oos_present;
+    oos_present -> ask_oos [label="yes"];
+    oos_present -> respond_optional [label="no"];
+    ask_oos -> respond_optional [label="user decided"];
+    respond_optional -> any_fix;
+    any_fix -> push [label="yes"];
+    any_fix -> resolve [label="no"];
+    push -> respond_fixed;
+    respond_fixed -> resolve;
     resolve -> fixes_made;
-    fixes_made -> rereview [label="yes"];
-    fixes_made -> merge_check [label="no"];
-    rereview -> ci_loop -> wait;
-    merge_check -> done [label="yes"];
-    merge_check -> wait [label="no — keep polling"];
+    fixes_made -> rereview [label="yes — push\nwas made"];
+    fixes_made -> confirm_merge [label="no — only optional/\ninvalid addressed"];
+    rereview -> wait;
+    wait -> stale_check;
+    stale_check -> notify_stale [label="yes"];
+    notify_stale -> wait [label="user responds"];
+    stale_check -> new_comments [label="no"];
+    new_comments -> read_all [label="yes — repeat"];
+    new_comments -> confirm_merge [label="no"];
+    confirm_merge -> done [label="user confirms"];
 }
 ```
 
@@ -136,16 +135,52 @@ gh api repos/{owner}/{repo}/pulls/{number}/comments
 glab api /projects/:fullpath/merge_requests/:iid/discussions
 ```
 
+## Handling Unclear Feedback
+
+Ask for clarification on ALL unclear items at once — not one at a time. **Example:**
+```
+Reviewer: "Fix 1-6"
+You understand 1,2,3,6. Unclear on 4,5.
+
+Wrong: Implement 1,2,3,6 now, ask about 4,5 later
+Right: "I understand items 1,2,3,6. Need clarification on 4 and 5 before proceeding."
+```
+
+## Verifying Suggestions and Pushing Back
+
+Before implementing any BLOCKING or IMPORTANT suggestion, verify it first:
+
+```
+1. Check: Technically correct for THIS codebase?
+2. Check: Would it break existing functionality?
+3. Check: Is there a reason the current code is written this way?
+4. Check: Works on all platforms/versions targeted by this PR?
+5. Check: Does the reviewer have full context?
+```
+
+**If any check fails — push back:**
+- Use technical reasoning, not defensiveness
+- Ask specific questions; reference working tests or existing code as evidence
+- Involve the user if the disagreement is architectural
+- State it factually in the response thread — no apology, no over-explaining
+
+**If you can't easily verify:** say so — "I can't verify this without [X]. Should I [investigate/ask/proceed]?"
+
+**If it conflicts with prior decisions for this PR:** discuss with user first.
+
+**YAGNI check** — if a reviewer suggests "implementing it properly" or adding infrastructure: search codebase for actual usage. If unused: push back. If used: implement properly.
+
 ## Comment Categories
 
 Assign ONE category per comment. Show full table before acting. Proceed without waiting for approval except for OUT OF SCOPE.
 
 | Category | When to use | Action |
 |----------|-------------|--------|
-| **BLOCKING** | Security issues, critical bugs, compliance violations | Fix → respond → Resolve |
-| **IMPORTANT** | Bugs, missing error handling, missing tests | Fix → respond → Resolve |
+| **BLOCKING** | Security issues, critical bugs, compliance violations | Verify → Fix → respond → Resolve |
+| **IMPORTANT** | Bugs, missing error handling, missing tests | Verify → Fix → respond → Resolve |
 | **OPTIONAL** | Style, naming preference, refactoring suggestion, nitpick | Respond acknowledging → Resolve without fixing |
-| **INVALID** | Already fixed, no longer applies, praise | Respond acknowledging → Resolve |
+| **INVALID** | Already fixed, no longer applies | Respond acknowledging → Resolve |
+| **INVALID (praise)** | Compliments, thanks | Resolve without responding |
 | **OUT OF SCOPE** | Requires changes outside this PR | Ask user before acting |
 
 **Show table format:**
@@ -158,7 +193,7 @@ Assign ONE category per comment. Show full table before acting. Proceed without 
 | 1 | @dev | auth.ts:23 | Password in plaintext | BLOCKING | Will fix |
 | 2 | @dev | auth.ts:12 | Rename doAuth | OPTIONAL | Will acknowledge |
 | 3 | @qa | auth.ts:45 | Missing error handling | IMPORTANT | Will fix |
-| 4 | @dev | auth.ts:67 | Nice work! | INVALID | Will acknowledge |
+| 4 | @dev | auth.ts:67 | Nice work! | INVALID (praise) | Will resolve |
 | 5 | @dev | utils.ts:10 | Whole file needs refactor | OUT OF SCOPE | Need your input |
 
 Proceeding with BLOCKING + IMPORTANT fixes. Waiting on your input for OUT OF SCOPE (#5).
@@ -166,16 +201,27 @@ Proceeding with BLOCKING + IMPORTANT fixes. Waiting on your input for OUT OF SCO
 
 ## Responding to Comments
 
-**Always respond in the same language as the PR and review comments.**
-**Respond after pushing fixes** — reference the actual commit hash.
-**Respond to every comment individually — never a single summary.**
+**Reply in the comment thread when possible.** For fixed comments: respond after pushing, referencing the commit hash. For all others: respond immediately.
+
+```bash
+# GitHub — reply to an inline review comment (omit pull number — it's not part of this endpoint)
+gh api repos/{owner}/{repo}/pulls/comments/{comment_id}/replies \
+  --method POST -f body="Your reply here"
+
+# GitHub — reply to a review summary or top-level PR comment (not an inline thread)
+gh pr comment $PR_NUMBER --body "Your reply here"
+```
+
+**No performative agreement.** Never write "You're absolutely right!", "Great point!", "Excellent feedback!", or thank the reviewer. Actions speak — just fix it and show what changed.
 
 | Category | Response template |
 |----------|------------------|
 | BLOCKING/IMPORTANT (fixed) | `Fixed in [commit hash]. [What changed and why.]` |
-| OPTIONAL | `Good point. Not addressing in this PR to keep it focused on [goal].` *(If genuinely useful: "Logged as [issue link] for follow-up.")* |
+| BLOCKING/IMPORTANT (pushed back, then verified correct) | `Checked [X] — confirmed it does [Y]. Fixed in [commit hash].` |
+| BLOCKING/IMPORTANT (pushing back) | `[Technical reasoning]. [Evidence from codebase.] Leaving as-is.` |
+| OPTIONAL | `Not addressing in this PR to keep it focused on [goal].` *(If genuinely useful: "Logged as [issue link] for follow-up.")* |
 | INVALID (outdated) | `This was addressed in [commit]. [File/code] now [does X].` |
-| INVALID (praise) | `Thank you!` |
+| INVALID (praise) | *(no response needed — just resolve)* |
 | OUT OF SCOPE | Per user's instruction |
 
 ## Resolving Threads
@@ -207,7 +253,7 @@ glab api /projects/:fullpath/merge_requests/:iid/discussions/:discussion_id \
 
 ## Re-Review
 
-Request re-review only from reviewers whose BLOCKING or IMPORTANT comments were fixed:
+Request re-review only from reviewers whose BLOCKING or IMPORTANT comments led to actual changes. Do not re-request from reviewers who only left OPTIONAL or INVALID comments.
 
 ```bash
 # GitHub — re-request review (use API, not --add-reviewer which only adds new reviewers)
@@ -215,9 +261,15 @@ REPO=$(gh repo view --json nameWithOwner -q .nameWithOwner)
 gh api --method POST /repos/$REPO/pulls/$PR_NUMBER/requested_reviewers \
   -f "reviewers[]=username1" -f "reviewers[]=username2"
 
-# GitLab — re-request review (replace reviewers, which triggers re-review notification)
-glab mr update <MR_NUMBER> --reviewer username1,username2
-# To add without removing existing: --reviewer +username1,+username2
+# GitLab — re-request review via API (glab mr update has no --reviewer flag)
+PROJECT_ID=$(glab repo view --output json | jq -r '.id')
+# Build reviewer_ids[] args for each username
+REVIEWER_ARGS=()
+for username in username1 username2; do
+  id=$(glab api "/users?username=${username}" --jq '.[0].id')
+  REVIEWER_ARGS+=(-f "reviewer_ids[]=${id}")
+done
+glab api /projects/$PROJECT_ID/merge_requests/$MR_NUMBER --method PUT "${REVIEWER_ARGS[@]}"
 ```
 
 ## Merge Requirements Checklist
@@ -228,7 +280,14 @@ Before merging, verify all of:
 - [ ] No unresolved blocking threads
 - [ ] Branch up to date with base branch
 
-**Branch behind base — update and handle conflicts:**
+When all boxes are checked, **stop and ask the user for confirmation**:
+
+> All merge requirements are met — CI passing, approvals received, all threads resolved, branch up to date.
+> Should I go ahead and merge?
+
+Only merge after explicit confirmation. Exception: if the user already pre-approved the merge earlier in the conversation (e.g. "merge it when it's ready"), proceed without asking again.
+
+**Branch behind base** — check after every push and before merging. If behind:
 ```bash
 # GitHub
 gh pr update-branch <PR_NUMBER>
@@ -245,9 +304,4 @@ glab mr rebase <MR_NUMBER>
 
 ## Tools Priority
 
-**GitHub/GitLab CLI → REST API → MCP**
-
-| Platform | Remote URL pattern | CLI |
-|----------|-------------------|-----|
-| GitHub | `github.com` (HTTPS or SSH `git@github.com:...`) | `gh` |
-| GitLab | `gitlab` in URL | `glab` |
+Prefer **CLI → REST API → MCP** in that order. Platform detection is covered in Setup.
