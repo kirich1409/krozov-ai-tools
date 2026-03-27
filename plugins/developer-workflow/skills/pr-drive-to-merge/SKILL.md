@@ -82,8 +82,9 @@ digraph review {
     read_all [label="Read ALL comments\n(reviews + inline review comments)", shape=box];
     any_comments [label="Any unaddressed\ncomments?", shape=diamond];
     categorize [label="Categorize + show table\n(BLOCKING/IMPORTANT/OPTIONAL\n/INVALID/OUT OF SCOPE)", shape=box];
+    oos_present [label="OUT OF SCOPE\ncomments?", shape=diamond];
     ask_oos [label="Ask user for each OUT OF SCOPE\ncomment. Pause until resolved.", shape=box];
-    respond_optional [label="Respond to OPTIONAL/INVALID\ncomments immediately", shape=box];
+    respond_optional [label="Respond to OPTIONAL and\nnon-praise INVALID immediately", shape=box];
     any_fix [label="Any BLOCKING or\nIMPORTANT comments?", shape=diamond];
     push [label="Fix → prepare-for-pr → push", shape=box];
     respond_fixed [label="Respond to BLOCKING/IMPORTANT\nwith commit hash", shape=box];
@@ -101,9 +102,10 @@ digraph review {
     read_all -> any_comments;
     any_comments -> categorize [label="yes"];
     any_comments -> confirm_merge [label="no"];
-    categorize -> ask_oos [label="OUT OF SCOPE present\n— pause until resolved"];
+    categorize -> oos_present;
+    oos_present -> ask_oos [label="yes"];
+    oos_present -> respond_optional [label="no"];
     ask_oos -> respond_optional [label="user decided"];
-    categorize -> respond_optional [label="no OUT OF SCOPE"];
     respond_optional -> any_fix;
     any_fix -> push [label="yes"];
     any_fix -> resolve [label="no"];
