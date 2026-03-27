@@ -20,7 +20,7 @@ Creates a pull request or merge request for the current branch:
 - Auto-generates title from branch name and commit history
 - Produces a structured description from the diff
 - Selects labels from the repo's existing label set
-- Suggests reviewers from git blame history
+- Suggests reviewers from recent git history on changed files
 - Supports GitHub and GitLab, draft or ready-for-review
 
 ### `code-migration`

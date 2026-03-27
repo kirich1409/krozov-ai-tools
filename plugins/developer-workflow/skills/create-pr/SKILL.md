@@ -6,7 +6,6 @@ description: >
   reviewer suggestions from git history, and PR creation.
   Invoke whenever the user says "create a PR", "open a PR", "make a PR", "create a draft PR",
   "submit for review", "push a PR", "open an MR", or any variation — draft or not.
-  Also invoke proactively after prepare-for-pr completes if no PR exists yet.
 ---
 
 # Create PR

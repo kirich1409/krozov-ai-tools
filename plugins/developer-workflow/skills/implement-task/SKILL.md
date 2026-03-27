@@ -1,7 +1,7 @@
 ---
 name: implement-task
 description: >
-  Explicit-only skill — only invoke when the user directly requests it (e.g. "/implement-task").
+  Explicit-only skill — only invoke when the user directly requests it (e.g. "/developer-workflow:implement-task").
   Do NOT trigger automatically on implementation requests — the user controls when this workflow runs.
   Orchestrates the full development cycle: isolated worktree → TDD → implementation → quality loop
   (simplify + code review) → draft PR → CI/CD monitoring → merge-ready PR.
@@ -11,7 +11,7 @@ description: >
 
 ## Overview
 
-**Explicit-only.** Run this skill only when directly requested — not on every implementation task.
+**Explicit-only.** Run this skill only when directly requested via `/developer-workflow:implement-task` — not on every implementation task.
 
 Full autonomous implementation cycle — from understanding the task to a merge-ready PR.
 Ask the user only when a decision is **architecturally significant** or **irreversible**. Everything else: decide and proceed.
@@ -29,7 +29,7 @@ Invoke `superpowers:using-git-worktrees`. All subsequent work happens in that wo
 ### 0.2 Understand the task
 
 Establish three things before writing any code:
-- **What** needs to change (behaviour, not just files)
+- **What** needs to change (behavior, not just files)
 - **Why** (context for edge-case decisions)
 - **Done criteria** — what does success look like?
 
@@ -50,7 +50,7 @@ Select the most specific applicable skill and invoke it:
 | Android/Kotlin technology migration | `developer-workflow:code-migration` |
 | KMP migration | `developer-workflow:kmp-migration` |
 | Multi-step feature or architecture change | `superpowers:writing-plans` → `superpowers:executing-plans` |
-| Bug or unexpected behaviour | `superpowers:systematic-debugging` |
+| Bug or unexpected behavior | `superpowers:systematic-debugging` |
 | Any other implementation work | `superpowers:test-driven-development` (default) |
 
 Follow the chosen skill throughout implementation. Switch to a more specific skill if a better match emerges.
@@ -69,7 +69,7 @@ Update the PR description after each major change so it stays current.
 
 ## Phase 2: Quality Loop
 
-Once implementation is complete, invoke `developer-workflow:prepare-for-pr`. It runs build, simplify, self-review, and lint/tests in a loop — exit criteria and hook behaviour are defined inside that skill.
+Once implementation is complete, invoke `developer-workflow:prepare-for-pr`. It runs build, simplify, self-review, and lint/tests in a loop — exit criteria and hook behavior are defined inside that skill.
 
 After `prepare-for-pr` exits clean, run `code-review:code-review`. Fix any non-minor issues, commit, push, and repeat until only minor issues remain.
 
