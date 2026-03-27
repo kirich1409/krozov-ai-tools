@@ -95,7 +95,7 @@ digraph review {
     stale_check [label="No activity for\n>4 hours?", shape=diamond];
     notify_stale [label="Notify user, ask\nhow to proceed. Pause.", shape=box];
     new_comments [label="New unaddressed\ncomments?", shape=diamond];
-    confirm_merge [label="Ask user:\n'All requirements met — ready to merge.\nShould I go ahead?'", shape=box];
+    confirm_merge [label="Verify merge requirements checklist.\nIf all met, ask user:\n'Ready to merge — should I go ahead?'", shape=box];
     done [label="MERGE", shape=doublecircle];
 
     start -> read_all;
@@ -193,7 +193,7 @@ Assign ONE category per comment. Show full table before acting. Proceed without 
 | 1 | @dev | auth.ts:23 | Password in plaintext | BLOCKING | Will fix |
 | 2 | @dev | auth.ts:12 | Rename doAuth | OPTIONAL | Will acknowledge |
 | 3 | @qa | auth.ts:45 | Missing error handling | IMPORTANT | Will fix |
-| 4 | @dev | auth.ts:67 | Nice work! | INVALID | Will acknowledge |
+| 4 | @dev | auth.ts:67 | Nice work! | INVALID (praise) | Will resolve |
 | 5 | @dev | utils.ts:10 | Whole file needs refactor | OUT OF SCOPE | Need your input |
 
 Proceeding with BLOCKING + IMPORTANT fixes. Waiting on your input for OUT OF SCOPE (#5).
@@ -262,14 +262,14 @@ gh api --method POST /repos/$REPO/pulls/$PR_NUMBER/requested_reviewers \
   -f "reviewers[]=username1" -f "reviewers[]=username2"
 
 # GitLab — re-request review via API (glab mr update has no --reviewer flag)
-FULLPATH=$(glab repo view --output json | jq -r '.nameWithNamespace | gsub(" "; "") | gsub("/"; "%2F")')
+PROJECT_ID=$(glab repo view --output json | jq -r '.id')
 # Build reviewer_ids[] args for each username
 REVIEWER_ARGS=()
 for username in username1 username2; do
   id=$(glab api "/users?username=${username}" --jq '.[0].id')
   REVIEWER_ARGS+=(-f "reviewer_ids[]=${id}")
 done
-glab api /projects/$FULLPATH/merge_requests/$MR_NUMBER --method PUT "${REVIEWER_ARGS[@]}"
+glab api /projects/$PROJECT_ID/merge_requests/$MR_NUMBER --method PUT "${REVIEWER_ARGS[@]}"
 ```
 
 ## Merge Requirements Checklist
