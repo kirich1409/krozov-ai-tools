@@ -11,7 +11,19 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Check all plugins are registered in marketplace.json
+
+      - name: Check no duplicate plugin names in marketplace.json
+        run: |
+          set -euo pipefail
+          MARKETPLACE=".claude-plugin/marketplace.json"
+          DUPES=$(jq -r '[.plugins[].name] | group_by(.) | map(select(length > 1) | .[0]) | .[]' "$MARKETPLACE")
+          if [ -n "$DUPES" ]; then
+            echo "ERROR: Duplicate plugin names in marketplace.json: $DUPES"
+            exit 1
+          fi
+          echo "OK: no duplicate names"
+
+      - name: Check all plugins/ directories are registered in marketplace.json
         run: |
           set -euo pipefail
           MARKETPLACE=".claude-plugin/marketplace.json"
@@ -25,6 +37,54 @@ jobs:
             fi
           done
           exit "$MISSING"
+
+      - name: Check all marketplace.json entries have a plugins/ directory
+        run: |
+          set -euo pipefail
+          MARKETPLACE=".claude-plugin/marketplace.json"
+          MISSING=0
+          while IFS= read -r name; do
+            if [ ! -d "plugins/$name" ]; then
+              echo "ERROR: marketplace.json has '$name' but plugins/$name/ does not exist"
+              MISSING=1
+            else
+              echo "OK: plugins/$name/"
+            fi
+          done < <(jq -r '.plugins[].name' "$MARKETPLACE")
+          exit "$MISSING"
+
+      - name: Check source paths exist
+        run: |
+          set -euo pipefail
+          MARKETPLACE=".claude-plugin/marketplace.json"
+          MISSING=0
+          while IFS=$'\t' read -r name source; do
+            if [ ! -d "$source" ]; then
+              echo "ERROR: '$name' source path does not exist: $source"
+              MISSING=1
+            else
+              echo "OK: '$name' source $source"
+            fi
+          done < <(jq -r '.plugins[] | [.name, .source] | @tsv' "$MARKETPLACE")
+          exit "$MISSING"
+
+      - name: Check plugin.json name matches marketplace.json name
+        run: |
+          set -euo pipefail
+          MARKETPLACE=".claude-plugin/marketplace.json"
+          MISMATCH=0
+          while IFS=$'\t' read -r name source; do
+            plugin_json="${source}/.claude-plugin/plugin.json"
+            [ -f "$plugin_json" ] || continue
+            plugin_name=$(jq -r '.name' "$plugin_json")
+            if [ "$name" != "$plugin_name" ]; then
+              echo "ERROR: '$name' name mismatch: marketplace.json=$name, plugin.json=$plugin_name"
+              MISMATCH=1
+            else
+              echo "OK: '$name' name consistent"
+            fi
+          done < <(jq -r '.plugins[] | [.name, .source] | @tsv' "$MARKETPLACE")
+          exit "$MISMATCH"
 
       - name: Check marketplace.json versions match plugin.json versions
         run: |
@@ -48,6 +108,67 @@ jobs:
           done < <(jq -r '.plugins[] | [.name, .version, .source] | @tsv' "$MARKETPLACE")
           exit "$MISMATCH"
 
+      - name: Check all versions are valid semver (x.y.z)
+        run: |
+          set -euo pipefail
+          MARKETPLACE=".claude-plugin/marketplace.json"
+          SEMVER='^[0-9]+\.[0-9]+\.[0-9]+$'
+          INVALID=0
+          while IFS=$'\t' read -r name version source; do
+            if ! echo "$version" | grep -qE "$SEMVER"; then
+              echo "ERROR: '$name' marketplace.json version is not semver: $version"
+              INVALID=1
+            fi
+            plugin_json="${source}/.claude-plugin/plugin.json"
+            if [ -f "$plugin_json" ]; then
+              plugin_version=$(jq -r '.version' "$plugin_json")
+              if ! echo "$plugin_version" | grep -qE "$SEMVER"; then
+                echo "ERROR: '$name' plugin.json version is not semver: $plugin_version"
+                INVALID=1
+              fi
+            fi
+          done < <(jq -r '.plugins[] | [.name, .version, .source] | @tsv' "$MARKETPLACE")
+          exit "$INVALID"
+
+      - name: Check skills directories exist
+        run: |
+          set -euo pipefail
+          MARKETPLACE=".claude-plugin/marketplace.json"
+          MISSING=0
+          while IFS=$'\t' read -r name source; do
+            plugin_json="${source}/.claude-plugin/plugin.json"
+            [ -f "$plugin_json" ] || continue
+            skills_rel=$(jq -r '.skills // empty' "$plugin_json")
+            [ -n "$skills_rel" ] || continue
+            skills_path="${source}/${skills_rel#./}"
+            if [ ! -d "$skills_path" ]; then
+              echo "ERROR: '$name' skills path does not exist: $skills_path"
+              MISSING=1
+            else
+              echo "OK: '$name' skills at $skills_path"
+            fi
+          done < <(jq -r '.plugins[] | [.name, .source] | @tsv' "$MARKETPLACE")
+          exit "$MISSING"
+
+      - name: Check hook scripts are executable
+        run: |
+          set -euo pipefail
+          MARKETPLACE=".claude-plugin/marketplace.json"
+          ERRORS=0
+          while IFS=$'\t' read -r name source; do
+            hooks_dir="${source}/hooks"
+            [ -d "$hooks_dir" ] || continue
+            while IFS= read -r script; do
+              if [ ! -x "$script" ]; then
+                echo "ERROR: '$name' hook script is not executable: $script"
+                ERRORS=1
+              else
+                echo "OK: '$name' $(basename "$script") is executable"
+              fi
+            done < <(find "$hooks_dir" -name "*.sh")
+          done < <(jq -r '.plugins[] | [.name, .source] | @tsv' "$MARKETPLACE")
+          exit "$ERRORS"
+
   build:
     runs-on: ubuntu-latest
     defaults:
@@ -66,6 +187,17 @@ jobs:
           node-version: ${{ matrix.node-version }}
           cache: npm
           cache-dependency-path: plugins/maven-mcp/package-lock.json
+
+      - name: Verify package.json version matches plugin.json version
+        run: |
+          set -euo pipefail
+          PKG_VERSION=$(node -p 'require("./package.json").version')
+          PLUGIN_VERSION=$(jq -r '.version' plugin/.claude-plugin/plugin.json)
+          if [ "$PKG_VERSION" != "$PLUGIN_VERSION" ]; then
+            echo "::error::package.json version ($PKG_VERSION) does not match plugin.json version ($PLUGIN_VERSION)"
+            exit 1
+          fi
+          echo "OK: version $PKG_VERSION"
 
       - run: npm ci
       - run: npm run lint
