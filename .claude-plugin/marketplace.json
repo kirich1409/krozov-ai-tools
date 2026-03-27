@@ -23,18 +23,18 @@
       "author": {
         "name": "kirich1409"
       },
-      "version": "0.1.0",
+      "version": "0.4.0",
       "category": "security",
       "homepage": "https://github.com/kirich1409/krozov-ai-tools",
       "source": "./plugins/sensitive-guard"
     },
     {
       "name": "developer-workflow",
-      "description": "Developer workflow skills — prepare branches for PR and manage the full PR lifecycle through CI/CD and code review",
+      "description": "Developer workflow skills — safe code migration, PR preparation, and full PR lifecycle through CI/CD and code review",
       "author": {
         "name": "kirich1409"
       },
-      "version": "0.2.0",
+      "version": "0.4.0",
       "category": "development",
       "homepage": "https://github.com/kirich1409/krozov-ai-tools",
       "source": "./plugins/developer-workflow"

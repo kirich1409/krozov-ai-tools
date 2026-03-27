@@ -31,13 +31,18 @@ Always work on changes in a separate branch using a worktree (`.worktrees/`). Cr
 
 **Never run `npm publish` locally.** Publishing happens exclusively via GitHub Actions.
 
-To release a new version of `@krozov/maven-central-mcp`:
-1. Bump `version` in `plugins/maven-mcp/package.json` and `plugins/maven-mcp/plugin/.claude-plugin/plugin.json`
-2. Merge to `main`
-3. Push a git tag matching the version: `git tag v0.4.0 && git push origin v0.4.0`
-4. GitHub Actions (`.github/workflows/release.yml`) triggers on `v*` tags, runs lint/tests/build, then publishes to npm
+All plugins use **unified versioning** — every release bumps all plugins to the same version.
 
-The workflow verifies that the tag matches `package.json` version before publishing.
+To release a new version:
+1. Bump `version` in all of these files to the new version:
+   - `plugins/maven-mcp/package.json`
+   - `plugins/maven-mcp/plugin/.claude-plugin/plugin.json`
+   - `plugins/sensitive-guard/.claude-plugin/plugin.json`
+   - `plugins/developer-workflow/.claude-plugin/plugin.json`
+   - `.claude-plugin/marketplace.json` (all three plugin entries)
+2. Merge to `main`
+3. Push a git tag matching the version: `git tag v0.5.0 && git push origin v0.5.0`
+4. GitHub Actions (`.github/workflows/release.yml`) triggers on `v*` tags, verifies all versions match the tag, runs lint/tests/build, then publishes to npm
 
 ## Worktrees
 

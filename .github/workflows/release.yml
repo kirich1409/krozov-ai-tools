@@ -26,13 +26,40 @@ jobs:
           cache-dependency-path: plugins/maven-mcp/package-lock.json
           registry-url: https://registry.npmjs.org
 
-      - name: Verify version matches tag
+      - name: Verify all versions match tag
+        working-directory: .
         run: |
-          PKG_VERSION="v$(node -p 'require("./package.json").version')"
-          if [ "$PKG_VERSION" != "${{ github.ref_name }}" ]; then
-            echo "::error::Tag ${{ github.ref_name }} does not match package.json version $PKG_VERSION"
-            exit 1
-          fi
+          TAG="${{ github.ref_name }}"
+          VERSION="${TAG#v}"
+          ERRORS=0
+
+          check() {
+            FILE="$1"
+            ACTUAL=$(node -p "require('./$FILE').version")
+            if [ "$ACTUAL" != "$VERSION" ]; then
+              echo "::error::$FILE version \"$ACTUAL\" does not match tag $TAG"
+              ERRORS=$((ERRORS + 1))
+            fi
+          }
+
+          check plugins/maven-mcp/package.json
+          check plugins/maven-mcp/plugin/.claude-plugin/plugin.json
+          check plugins/sensitive-guard/.claude-plugin/plugin.json
+          check plugins/developer-workflow/.claude-plugin/plugin.json
+
+          # Check all plugin versions in marketplace.json
+          node -e "
+            const m = require('./.claude-plugin/marketplace.json');
+            let errors = 0;
+            for (const p of m.plugins) {
+              if (p.version !== '$VERSION') {
+                console.error('::error::marketplace.json plugin \"' + p.name + '\" version \"' + p.version + '\" does not match tag $TAG');
+                errors++;
+              }
+            }
+            process.exit(errors > 0 ? 1 : 0);
+          "
+          [ $ERRORS -eq 0 ] || exit 1
 
       - run: npm ci
       - run: npm run lint
