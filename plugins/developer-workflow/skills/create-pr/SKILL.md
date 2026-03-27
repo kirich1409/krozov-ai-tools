@@ -130,7 +130,8 @@ Filter out the current author (`$CURRENT_EMAIL`). Take the top 3 candidates by c
 gh api "/search/users?q=EMAIL+in:email" --jq '.items[0].login' 2>/dev/null
 
 # GitHub — fallback: look up recent commits on the repo by name
-gh api /repos/{owner}/{repo}/commits --jq '.[].author.login' 2>/dev/null | sort | uniq
+REPO=$(gh repo view --json nameWithOwner -q .nameWithOwner)
+gh api /repos/$REPO/commits --jq '.[].author.login' 2>/dev/null | sort | uniq
 
 # GitLab — search by email or name
 glab api "/users?search=EMAIL" --jq '.[0].username' 2>/dev/null

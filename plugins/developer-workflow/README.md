@@ -4,6 +4,25 @@ Claude Code plugin with skills for developer workflow habits — safe code migra
 
 ## Skills
 
+### `implement-task`
+
+Orchestrates the full development cycle for any implementation task:
+- Creates an isolated worktree, timeboxes exploration, selects the best-matching sub-skill
+- Brainstorms design for multi-file changes; follows TDD throughout
+- Creates a draft PR early, runs quality loop (`prepare-for-pr` + `code-review`), then marks the PR ready
+- Delegates CI/CD monitoring and review to `pr-drive-to-merge`
+
+Explicit-only — invoke directly with `/developer-workflow:implement-task`.
+
+### `create-pr`
+
+Creates a pull request or merge request for the current branch:
+- Auto-generates title from branch name and commit history
+- Produces a structured description from the diff
+- Selects labels from the repo's existing label set
+- Suggests reviewers from git blame history
+- Supports GitHub and GitLab, draft or ready-for-review
+
 ### `code-migration`
 
 Guides safe, verified technology migrations in Gradle/Android/Kotlin/KMP projects:
