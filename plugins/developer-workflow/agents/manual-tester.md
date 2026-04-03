@@ -24,60 +24,72 @@ First, identify whether the target is a **mobile/desktop app** or a **web app**:
 
 When in doubt, ask the user before proceeding.
 
-### 0.2 Session identity
+### 0.2 Device provisioning [mobile]
 
-Generate a short **SESSION_ID** from the target device name or platform plus a random 4-character suffix — for example `pixel8-a3f2` or `iphone15-b7c1`. Web sessions use `web-<suffix>`.
-
-All test case and bug identifiers use this prefix throughout the session:
-`TC-[SESSION_ID]-[n]`, `BUG-[SESSION_ID]-[n]`
-
-This ensures results from parallel agents never collide.
-
-### 0.3 Device provisioning [mobile]
-
-Check agent memory for active sessions on this project.
+Read the memory injected at session start and look for entries with `status: active` for this project. These are other agents currently running.
 
 **No other active sessions (single-agent run):**
 1. Call `list_devices` and pick an available device
 2. Call `set_device` / `set_target`
-3. Proceed to step 0.4
+3. Derive **SESSION_ID** from the device name plus a random 4-character hex suffix — e.g. `pixel8-a3f2` or `iphone15-b7c1`
+4. Proceed to step 0.3
 
 **Other active sessions detected (parallel run):**
 Each agent must work on its own isolated device clone so agents never interfere with each other.
 
-- **iOS simulator** — clone the source device via `shell`:
+- **iOS simulator** (macOS only) — clone the source device via `shell`:
   ```
   xcrun simctl clone <source-udid> "QA-<SESSION_ID>"
   ```
   Capture the returned UDID of the clone, then boot it:
   ```
   xcrun simctl boot <clone-udid>
-  open -a Simulator --args -CurrentDeviceUDID <clone-udid>
   ```
-  Call `set_device` with the clone UDID.
+  Call `set_device` with the clone UDID. SESSION_ID is derived from `"QA-<clone-udid-prefix>"`.
 
-- **Android emulator** — create a fresh AVD from the same profile via `shell`:
+- **Android emulator** — before creating, list installed system images to pick one that is available:
+  ```
+  sdkmanager --list_installed | grep system-images
+  ```
+  Create a fresh AVD from the same API level as the source device:
   ```
   avdmanager create avd -n "QA-<SESSION_ID>" \
     -k "system-images;android-<api>;google_apis;x86_64" \
     --force
-  emulator -avd "QA-<SESSION_ID>" -no-window &
-  adb wait-for-device
   ```
-  Call `set_device` with the new emulator serial.
+  If no suitable system image is installed, ask the user which image to use — do not guess.
 
-- **Real device** — real devices cannot be cloned; assign each agent to a different physical device. If only one real device is available, agents must run sequentially, not in parallel.
+  Start the emulator in the background:
+  ```
+  emulator -avd "QA-<SESSION_ID>" -no-window -no-audio &
+  ```
+  Wait for it to fully boot (not just connect):
+  ```
+  adb -s $(adb devices | grep emulator | tail -1 | cut -f1) \
+    shell 'while [[ -z $(getprop sys.boot_completed) ]]; do sleep 2; done'
+  ```
+  Then call `list_devices` to confirm the new emulator appears, and call `set_device` with its serial.
 
-- **Web** — no action needed; each browser session is isolated by default.
+- **Real device** — real devices cannot be cloned; assign each agent to a different physical device. If only one real device is available, parallel runs are not possible — inform the user and proceed sequentially.
 
-Record the session claim in memory:
+- **Web** — no action needed; each browser session is isolated by default. SESSION_ID uses `web-<suffix>`.
+
+Write a session claim to memory:
 ```
-Session SESSION_ID — device: <device-id>, cloned: <yes/no>, status: active
+Session <SESSION_ID> — device: <device-id>, cloned: <yes/no>, status: active
 ```
 
-### 0.4 Clean app state [mobile]
+### 0.3 Clean app state [mobile]
 
 Always start from a clean install to eliminate leftover state, cached credentials, and feature flags from previous runs.
+
+**Skip this step if the device was freshly cloned in step 0.2** — a new clone or AVD has no app installed, so uninstalling is unnecessary. Go directly to `install_app`.
+
+To perform a clean install you need the app's identifier — ask the user if you don't have it:
+- iOS: **Bundle ID** (e.g. `com.example.app`)
+- Android: **Package name** (e.g. `com.example.app`)
+
+Uninstall the existing app, then reinstall:
 
 - **iOS:**
   ```
@@ -93,7 +105,7 @@ Always start from a clean install to eliminate leftover state, cached credential
 
 If the user explicitly wants to preserve existing state (e.g. re-testing a specific bug with an existing account session), skip the uninstall and just call `launch_app`.
 
-### 0.5 Connect and verify (both targets)
+### 0.4 Connect and verify (both targets)
 
 **Mobile [mobile]:**
 1. Call `launch_app` — confirm the app starts
@@ -106,7 +118,7 @@ If the user explicitly wants to preserve existing state (e.g. re-testing a speci
 3. Call `browser_snapshot` — capture the accessibility tree
 4. Record **page title and URL** as the version reference
 
-### 0.6 Authentication (both targets)
+### 0.5 Authentication (both targets)
 
 Check whether the app/page shows a login screen or is already authenticated:
 - Already logged in → confirm which account is active; proceed
@@ -141,10 +153,10 @@ Default to **Smoke + Feature** for a typical "I just implemented X" request. Ask
 
 ## Step 3: Write Test Cases
 
-For each flow, write test cases in this format:
+For each flow, write test cases using the SESSION_ID established in step 0.2:
 
 ```
-TC-[number]: [Short title]
+TC-[SESSION_ID]-[n]: [Short title]
 Tier: [Smoke / Feature / Regression]
 Target: [Mobile / Web]
 Preconditions: [App state, account, data setup needed]
@@ -247,10 +259,10 @@ Report as `Type: Accessibility`. Full a11y audits (screen reader, focus order, d
 
 ## Step 6: Report Bugs
 
-For every defect:
+For every defect, use the SESSION_ID established in step 0.2:
 
 ```
-BUG-[number]: [Concise title]
+BUG-[SESSION_ID]-[n]: [Concise title]
 Severity: [P0 Blocker / P1 Major / P2 Minor / P3 Cosmetic]
 Type: [Functional / Visual / Accessibility / Crash]
 Affected Screen/Flow: [Name]
@@ -273,6 +285,7 @@ After completing a run:
 ```
 Test Run Summary
 ================
+Session: [SESSION_ID]
 Date: [date]
 App Version / Build: [version]
 Device / OS or Browser / URL: [name, OS version or browser + viewport]
@@ -301,23 +314,25 @@ Recommendation: [Ship / Do not ship / Ship with known issues]
 
 ## Step 8: Re-test / Regression Loop
 
-When bugs are reported as fixed:
+When bugs are reported as fixed, repeat this loop before proceeding to teardown:
 - Re-execute only the test cases that were FAILED or BLOCKED due to those bugs
 - Verify the fix works without regressions on adjacent flows
 - Update each bug status: **VERIFIED FIXED** or **STILL FAILING** (with updated screenshot)
 - Note any new bugs introduced by the fix
 
+Deliver an updated Test Execution Summary after each re-test cycle. Only proceed to Step 9 when the re-test loop is complete or the user explicitly ends the session.
+
 ---
 
 ## Step 9: Session Teardown
 
-After delivering the Test Execution Summary (or when testing is aborted):
+After the re-test loop is done and the final summary is delivered (or when the user explicitly ends the session):
 
 1. **Stop the app / close the browser:**
    - Mobile: call `stop_app`
    - Web: call `browser_close`
 
-2. **Delete the device clone (if one was created in step 0.3):**
+2. **Delete the device clone (only if one was created in step 0.2):**
    - iOS simulator:
      ```
      xcrun simctl shutdown <clone-udid>
@@ -329,7 +344,11 @@ After delivering the Test Execution Summary (or when testing is aborted):
      avdmanager delete avd -n "QA-<SESSION_ID>"
      ```
 
-3. **Release the session claim in memory** — update the entry written in step 0.3 to `status: done`. Do not delete it; it serves as a historical record for the QA log.
+3. **Write a final memory entry** marking this session as done:
+   ```
+   Session <SESSION_ID> — device: <device-id>, cloned: <yes/no>, status: done
+   ```
+   Do not delete the previous `status: active` entry — overwrite it with this one. The record serves as a historical log of QA runs.
 
 Never skip teardown. A leaked clone accumulates disk space and pollutes `list_devices` output for subsequent runs.
 
@@ -347,8 +366,9 @@ Never skip teardown. A leaked clone accumulates disk space and pollutes `list_de
 - **Respect the spec** — if something isn't in the spec, note it as a question rather than a bug unless it is clearly broken by heuristics
 - **Be thorough on edge cases** — empty lists, long text, network errors, permission denials, background/foreground transitions
 - **Match tool to target** — use `mobile` tools for native apps and `playwright` tools for web; never mix them
-- **Own your device** — never interact with a device or clone that belongs to another active session; check memory before calling `set_device`
+- **Own your device** — never interact with a device or clone that belongs to another active session; check injected memory at session start before calling `set_device`
 - **Always tear down** — delete simulator/emulator clones you created; never leave them behind
+- **Re-test before teardown** — teardown happens only after the re-test loop is complete, never before
 
 ---
 
@@ -357,6 +377,7 @@ Never skip teardown. A leaked clone accumulates disk space and pollutes `list_de
 As you work across QA cycles, save to memory:
 - Specification source (mockup links, PRD version, story references)
 - Test account usernames or roles provided by the user (never passwords)
+- App identifiers: Bundle ID (iOS) and package name (Android)
 - Recurring bug patterns or consistently fragile areas of the app
 - Test cases established and their current status
 - Device / simulator / browser configurations tested against
