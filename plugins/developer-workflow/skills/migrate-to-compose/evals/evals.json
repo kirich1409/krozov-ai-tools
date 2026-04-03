@@ -1,0 +1,32 @@
+{
+  "skill_name": "migrate-to-compose",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "Migrate OrderListFragment to Compose. The files are in evals/fixtures/eval-1-fragment/: OrderListFragment.kt, OrderListViewModel.kt, fragment_order_list.xml. There are no existing Compose screens in this project yet — it's the first one. No device is connected.",
+      "expected_output": "A migration plan that: (1) correctly identifies source type as Fragment, (2) notes the RecyclerView→LazyColumn replacement needed, (3) identifies SwipeRefresh needs either existing lib or new dep (accompanist or Material pull-to-refresh), (4) produces a stateless OrderListScreen(state, onAction) composable, (5) notes there are no existing Compose patterns to analyze and proceeds with sensible defaults, (6) keeps ViewModel state/action model intact or proposes a clean FooState/FooAction shape.",
+      "files": [
+        "plugins/developer-workflow/skills/migrate-to-compose/evals/fixtures/eval-1-fragment/OrderListFragment.kt",
+        "plugins/developer-workflow/skills/migrate-to-compose/evals/fixtures/eval-1-fragment/OrderListViewModel.kt",
+        "plugins/developer-workflow/skills/migrate-to-compose/evals/fixtures/eval-1-fragment/fragment_order_list.xml"
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "Convert LoginActivity to Compose. The files are in evals/fixtures/eval-2-activity/: LoginActivity.kt, activity_login.xml. Assume the project has a few existing Compose screens that use Material3 theming and a standard FooScreen(state, onAction) pattern. No device connected.",
+      "expected_output": "A migration plan that: (1) correctly identifies source type as Activity, (2) notes the keyboard/IME handling needs imePadding(), (3) notes enableEdgeToEdge() must be called in onCreate before setContent, (4) notes the Snackbar maps to a SnackbarHost in Compose, (5) maps TextInputLayout fields to OutlinedTextField, (6) produces a stateless LoginScreen(state, onAction) composable, (7) identifies navigation — finish()+startActivity → handled by the caller via onAction or LaunchedEffect on state.isSuccess.",
+      "files": [
+        "plugins/developer-workflow/skills/migrate-to-compose/evals/fixtures/eval-2-activity/LoginActivity.kt",
+        "plugins/developer-workflow/skills/migrate-to-compose/evals/fixtures/eval-2-activity/activity_login.xml"
+      ]
+    },
+    {
+      "id": 3,
+      "prompt": "Replace our RatingBarView custom view with a Compose equivalent. The file is at evals/fixtures/eval-3-custom-view/RatingBarView.kt. It supports half-star ratings, custom star size/spacing, and touch drag. It has XML attrs (rating, maxStars, starSize, starSpacing, allowHalfStars). No device connected.",
+      "expected_output": "A migration plan that: (1) correctly identifies source type as custom View with onDraw, (2) explicitly acknowledges the risk of custom Canvas drawing and recommends careful review before merging, (3) first checks if Material3 or any imported lib already provides a star rating component before writing custom code, (4) proposes implementing a reusable RatingBar composable — not at screen level — using DrawScope, (5) maps all XML attrs to function parameters, (6) maps the touch drag to Modifier.pointerInput.",
+      "files": [
+        "plugins/developer-workflow/skills/migrate-to-compose/evals/fixtures/eval-3-custom-view/RatingBarView.kt"
+      ]
+    }
+  ]
+}
