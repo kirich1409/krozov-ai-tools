@@ -3,3 +3,14 @@ dist/
 .worktrees/
 docs/plans/
 *.tgz
+
+.DS_Store
+.claire/
+.remember/
+firebase-debug.log
+package-lock.json
+
+# Claude Code - local only
+.claude/settings.local.json
+.claude/agent-memory/
+.claude/worktrees/
