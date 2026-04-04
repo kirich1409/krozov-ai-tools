@@ -129,6 +129,18 @@ Writes production-ready Jetpack Compose and Compose Multiplatform UI code:
 
 Use when you need Compose UI code written from a design, spec, or migration brief.
 
+### `kotlin-engineer`
+
+Writes production-ready Kotlin for Android and KMP client applications — business logic, data layer, and domain layer:
+- Implements ViewModels, UseCases, Repositories, data sources, mappers, and DI wiring
+- Discovers project architecture patterns (MVI, DI framework, error handling) before writing code
+- Uses modern Kotlin: sealed interfaces, value classes, coroutines, Flow
+- Follows Clean Architecture: domain models first, explicit layer boundaries, no DTOs in presentation
+- Handles KMP targets — enforces `commonMain` import restrictions and `kotlinx.*` library choices
+- Writes unit tests alongside implementation (fakes over mocks, Turbine for Flow testing)
+
+Use when you need Kotlin feature code — everything except Compose UI (which goes to `compose-ui-architect`).
+
 ## Installation
 
 Via marketplace (recommended):
