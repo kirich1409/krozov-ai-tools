@@ -37,7 +37,7 @@ digraph code_migration {
 
 ## PR Strategy
 
-**Never do a large migration in a single MR.** Break migrations into small, independently mergeable PRs — each one green on its own.
+**Never do a large migration in a single MR.** One huge PR is hard to review, hard to roll back, and hides regressions until it's too late. Break migrations into small, independently mergeable PRs — each one green on its own.
 
 | PR | Contents | Why separate |
 |----|----------|-------------|

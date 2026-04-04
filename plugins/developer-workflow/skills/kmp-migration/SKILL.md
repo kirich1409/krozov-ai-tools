@@ -141,4 +141,5 @@ See `references/migration-steps.md` for detailed verify commands and cleanup pro
 | "I noticed a bug, I'll fix it quickly" | Stop, describe to user, get explicit direction |
 | Using `kotlinOptions` / `compilations.all` in Kotlin 2.x | Deprecated — use `compilerOptions { }` DSL |
 | "It's androidx.* so it stays in androidMain" | Wrong — check KMP metadata first with maven-mcp |
+| "Implementations always stay in androidMain" | Only if their dependencies are Android-only; if deps are KMP-compatible, the impl can go to commonMain |
 | Skipping target platform confirmation | Target platforms determine every subsequent decision |
