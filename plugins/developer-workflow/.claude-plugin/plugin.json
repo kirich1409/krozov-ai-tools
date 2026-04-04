@@ -1,6 +1,6 @@
 {
   "name": "developer-workflow",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "description": "Developer workflow skills — full task implementation cycle, View→Compose UI migration, safe code migration, test plan generation, exploratory QA testing, feature verification, PR preparation, PR creation (draft or ready), and full PR lifecycle through CI/CD and code review",
   "skills": "./skills",
   "agents": "./agents"
