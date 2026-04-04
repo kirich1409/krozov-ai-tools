@@ -212,4 +212,4 @@ Walk through `behavior-spec.md` line by line:
 3. Find: dead code or adapter layers made obsolete
 4. **Present full removal list to user — wait for acknowledgment**
 5. Remove everything on the list
-6. `./gradlew build` ��� must be green
+6. `./gradlew build` — must be green
