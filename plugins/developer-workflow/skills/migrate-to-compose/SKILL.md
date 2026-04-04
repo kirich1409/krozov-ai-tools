@@ -29,7 +29,7 @@ Do not fix it silently. Add it to a dedicated **"Issues found"** section in the 
 ## Workflow
 
 ```
-DISCOVER → ANALYZE PATTERNS → GAP ANALYSIS → CONFIRM → IMPLEMENT GAPS → MIGRATE → STATIC VERIFY → [device: compose-visual-verify agent]
+DISCOVER → ANALYZE PATTERNS → GAP ANALYSIS → CONFIRM → IMPLEMENT GAPS → MIGRATE → STATIC VERIFY → [device: manual-tester agent (QA)]
 ```
 
 ---
@@ -109,7 +109,7 @@ Example entry:
 - On error: snackbar shown with error message
 ```
 
-This document is reviewed and confirmed with the user in Phase 4. After migration it becomes the verification checklist — both for Phase 7 code review and for the `compose-visual-verify` device agent.
+This document is reviewed and confirmed with the user in Phase 4. After migration it becomes the verification checklist — both for Phase 7 code review and for the `manual-tester` device agent.
 
 ---
 
@@ -117,44 +117,21 @@ This document is reviewed and confirmed with the user in Phase 4. After migratio
 
 **This step is mandatory.** Find all existing Compose screens in the project and understand how they're built. You're looking for the conventions this specific codebase has already established.
 
-Use the `compose-ui-architect` agent to help read and analyze existing Compose screens.
+Launch the `compose-ui-architect` agent to discover project patterns. Brief it to analyze existing Compose screens and produce a **Pattern Summary** covering: architecture patterns (screen structure, state/action model shape, ViewModel resolution, parameterless action convention, string type in state), theme and design system (color tokens, typography, spacing/dimension tokens, Material version), shared UI components (what exists and where), code style conventions (visibility, stability annotations, composable body length, preview style), and navigation (library, route definition, screen registration).
 
-Look for:
+The agent's Step 1 is designed for exactly this — it will read 2–3 representative screens end-to-end and extract all pattern findings into a structured summary.
 
-**Architecture patterns**
-- How is the Screen composable structured? (`FooScreen(state, onAction)` pattern? ViewModel passed down?)
-- How is state modeled? (`data class FooState`? Sealed class? `UiState<T>` wrapper?)
-- How are actions modeled? (`sealed interface FooAction`? Lambda callbacks?)
-- How are **parameterless actions** represented? (`object Refresh`, `data object Refresh`, or `class Refresh`?) This matters: one-off events can be lost if they're routed through `StateFlow`/`LiveData` or passed through `distinctUntilChanged`/other equality-based filtering, since singleton objects are always equal to themselves. `Channel` and `SharedFlow` emit every event regardless of instance identity, so singletons are safe there. Discover what convention the project uses and follow it, making sure the event transport matches the action model.
-- How are **user-visible strings** passed through state? (`String` literals, `@StringRes Int`, a `UiText` sealed class, etc.) This is important — the type used in existing state classes determines what type new state classes must use. If it can't be determined from context, ask the user before writing state.
-- Where is `viewModel()` called? (Navigation entry point only? Directly in the screen?)
+### Migration-specific discovery
 
-**Component conventions**
-- What shared composables exist in the design system / common module? (Buttons, cards, text fields, loading states, error states, empty states, toolbars/top bars)
-- What naming conventions do composables follow?
-- How are previews written? (Single preview? Multiple state previews?)
-
-**Theming**
-- What theme system is used? (Material 3? Custom design tokens? Both?)
-- How are colors referenced? (`MaterialTheme.colorScheme.X` vs local tokens?)
-- How are text styles applied? (`MaterialTheme.typography.X`?)
-- Are there spacing/dimension tokens, named constants, or raw `dp` values? This matters — if the project uses a token system, never emit raw `dp` literals in migrated code.
-- Does the project use string resources in Compose (`stringResource(R.string.x)`)? If so, all user-visible strings must go through resources, not hardcoded literals.
+In addition to the agent's Pattern Summary, determine these migration-specific items yourself:
 
 **State stream conventions**
 - What stream type do existing ViewModels expose — `StateFlow`, `LiveData`, `RxJava`? Note the dominant pattern.
 - If the ViewModel being migrated uses a legacy stream type (LiveData, RxJava), note it and propose migrating to `StateFlow` as part of this work — unless the user explicitly defers it.
 
-**Code style and visibility**
-- What visibility modifiers do existing Compose files use? The default should be `internal` for everything not crossing a module boundary; `private` for implementation details. Only `public` when genuinely needed by other modules.
-- Are state classes annotated with `@Stable` or `@Immutable`? Note whether the project uses explicit stability annotations or relies on Compose's inference.
-- How long are composable function bodies? Note if the project consistently extracts sub-composables vs. writes long inline lambdas.
+**Event transport compatibility** — verify that the project's parameterless action convention (from the Pattern Summary) is compatible with the event transport mechanism. Singleton objects (`object`/`data object`) are equal to themselves, so they will be deduplicated by `StateFlow`/`LiveData`/`distinctUntilChanged`. `Channel` and `SharedFlow` emit every event regardless of instance identity, so singletons are safe there. If there's a mismatch, note it.
 
-**Navigation**
-- How does navigation work? (Compose Navigation? A custom nav abstraction?)
-- How are screens registered in the nav graph?
-
-Document your findings — you'll use them as constraints when writing the migration.
+Document all findings — they become the constraint set for Phase 6.
 
 ---
 
@@ -421,7 +398,7 @@ _From behavior-scenarios.md — status after static verification._
 ---
 
 ## Visual comparison
-_Populated by compose-visual-verify agent after device testing._
+_Populated by manual-tester agent after device testing._
 
 | State | Before | After |
 |---|---|---|
@@ -454,29 +431,35 @@ _Bugs or gaps discovered during migration. Out of scope — track separately._
 ---
 
 ## Pending before old code can be deleted
-- [ ] Device visual verification passes (compose-visual-verify agent)
+- [ ] Device visual verification passes (manual-tester agent)
 - [ ] QA sign-off on staging
 - [ ] Navigation graph updated to use Compose destination
 - [ ] Old files deleted: `OrderListFragment.kt`, `fragment_order_list.xml`, `OrderAdapter.kt`
 ```
 
-Save screenshots to a `screenshots/` subdirectory next to the report. When device testing runs, the `compose-visual-verify` agent populates the screenshot table. Even before device testing, the report should be filled with `@Preview` renders if screenshots are not yet available — they help reviewers understand the visual result.
+Save screenshots to a `screenshots/` subdirectory next to the report. When device testing runs, the `manual-tester` agent populates the screenshot table. Even before device testing, the report should be filled with `@Preview` renders if screenshots are not yet available — they help reviewers understand the visual result.
 
-After the report is ready: **"Static checks passed. Invoke the `compose-visual-verify` agent on a connected device to complete visual verification and populate the screenshot table."**
+After the report is ready: **"Static checks passed. Invoke the `manual-tester` agent on a connected device to complete visual verification and populate the screenshot table."**
 
 ---
 
 ## Device Testing (separate agent)
 
-Visual verification on a real device — screenshot before/after comparison, interaction testing — is handled by the `compose-visual-verify` agent. Invoke it after Phase 7 passes.
+Visual and functional verification on a real device is handled by the `manual-tester` agent. Invoke it after Phase 7 passes.
 
-The `compose-visual-verify` agent:
-- Takes a before screenshot of the old screen on a connected device/emulator
-- Switches to the new Compose implementation
-- Takes an after screenshot
-- Compares layout, typography, colors, spacing, and interactive states
-- Reports discrepancies with annotated screenshots
-- Iterates on fixes until the screen matches visually
+Brief the `manual-tester` agent with:
+- The `behavior-scenarios.md` document from Phase 1 as the spec / acceptance criteria
+- The migration report's visual comparison table — the agent should capture before/after screenshots for each visual state
+- The list of interactions to verify (buttons, scroll, navigation, edge cases)
+
+The `manual-tester` agent will:
+- Connect to a device/emulator and install the app
+- Capture screenshots of the old implementation first (the "before" baseline)
+- Switch to the new Compose implementation and capture "after" screenshots
+- Execute all test cases from the behavior scenarios — every interaction, every visual state
+- Compare layout, typography, colors, spacing between before and after
+- Report bugs with severity, reproduction steps, and screenshot evidence
+- Populate the screenshot table in the migration report
 
 ---
 
