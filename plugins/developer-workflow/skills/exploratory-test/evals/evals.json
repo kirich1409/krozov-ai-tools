@@ -1,0 +1,23 @@
+{
+  "skill_name": "exploratory-test",
+  "evals": [
+    {
+      "id": 0,
+      "prompt": "Just poke around our Android app and tell me if anything looks broken. The app is already running on the emulator, package name is com.example.todoapp.",
+      "expected_output": "Launches manual-tester agent in exploratory mode with Standard scope, no focus area. Agent explores from entry point, applies heuristics, produces exploration report with coverage map, bugs, and observations.",
+      "files": []
+    },
+    {
+      "id": 1,
+      "prompt": "We're about to release v2.0. Can you do a deep exploratory QA pass on the checkout flow? The web app is at http://localhost:3000.",
+      "expected_output": "Launches manual-tester in exploratory mode with Deep scope, focused on checkout flow. Agent explores checkout and adjacent screens, applies all heuristics including input edge cases and error handling, produces comprehensive exploration report.",
+      "files": []
+    },
+    {
+      "id": 2,
+      "prompt": "Quick sanity check on the settings screen — we just refactored it. iOS simulator is running, bundle ID is com.example.myapp.",
+      "expected_output": "Launches manual-tester in exploratory mode with Quick scope (~5 screens), focused on settings. Agent checks settings screen and immediate sub-screens, applies heuristics, produces concise exploration report.",
+      "files": []
+    }
+  ]
+}

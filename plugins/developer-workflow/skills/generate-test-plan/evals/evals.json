@@ -1,0 +1,23 @@
+{
+  "skill_name": "generate-test-plan",
+  "evals": [
+    {
+      "id": 0,
+      "prompt": "Generate a test plan for the changelog resolver module. The code is in plugins/maven-mcp/src/changelog/ — look at resolver.ts and the provider files. I don't have a spec, just the code.",
+      "expected_output": "A structured test plan covering the changelog resolution logic, provider selection, caching, and error handling, saved to docs/testplans/",
+      "files": []
+    },
+    {
+      "id": 1,
+      "prompt": "I need a test plan for a new user authentication feature. Requirements: users log in with email+password, get a JWT token, tokens expire after 24h, refresh tokens last 30 days. Failed login after 5 attempts locks the account for 15 minutes. Password reset via email link that expires in 1 hour. Two user roles: admin and regular user. Admins can manage other users.",
+      "expected_output": "A comprehensive test plan covering login flows, token lifecycle, account lockout, password reset, and role-based access, saved to docs/testplans/",
+      "files": []
+    },
+    {
+      "id": 2,
+      "prompt": "Create a test plan for the vulnerability scanning feature in maven-mcp. The code is at plugins/maven-mcp/src/vulnerabilities/osv-client.ts and the tool is at plugins/maven-mcp/src/tools/get-dependency-vulnerabilities.ts. The feature should check Maven dependencies against the OSV database and report known CVEs with severity levels.",
+      "expected_output": "A test plan combining code analysis with the provided spec, covering API integration, severity classification, error handling, and edge cases, saved to docs/testplans/",
+      "files": []
+    }
+  ]
+}

@@ -1,6 +1,6 @@
 # developer-workflow
 
-Claude Code plugin with skills for developer workflow habits — safe code migration, preparing branches for code review, and managing the full PR lifecycle.
+Claude Code plugin with skills for developer workflow habits — safe code migration, test plan generation, exploratory QA testing, feature verification, preparing branches for code review, and managing the full PR lifecycle.
 
 ## Skills
 
@@ -68,6 +68,39 @@ Guides a full migration of an Android module to Kotlin Multiplatform (KMP):
 - Verifies all targets compile and tests pass; cleans up Android-only artifacts
 
 Use when migrating a module to share code with iOS, JVM, or other platforms.
+
+### `generate-test-plan`
+
+Creates a structured, reusable test plan from a specification source without executing any tests:
+- Accepts Figma mockups, PRDs, acceptance criteria, issues, or existing code as input
+- Identifies risk areas, edge cases, and state combinations
+- Writes prioritized test cases (P0–P3) across Smoke / Feature / Regression tiers
+- Cross-references multiple spec sources and flags discrepancies
+- Produces a `docs/testplans/<feature>-test-plan.md` ready for `manual-tester` or `test-feature`
+
+Use when planning testing separately from execution — for review, reuse, or handoff.
+
+### `test-feature`
+
+Verifies a running application against a specification:
+- Accepts a spec (Figma, PRD, acceptance criteria) and/or a test plan
+- Ensures the app is running on device/simulator/browser
+- Launches the `manual-tester` agent for full QA execution
+- Produces a verification result: VERIFIED, FAILED, or PARTIAL
+- Supports re-verification loops after bug fixes
+
+Use after implementing a feature to confirm it matches the spec before PR.
+
+### `exploratory-test`
+
+Undirected bug hunting on a running app — no spec or test plan required:
+- Explores screens guided by usability heuristics, error handling checks, and input edge cases
+- Reports bugs (standard format with severity) and observations (non-bug UX findings)
+- Produces a coverage map showing which screens were visited and what was checked
+- Scope-bounded by screen count: Quick (~5), Standard (~15), or Deep (30+)
+- Recommends next steps based on severity of findings
+
+Use for pre-release QA sweeps, sanity checks, or finding issues specs don't anticipate.
 
 ## Agents
 

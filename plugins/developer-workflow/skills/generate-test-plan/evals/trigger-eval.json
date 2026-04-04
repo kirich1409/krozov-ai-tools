@@ -1,0 +1,22 @@
+[
+  {"query": "generate a test plan for our new search feature. here's the spec: users can search by name, filter by category and date range, results are paginated with 20 results per page. I don't need you to run any tests, just write the plan", "should_trigger": true},
+  {"query": "write test cases for the authentication flow. requirements: email+password login, JWT tokens, 24h expiry, account lockout after 5 failed attempts. save it somewhere I can review it later", "should_trigger": true},
+  {"query": "what should we test for the new payments integration? we're using Stripe, supporting credit cards and Apple Pay. need a comprehensive list of scenarios before we start QA", "should_trigger": true},
+  {"query": "I have this Figma mockup for the settings screen (link). can you create test cases from it? I want to hand them off to our QA team", "should_trigger": true},
+  {"query": "look at the code in src/features/cart/ and tell me what test cases I should write. there's no spec, the code is the spec. I need a plan document not actual execution", "should_trigger": true},
+  {"query": "how would you test the notification system? it handles push, email, and in-app notifications. user can configure per-channel preferences. I need the test scenarios documented", "should_trigger": true},
+  {"query": "create a QA checklist for the onboarding flow. acceptance criteria: new user signs up, verifies email, completes profile, sees tutorial. also cover error cases and edge cases please", "should_trigger": true},
+  {"query": "we're adding multi-language support (en, es, fr, de). what are the edge cases and scenarios I should test? give me a structured plan I can share with the team", "should_trigger": true},
+  {"query": "prepare testing checklist for the file upload feature. supports jpg/png/pdf up to 10MB, drag and drop, progress indicator, error handling for unsupported formats", "should_trigger": true},
+  {"query": "what are the edge cases for our date picker component? it supports date ranges, min/max dates, disabled dates, and timezone-aware selection. write it up as test cases", "should_trigger": true},
+  {"query": "just poke around the app on the emulator and find bugs. package is com.example.app, no spec, just see what's broken", "should_trigger": false},
+  {"query": "the app is running on the simulator. can you go through the checkout flow and tell me if anything is broken?", "should_trigger": false},
+  {"query": "verify that the profile screen matches these Figma mockups. the app is on the emulator, go through each state and compare", "should_trigger": false},
+  {"query": "run the test plan in docs/testplans/auth-test-plan.md against the running app. emulator is ready", "should_trigger": false},
+  {"query": "run ./gradlew :app:testDebugUnitTest and fix any failures", "should_trigger": false},
+  {"query": "can you run npm test and tell me what's failing? I think the cart tests are broken after my refactor", "should_trigger": false},
+  {"query": "review the PR at #42 — check the code quality and leave comments on anything that needs fixing", "should_trigger": false},
+  {"query": "migrate the date handling from java.util.Date to kotlinx-datetime across the data layer", "should_trigger": false},
+  {"query": "do a pre-release exploratory QA sweep of the whole app, try to break things. iOS sim is up", "should_trigger": false},
+  {"query": "write unit tests for the CartViewModel class. cover addItem, removeItem, calculateTotal, and applyDiscount", "should_trigger": false}
+]

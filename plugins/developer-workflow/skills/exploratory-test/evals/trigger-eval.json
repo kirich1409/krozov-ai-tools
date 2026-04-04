@@ -1,0 +1,22 @@
+[
+  {"query": "just poke around our Android app and see if anything looks off. it's running on the Pixel 8 emulator, package is com.mycompany.shopapp. no spec or anything, we just want a general vibe check before the demo tomorrow", "should_trigger": true},
+  {"query": "we're cutting the 3.1 release this friday. can you do a thorough QA sweep of the whole app before we ship? iOS simulator is up, bundle id is com.example.fitnessapp. I want you to really try to break things", "should_trigger": true},
+  {"query": "we just rewrote the entire checkout flow last sprint. can you stress test it and find edge cases? the web app is at localhost:3000, focus on /checkout and the payment forms", "should_trigger": true},
+  {"query": "our users keep reporting random crashes but we can't reproduce them. can you explore the app and try weird things to trigger crashes? Android emulator is running, package com.startup.chatapp", "should_trigger": true},
+  {"query": "quick sanity check on the settings screen please, we refactored the preferences storage layer and I want to make sure nothing looks broken visually. app is on the sim already", "should_trigger": true},
+  {"query": "find any UX issues in the onboarding flow — we've had complaints that new users get confused. the app is at https://staging.myapp.com, just go through signup and the first-time experience and tell me what feels off", "should_trigger": true},
+  {"query": "I don't have a spec yet but the feature is mostly built. can you just go through the new dashboard screens on the emulator and tell me if you spot anything broken or weird? package is com.analytics.dashboard", "should_trigger": true},
+  {"query": "the app has a bunch of forms — registration, profile edit, contact support, feedback. can you try throwing weird inputs at them and see what breaks? long strings, emoji, special chars, that kind of thing. web app at localhost:8080", "should_trigger": true},
+  {"query": "can you do a quick accessibility check on our app? just go through the main screens and flag anything that looks like it would be hard to use — tiny buttons, missing labels, bad contrast. iOS sim is running", "should_trigger": true},
+  {"query": "we need to check if the app works properly after the SDK upgrade. no spec changes, everything should look and behave the same. just explore the main flows and flag anything that seems different or broken. Android emulator, com.example.notes", "should_trigger": true},
+  {"query": "I have the Figma mockups for the new profile screen here: https://figma.com/file/abc123. can you verify the implementation matches the design? the app is running on the simulator", "should_trigger": false},
+  {"query": "here's the PRD for the notification feature (attached). can you check that all the acceptance criteria pass on the running app? emulator is up, package com.example.app", "should_trigger": false},
+  {"query": "generate a test plan for our new search feature. here's the spec: users can search by name, filter by category and date range, results are paginated. I don't need you to run the tests yet, just write the plan", "should_trigger": false},
+  {"query": "write test cases for the authentication flow based on this requirements doc. we'll run them manually later, I just need the plan in docs/testplans/", "should_trigger": false},
+  {"query": "can you run the unit tests for the checkout module? I think there might be a regression. the test file is at src/checkout/__tests__/cart.test.ts", "should_trigger": false},
+  {"query": "run ./gradlew :app:testDebugUnitTest and tell me if anything fails. I made some changes to the repository layer", "should_trigger": false},
+  {"query": "review the code in src/features/auth/ — I want feedback on the architecture and error handling patterns before I open a PR", "should_trigger": false},
+  {"query": "can you do a security audit of our API endpoints? check for SQL injection, XSS, and auth bypass vulnerabilities in the Express routes", "should_trigger": false},
+  {"query": "I need load testing on our API — simulate 1000 concurrent users hitting the /api/search endpoint and measure response times and error rates", "should_trigger": false},
+  {"query": "run the test plan in docs/testplans/checkout-test-plan.md against the running app. emulator is ready, package com.shop.app", "should_trigger": false}
+]
