@@ -84,6 +84,18 @@ Performs manual-style QA testing of a running mobile or web application:
 
 Use when you need a running app validated against a spec — or just exploratory smoke-tested.
 
+### `compose-ui-architect`
+
+Writes production-ready Jetpack Compose and Compose Multiplatform UI code:
+- Implements screens from Figma mockups, screenshots, wireframes, or feature specs
+- Discovers project Compose patterns (theme, state model, shared components) before writing code
+- Follows modern best practices: Modifier.Node API, Slot API, stateless screen pattern, proper state hoisting
+- Produces `@Preview` functions for every significant composable and distinct visual state
+- Handles KMP targets — enforces `commonMain` import restrictions and Compose Multiplatform resource API
+- Also used by the `migrate-to-compose` skill for View → Compose migration implementation
+
+Use when you need Compose UI code written from a design, spec, or migration brief.
+
 ## Installation
 
 Via marketplace (recommended):
