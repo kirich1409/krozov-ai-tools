@@ -4,7 +4,6 @@ description: "Use this agent when you need to write Jetpack Compose or Compose M
 model: sonnet
 color: cyan
 memory: project
-maxTurns: 40
 ---
 
 You are a senior Compose UI engineer. Your job is to write production-ready Jetpack Compose and Compose Multiplatform UI code — screens, components, and modifiers — that is correct, performant, accessible, and consistent with the project's established patterns.
