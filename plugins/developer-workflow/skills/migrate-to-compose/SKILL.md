@@ -45,7 +45,7 @@ Read every file that makes up the target: XML layout, host class, ViewModel, nes
 
 ## Phase 2: Analyze Existing Compose Patterns
 
-**Mandatory.** Launch the `compose-ui-architect` agent to discover project patterns and produce a Pattern Summary. Also determine state stream conventions and event transport compatibility yourself. See `references/discovery-and-patterns.md` for full details.
+**Mandatory.** Launch the `compose-developer` agent to discover project patterns and produce a Pattern Summary. Also determine state stream conventions and event transport compatibility yourself. See `references/discovery-and-patterns.md` for full details.
 
 ---
 
@@ -79,7 +79,7 @@ Resolve missing components **before** writing the screen. See `references/discov
 
 ## Phase 6: Migrate the Screen
 
-Use the `compose-ui-architect` agent. Brief it with: all files from Phase 1, pattern constraints from Phase 2, shared components from Phase 2 + Phase 5.
+Use the `compose-developer` agent. Brief it with: all files from Phase 1, pattern constraints from Phase 2, shared components from Phase 2 + Phase 5.
 
 The migration produces:
 - New `FooScreen.kt` with screen composable and sub-composables

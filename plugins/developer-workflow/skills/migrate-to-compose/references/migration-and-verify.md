@@ -2,7 +2,7 @@
 
 ## Phase 6: Migration Constraints
 
-Key constraints to enforce on the `compose-ui-architect` agent:
+Key constraints to enforce on the `compose-developer` agent:
 
 ### Business Logic Preservation — Critical
 

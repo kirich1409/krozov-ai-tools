@@ -117,7 +117,7 @@ Performs manual-style QA testing of a running mobile or web application:
 
 Use when you need a running app validated against a spec — or just exploratory smoke-tested.
 
-### `compose-ui-architect`
+### `compose-developer`
 
 Writes production-ready Jetpack Compose and Compose Multiplatform UI code:
 - Implements screens from Figma mockups, screenshots, wireframes, or feature specs
@@ -139,7 +139,7 @@ Writes production-ready Kotlin for Android and KMP client applications — busin
 - Handles KMP targets — enforces `commonMain` import restrictions and `kotlinx.*` library choices
 - Writes unit tests alongside implementation (fakes over mocks, Turbine for Flow testing)
 
-Use when you need Kotlin feature code — everything except Compose UI (which goes to `compose-ui-architect`).
+Use when you need Kotlin feature code — everything except Compose UI (which goes to `compose-developer`).
 
 ## Installation
 
