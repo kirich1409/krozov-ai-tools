@@ -107,12 +107,21 @@ For each gap, document which option you're proposing and why.
 - Less obvious or requires evaluating alternatives → present options with trade-offs and wait
 - Never add a dependency to `build.gradle.kts` without user approval
 
-**Special case — Custom View migration:** Include an explicit prior-art check:
+**Special case — Custom View migration:**
+
+Custom Views used on the migrated screen **must be migrated to Compose equivalents** as part of this migration. Wrapping a project-owned custom View in `AndroidView` is not acceptable — it defeats the purpose of the migration and will be caught by the View API Audit (Phase 8).
+
+`AndroidView` wrapping is allowed **only** for third-party Views with no Compose equivalent (e.g. `MapView`, `WebView`, `PlayerView`, `ExoPlayer`).
+
+For each custom View, resolve in this order:
 1. Name-check Material3 components — does it already have an equivalent?
-2. Check the project's UI kit module
+2. Check the project's UI kit module for an existing Compose version
 3. Check already-imported libraries on the classpath
+4. **Migrate the custom View to a Compose composable** — implement it as a new shared component in the UI module
 
 State the result of each check explicitly, even when the answer is "no existing equivalent found".
+
+If a custom View is complex enough to be a significant migration on its own (e.g. custom drawing with `onDraw`/`Canvas`, complex touch handling, custom layout with `onMeasure`/`onLayout`), flag it in the migration plan (Phase 4) as a sub-task — but it is still in scope and must be completed before the screen migration is considered done.
 
 ## Phase 4: Confirm
 
@@ -144,6 +153,7 @@ Resolve missing components **before** writing the screen:
 - **UI Kit match found** → confirm import path, move on
 - **Already-imported library** → confirm API, move on
 - **New library approved** → add dependency, sync, verify
-- **Custom component needed** → implement in shared UI module using `compose-developer` agent; each new component gets at least one `@Preview`. **Name the target module explicitly.**
+- **Custom View migration** → migrate each project-owned custom View to a Compose composable using the `compose-developer` agent. This is mandatory — `AndroidView` wrapping of project-owned Views is not acceptable. Place the new composable in the shared UI module.
+- **Custom component needed** (not a View migration) → implement in shared UI module using `compose-developer` agent; each new component gets at least one `@Preview`. **Name the target module explicitly.**
 
-Do not implement the screen migration and new shared components at the same time.
+Do not implement the screen migration and new shared components at the same time. Migrate custom Views first, then proceed to the screen.

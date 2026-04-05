@@ -230,7 +230,7 @@ Scan for any of these in migrated files:
 
 The following View API usages are legitimate in Compose code and should NOT be flagged:
 
-- `AndroidView { }` / `AndroidViewBinding { }` — intentional interop for components with no Compose equivalent (e.g. `MapView`, `WebView`, `PlayerView`)
+- `AndroidView { }` / `AndroidViewBinding { }` — **only for third-party Views** with no Compose equivalent (e.g. `MapView`, `WebView`, `PlayerView`, ExoPlayer). Wrapping a project-owned custom View in `AndroidView` is NOT allowed — it must be migrated to a Compose composable.
 - `ComposeView` / `AbstractComposeView` — embedding Compose in a host that's still View-based
 - `LocalContext.current` — accessing Android `Context` for non-View purposes (intents, resources)
 - `painterResource(R.drawable.*)` — loading drawable resources in Compose is normal
