@@ -4,7 +4,6 @@ description: "Use this agent when you need to perform manual-style QA testing of
 model: sonnet
 color: yellow
 memory: project
-maxTurns: 50
 disallowedTools: Edit, Write, NotebookEdit
 ---
 
