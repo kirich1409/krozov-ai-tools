@@ -38,6 +38,17 @@
       "category": "development",
       "homepage": "https://github.com/kirich1409/krozov-ai-tools",
       "source": "./plugins/developer-workflow"
+    },
+    {
+      "name": "extend",
+      "description": "Extend Claude Code built-in features: agent review, skill optimization, configuration audit",
+      "author": {
+        "name": "kirich1409"
+      },
+      "version": "0.5.1",
+      "category": "development",
+      "homepage": "https://github.com/kirich1409/krozov-ai-tools",
+      "source": "./plugins/extend"
     }
   ]
 }

@@ -4,13 +4,14 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project
 
-Monorepo for Claude Code plugins by krozov. Contains three plugins:
+Monorepo for Claude Code plugins by krozov. Contains four plugins:
 
 | Plugin | Directory | Description |
 |--------|-----------|-------------|
 | maven-mcp | `plugins/maven-mcp/` | MCP server for Maven dependency intelligence |
 | sensitive-guard | `plugins/sensitive-guard/` | Scans files for secrets and PII before they reach AI servers |
 | developer-workflow | `plugins/developer-workflow/` | Skills for developer workflow — code migration, PR preparation and lifecycle |
+| extend | `plugins/extend/` | Extend Claude Code built-in features: agent review, skill optimization, configuration audit |
 
 ## Structure
 
@@ -19,6 +20,7 @@ plugins/
   maven-mcp/           # TypeScript, npm package @krozov/maven-central-mcp
   sensitive-guard/      # Shell-based Claude Code plugin
   developer-workflow/   # Skills-only plugin for developer workflow habits
+  extend/               # Meta-tools for improving Claude Code setup
 ```
 
 See each plugin's own `CLAUDE.md` for plugin-specific instructions.
@@ -39,7 +41,8 @@ To release a new version:
    - `plugins/maven-mcp/plugin/.claude-plugin/plugin.json`
    - `plugins/sensitive-guard/.claude-plugin/plugin.json`
    - `plugins/developer-workflow/.claude-plugin/plugin.json`
-   - `.claude-plugin/marketplace.json` (all three plugin entries)
+   - `plugins/extend/.claude-plugin/plugin.json`
+   - `.claude-plugin/marketplace.json` (all plugin entries)
 2. Merge to `main`
 3. Push a git tag matching the version: `git tag v0.5.0 && git push origin v0.5.0`
 4. GitHub Actions (`.github/workflows/release.yml`) triggers on `v*` tags, verifies all versions match the tag, runs lint/tests/build, then publishes to npm
