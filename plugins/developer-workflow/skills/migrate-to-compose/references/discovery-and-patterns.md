@@ -74,7 +74,7 @@ Example entry:
 
 **This step is mandatory.** Find all existing Compose screens in the project and understand how they're built.
 
-Launch the `compose-ui-architect` agent to discover project patterns. Brief it to analyze existing Compose screens and produce a **Pattern Summary** covering: architecture patterns (screen structure, state/action model shape, ViewModel resolution, parameterless action convention, string type in state), theme and design system (color tokens, typography, spacing/dimension tokens, Material version), shared UI components (what exists and where), code style conventions (visibility, stability annotations, composable body length, preview style), and navigation (library, route definition, screen registration).
+Launch the `compose-developer` agent to discover project patterns. Brief it to analyze existing Compose screens and produce a **Pattern Summary** covering: architecture patterns (screen structure, state/action model shape, ViewModel resolution, parameterless action convention, string type in state), theme and design system (color tokens, typography, spacing/dimension tokens, Material version), shared UI components (what exists and where), code style conventions (visibility, stability annotations, composable body length, preview style), and navigation (library, route definition, screen registration).
 
 The agent's Step 1 is designed for exactly this — it will read 2–3 representative screens end-to-end and extract all pattern findings into a structured summary.
 
@@ -144,6 +144,6 @@ Resolve missing components **before** writing the screen:
 - **UI Kit match found** → confirm import path, move on
 - **Already-imported library** → confirm API, move on
 - **New library approved** → add dependency, sync, verify
-- **Custom component needed** → implement in shared UI module using `compose-ui-architect` agent; each new component gets at least one `@Preview`. **Name the target module explicitly.**
+- **Custom component needed** → implement in shared UI module using `compose-developer` agent; each new component gets at least one `@Preview`. **Name the target module explicitly.**
 
 Do not implement the screen migration and new shared components at the same time.
