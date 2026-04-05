@@ -20,6 +20,7 @@ Install a plugin:
 /plugin install maven-mcp@krozov-ai-tools
 /plugin install sensitive-guard@krozov-ai-tools
 /plugin install developer-workflow@krozov-ai-tools
+/plugin install extend@krozov-ai-tools
 ```
 
 ## Plugins
@@ -55,17 +56,33 @@ See [`plugins/sensitive-guard/`](plugins/sensitive-guard/) for full documentatio
 
 ### developer-workflow
 
-Developer workflow skills — preparing branches for code review, managing the full PR lifecycle, and safely migrating technology in Android/Kotlin/KMP projects.
+Developer workflow skills and expert agents for the full development cycle — from task implementation to QA testing to PR merge.
 
-**Features:**
-- `prepare-for-pr` — quality loop (build → simplify → self-review → lint/tests) before creating a PR
-- `pr-drive-to-merge` — drives an existing PR/MR to merge: monitors CI/CD, triages reviewer comments, responds and resolves threads, loops until merge requirements are met
-- `code-migration` — safe in-place or parallel migration of any technology in Gradle/Android/Kotlin projects
-- `kmp-migration` — full Kotlin Multiplatform migration for Android modules
+**Skills:**
+- `/prepare-for-pr` — quality loop (build → simplify → self-review → lint/tests) before creating a PR
+- `/create-pr` — create a draft or ready PR with auto-generated title, description, labels, and reviewer suggestions
+- `/pr-drive-to-merge` — drive an existing PR/MR to merge: monitor CI/CD, triage reviewer comments, loop until merged
+- `/code-migration` — safe in-place or parallel migration of any technology in Gradle/Android/Kotlin projects
+- `/kmp-migration` — full Kotlin Multiplatform migration for Android modules
+- `/migrate-to-compose` — migrate View-based Android UI (Activity, Fragment, custom View) to Jetpack Compose
+- `/generate-test-plan` — generate structured, prioritized test plan from spec or code
+- `/test-feature` — verify a feature against its specification on a live app
+- `/exploratory-test` — undirected bug hunting and QA exploration on a running app
+- `/plan-review` — multi-agent review of implementation plans using PoLL consensus protocol
+- `/implement-task` — full development cycle: worktree → TDD → implementation → quality loop → draft PR (explicit invocation only)
 
-**Skills:** `/prepare-for-pr`, `/pr-drive-to-merge`, `/code-migration`, `/kmp-migration`
+**Agents (10):** architecture-expert, build-engineer, business-analyst, compose-developer, devops-expert, kotlin-engineer, manual-tester, performance-expert, security-expert, ux-expert
 
 See [`plugins/developer-workflow/`](plugins/developer-workflow/) for full documentation.
+
+### extend
+
+Extend Claude Code built-in features with review and optimization tools.
+
+**Skills:**
+- `/agent-reviewer` — audit and improve Claude Code agent files: frontmatter, system prompt quality, tool selection, trigger accuracy
+
+See [`plugins/extend/`](plugins/extend/) for full documentation.
 
 ## License
 
