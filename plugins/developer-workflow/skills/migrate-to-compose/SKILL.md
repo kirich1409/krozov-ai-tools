@@ -51,7 +51,9 @@ Read every file that makes up the target: XML layout, host class, ViewModel, nes
 
 ## Phase 3: Gap Analysis
 
-For each UI element with no shared Compose equivalent, resolve using priority: existing UI Kit → already-imported libraries → suggest new library → write custom component. See `references/discovery-and-patterns.md` for the full priority order, custom View special case, and documentation format.
+For each UI element with no shared Compose equivalent, resolve using priority: existing UI Kit → already-imported libraries → suggest new library → write custom component. See `references/discovery-and-patterns.md` for the full priority order and documentation format.
+
+**Custom Views are mandatory migration scope** — they must be fully migrated to Compose composables, not wrapped in `AndroidView`. See `references/custom-view-migration.md` for the decision tree: classify → search for replacements → assess feasibility → choose strategy.
 
 **Present the gap list to the user and confirm before proceeding.**
 

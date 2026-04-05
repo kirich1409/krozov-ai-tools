@@ -109,19 +109,11 @@ For each gap, document which option you're proposing and why.
 
 **Special case — Custom View migration:**
 
-Custom Views used on the migrated screen **must be migrated to Compose equivalents** as part of this migration. Wrapping a project-owned custom View in `AndroidView` is not acceptable — it defeats the purpose of the migration and will be caught by the View API Audit (Phase 8).
+Custom Views used on the migrated screen **must be migrated to Compose equivalents** as part of this migration. Wrapping a project-owned custom View in `AndroidView` is not acceptable — it defeats the purpose of the migration and will be caught by the View API Audit (Phase 8). `AndroidView` wrapping is allowed **only** for third-party Views with no Compose equivalent (e.g. `MapView`, `WebView`, `PlayerView`).
 
-`AndroidView` wrapping is allowed **only** for third-party Views with no Compose equivalent (e.g. `MapView`, `WebView`, `PlayerView`, `ExoPlayer`).
+See `references/custom-view-migration.md` for the full decision tree: classify the View → search for existing replacements (Material3 → project UI kit → imported libraries → new library) → assess custom implementation feasibility → choose a migration strategy (inline / pre-migration component / dedicated sub-task).
 
-For each custom View, resolve in this order:
-1. Name-check Material3 components — does it already have an equivalent?
-2. Check the project's UI kit module for an existing Compose version
-3. Check already-imported libraries on the classpath
-4. **Migrate the custom View to a Compose composable** — implement it as a new shared component in the UI module
-
-State the result of each check explicitly, even when the answer is "no existing equivalent found".
-
-If a custom View is complex enough to be a significant migration on its own (e.g. custom drawing with `onDraw`/`Canvas`, complex touch handling, custom layout with `onMeasure`/`onLayout`), flag it in the migration plan (Phase 4) as a sub-task — but it is still in scope and must be completed before the screen migration is considered done.
+State the result of each search step explicitly, even when the answer is "no existing equivalent found".
 
 ## Phase 4: Confirm
 
