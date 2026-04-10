@@ -2,7 +2,7 @@
 name: address-review-feedback
 description: >
   Use when the user has received review comments on a GitHub PR or GitLab MR and needs
-  to process them — analyze, triage, fix, respond, and resolve threads. This is THE skill
+  to process them — analyze, triage, coordinate fixes, respond, and resolve threads. This is THE skill
   for any post-review work on a PR/MR. Triggers on: "разберись с комментариями",
   "address review comments", "handle review feedback", "respond to reviewers",
   "fix review comments", "deal with PR/MR comments", "reply to review",
@@ -73,7 +73,7 @@ BASE=$(echo "$MR_INFO" | jq -r .target_branch)
 
 # GitLab — fetch linked issues (closing pattern in description: "Closes #123")
 # Extract issue IIDs from description, then fetch each
-echo "$MR_BODY" | grep -oP '(?:Closes?|Fixes?|Resolves?)\s+#\K\d+' | while read ISSUE_IID; do
+echo "$MR_BODY" | grep -Eo '(Closes?|Fixes?|Resolves?) #[0-9]+' | sed 's/.*#//' | while read ISSUE_IID; do
   glab api "/projects/$PROJECT/issues/$ISSUE_IID" --jq '"\(.title): \(.description)"'
 done
 ```

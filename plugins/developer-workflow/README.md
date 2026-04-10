@@ -50,10 +50,10 @@ Use after implementation is complete, before creating the PR.
 ### `address-review-feedback`
 
 Handles reviewer comments on an existing PR/MR:
-- Analyzes and categorizes all open review comments by priority (BLOCKING / IMPORTANT / OPTIONAL / OUT OF SCOPE)
-- Plans and applies fixes for actionable comments
+- Analyzes and categorizes all open review comments (BLOCKING / IMPORTANT / SUGGESTION / NIT / QUESTION / PRAISE / OUT_OF_SCOPE)
+- Produces follow-up tasks for actionable comments; delegates code changes to implementation agents
 - Responds to reviewers and resolves comment threads
-- Asks the user only for out-of-scope or architectural concerns
+- Asks user for decisions on out-of-scope or architectural concerns
 
 Use after receiving reviewer feedback on a PR.
 

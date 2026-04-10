@@ -61,7 +61,7 @@ Developer workflow skills and expert agents for the full development cycle — f
 **Skills:**
 - `/prepare-for-pr` — quality loop (build → simplify → self-review → lint/tests) before creating a PR
 - `/create-pr` — create a draft or ready PR with auto-generated title, description, labels, and reviewer suggestions
-- `/address-review-feedback` — analyze PR review comments, categorize by priority, plan and apply fixes, respond to reviewers
+- `/address-review-feedback` — analyze PR review comments, categorize by priority, plan and coordinate fixes, respond to reviewers
 - `/code-migration` — safe in-place or parallel migration of any technology in Gradle/Android/Kotlin projects
 - `/kmp-migration` — full Kotlin Multiplatform migration for Android modules
 - `/migrate-to-compose` — migrate View-based Android UI (Activity, Fragment, custom View) to Jetpack Compose
