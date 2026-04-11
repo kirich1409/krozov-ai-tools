@@ -59,7 +59,6 @@ See [`plugins/sensitive-guard/`](plugins/sensitive-guard/) for full documentatio
 Developer workflow skills and expert agents for the full development cycle — from task implementation to QA testing to PR merge.
 
 **Skills:**
-- `/prepare-for-pr` — quality loop (build → simplify → self-review → lint/tests) before creating a PR
 - `/create-pr` — create a draft or ready PR with auto-generated title, description, labels, and reviewer suggestions
 - `/address-review-feedback` — analyze PR review comments, categorize by priority, plan and coordinate fixes, respond to reviewers
 - `/code-migration` — safe in-place or parallel migration of any technology in Gradle/Android/Kotlin projects

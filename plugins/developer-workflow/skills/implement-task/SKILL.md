@@ -213,7 +213,7 @@ Update the PR description after each major change so it stays current.
 
 ## Phase 2: Quality Loop
 
-Once implementation is complete, invoke `developer-workflow:prepare-for-pr`. It runs build, simplify, self-review, intent verification, optional expert reviews, and lint/tests in a loop — exit criteria and hook behavior are defined inside that skill.
+Once implementation is complete, invoke the `simplify` skill on changed files, then run the Quality Loop gates as defined in the Quality Loop section of `~/.claude/rules/dev-workflow-orchestration.md` (build → static analysis → tests → semantic self-review → expert reviews → intent check).
 
 **Backward transition:** if the quality loop finds issues requiring significant code changes → log the issues in `swarm-report/<slug>-quality.md` → re-anchor → return to implementation (Phase 0.5 strategy).
 

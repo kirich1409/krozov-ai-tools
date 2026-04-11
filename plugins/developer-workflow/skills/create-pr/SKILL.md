@@ -57,7 +57,7 @@ Look for a clear signal in the current conversation:
 |--------|----------|
 | User said "draft", "WIP", "work in progress" | **Draft** |
 | User said "ready for review", "not draft", "final", "ready" | **Not draft** |
-| Invoked right after `prepare-for-pr` completed cleanly | Lean **not draft** — confirm |
+| Invoked right after quality checks completed cleanly | Lean **not draft** — confirm |
 | No clear signal | **Ask the user** |
 
 If unclear, ask exactly this — one question, nothing else:
@@ -248,7 +248,7 @@ Print the PR/MR URL immediately after creation.
 
 **Draft PR:**
 > Draft PR created: \<url\>
-> When implementation is complete, run `prepare-for-pr` to quality-check the branch, then mark it ready for review.
+> When implementation is complete, invoke `simplify`, then run Quality Loop gates (build, static analysis, tests) from `~/.claude/rules/dev-workflow-orchestration.md`, then mark it ready for review.
 
 **Ready-for-review PR:**
 > PR created: \<url\>

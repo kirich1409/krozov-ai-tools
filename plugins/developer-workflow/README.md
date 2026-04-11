@@ -9,7 +9,7 @@ Claude Code plugin with skills for developer workflow habits — safe code migra
 Orchestrates the full development cycle for any implementation task:
 - Creates an isolated worktree, timeboxes exploration, selects the best-matching sub-skill
 - Brainstorms design for multi-file changes; follows TDD throughout
-- Creates a draft PR early, runs quality loop (`prepare-for-pr` + `code-review`), then marks the PR ready
+- Creates a draft PR early, runs quality loop (simplify + quality gates + `code-review`), then marks the PR ready
 - Delegates review comment handling to `address-review-feedback`
 
 Explicit-only — invoke directly with `/developer-workflow:implement-task`.
@@ -36,16 +36,6 @@ Guides safe, verified technology migrations in Gradle/Android/Kotlin/KMP project
 Examples: Java Date → Kotlin Date, XML layouts → Jetpack Compose, data binding → view binding, RxJava → coroutines.
 
 Use when migrating code from one technology to another within an existing project.
-
-### `prepare-for-pr`
-
-Runs a quality loop over branch changes before creating a PR:
-- Build → Simplify → Self-review → Lint/Tests
-- Loops until only minor issues remain
-- Fixes only what belongs to the current changes
-- Asks the user when a problem is caused by something outside the current scope
-
-Use after implementation is complete, before creating the PR.
 
 ### `address-review-feedback`
 
