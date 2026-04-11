@@ -66,7 +66,7 @@ Auto-detect from keywords and context. If ambiguous — state the assumed profil
 
 **Trivial profile:** not every task needs research and planning. For single-file changes, focused bugfixes, config tweaks, and other obviously scoped work — skip directly to implementation. The overhead of the full pipeline must be proportional to the task complexity.
 
-**Bug Fix profile:** skips Research and Plan — starts at Phase 0 (understand task), then Phase 0.4 skill selection routes to systematic debugging (reproduce → isolate → hypothesize → verify → fix). Quality → PR → Merge phases apply as normal.
+**Bug Fix profile:** skips both Research and Plan — starts at Phase 0 (understand task), then Phase 0.3 profile selection classifies it as Bug Fix and Phase 0.5 implementation strategy routes to systematic debugging (reproduce → isolate → hypothesize → verify → fix). Quality → PR → Merge phases apply as normal.
 
 ---
 
@@ -80,7 +80,7 @@ Each stage produces an artifact in `swarm-report/`. The next stage **must** read
 |-------|----------|------------------------|
 | Research | `<slug>-research.md` | — (first stage; produced by the `research` skill, not by implement-task) |
 | Plan | `<slug>-plan.md` | `<slug>-research.md` (Feature/Migration profiles) |
-| Implement | `<slug>-implement.md` | `<slug>-plan.md` |
+| Implement | `<slug>-implement.md` | `<slug>-plan.md` (profiles that skip Plan: `<slug>-research.md` or none — see profile-specific gating below) |
 | Quality | `<slug>-quality.md` | `<slug>-implement.md` |
 | Verify | `<slug>-verify.md` | `<slug>-quality.md` |
 | PR | `<slug>-pr.md` | `<slug>-verify.md` (or `<slug>-quality.md` if no verification defined) |
@@ -163,7 +163,7 @@ For Feature or Migration tasks, check if research has been done:
    - If not available, note the gap — proceed without research but flag in the PR description that research was skipped
 3. If the task is a simple bugfix or focused change — skip research entirely
 
-The research report, when present, feeds into design (0.3) and skill selection (0.4) via receipt-based gating: include its path in the planning context so the planner builds on research findings rather than re-discovering them.
+The research report, when present, feeds into profile selection (0.3) and design (0.4) via receipt-based gating: include its path in the planning context so the planner builds on research findings rather than re-discovering them.
 
 ### 0.3 Task profile selection
 
@@ -257,7 +257,7 @@ After the quality loop exits clean, execute the verification approach defined in
 - This backward transition follows the state machine: `Verify → Implement` (verification fails — fix and re-verify)
 - Maximum 2 verification retries. After that, escalate to the user.
 
-**Stage artifact:** write `swarm-report/<slug>-quality.md` with gates passed/failed, issues found/fixed, and review verdicts.
+**Prerequisite artifact:** `swarm-report/<slug>-quality.md` (produced by Phase 2 Quality Loop) must exist and show PASS before entering this phase. It contains gates passed/failed, issues found/fixed, and review verdicts.
 
 ---
 
@@ -275,7 +275,7 @@ Run the verification approach defined in the plan (`swarm-report/<slug>-plan.md`
 
 ## Phase 3: Move PR to Ready for Review
 
-**Gate check:** `swarm-report/<slug>-quality.md` must exist and show PASS before proceeding.
+**Gate check:** the last completed stage artifact must exist and show PASS — `swarm-report/<slug>-verify.md` if the profile includes verification, otherwise `swarm-report/<slug>-quality.md` (e.g., Trivial profile or plans without a Verification Approach section).
 
 Undraft the PR and update its title and description using the ready-for-review template from `developer-workflow:create-pr` (the "Description template — ready-for-review PR" section). The description must be self-contained — a reviewer with no prior context should understand what changed, why, and how to verify it.
 
