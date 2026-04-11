@@ -117,7 +117,7 @@ Respond in the same language as the research topic description. Structure: overv
 
 **What:** Search the web for approaches, best practices, common pitfalls, and real-world examples.
 
-**How:** Use web search tools available in the current session (WebSearch, Perplexity, or similar).
+**How:** Search the web for approaches and best practices; find recent articles and community discussions.
 
 **Prompt template:**
 ```
@@ -130,7 +130,7 @@ Investigate:
 4. Recent developments or changes (last 12 months)
 5. Community consensus — what does the majority recommend and why?
 
-Use web search tools available in this session. Perform an in-depth investigation first,
+Search the web for approaches and best practices. Perform an in-depth investigation first,
 then follow up with targeted searches for specific details if needed.
 
 Respond in the same language as the research topic description. Include source URLs for key claims.
@@ -140,15 +140,14 @@ Respond in the same language as the research topic description. Include source U
 
 **What:** Find official documentation for involved libraries and frameworks.
 
-**How:** Use documentation tools available in the current session (DeepWiki, Context7,
-or fetch raw documentation via WebFetch).
+**How:** Look up official documentation for the libraries involved; fetch API reference and usage examples.
 
 **Prompt template:**
 ```
 Find official documentation for: {libraries/frameworks related to topic}
 
 For each library/framework:
-1. Look up library documentation using documentation tools available in this session
+1. Look up official documentation for the library (API reference, guides, changelogs)
 2. Find documentation for: API surface, migration guides, compatibility notes,
    configuration options, known limitations
 3. Check for version-specific documentation if version matters

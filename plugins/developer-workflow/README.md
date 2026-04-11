@@ -95,8 +95,8 @@ Use when migrating Android View-based UI to Jetpack Compose.
 ### `plan-review`
 
 Multi-agent review of an implementation plan using the PoLL (Panel of LLM Evaluators) consensus protocol:
-- Runs 3 independent reviewer agents in parallel, each evaluating the plan blind
-- Aggregates verdicts: APPROVE (all pass), REVISE (majority concerns), REJECT (majority critical issues)
+- Discovers available agents dynamically; presents a multi-select and runs only the agents you choose
+- Aggregates verdicts: PASS (no blockers), CONDITIONAL (improvements needed), FAIL (blockers must be resolved)
 - Produces a structured review report with per-reviewer findings and consensus summary
 
 Use when you want an independent quality check on a plan before implementation.
@@ -106,7 +106,7 @@ Use when you want an independent quality check on a plan before implementation.
 Structured investigation skill for exploring codebases, technologies, and approaches:
 - Launches parallel research agents (codebase, web, docs, deps, architecture)
 - Produces a consolidated research report with findings, recommendations, and open questions
-- Mandatory web lookup — never relies solely on codebase analysis and training data
+- Includes web research for approaches and best practices — never relies solely on codebase analysis and training data
 
 Use for investigation tasks that don't require implementation — evaluations, comparisons, feasibility studies.
 
@@ -159,6 +159,10 @@ Use for pre-release QA sweeps, sanity checks, or finding issues specs don't anti
 
 ## Agents
 
+### User-Invokable Agents
+
+These agents can be invoked directly by the user for specific tasks.
+
 ### `manual-tester`
 
 Performs manual-style QA testing of a running mobile or web application:
@@ -206,6 +210,10 @@ Writes production-ready Kotlin for Android and KMP client applications — busin
 - Writes unit tests alongside implementation (fakes over mocks, Turbine for Flow testing)
 
 Use when you need Kotlin feature code — everything except Compose UI (which goes to `compose-developer`).
+
+### Internal Expert Agents
+
+These agents are invoked by skills and the quality loop orchestration — not meant for direct user invocation. They are selected automatically based on the task (e.g., what code was touched, what the plan covers).
 
 ### `architecture-expert`
 

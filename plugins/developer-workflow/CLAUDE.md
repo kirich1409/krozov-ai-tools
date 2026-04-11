@@ -11,7 +11,7 @@ docs/WORKFLOW.md          # Full pipeline documentation with diagrams
 
 ## Conventions
 
-- 100% self-contained — no dependencies on external plugins (superpowers, code-review, etc.)
+- 100% self-contained — no dependencies on external plugins. Own plugins from this monorepo (maven-mcp, sensitive-guard, extend) are allowed as they ship together.
 - **Dependency policy:** only built-in Claude Code features + own plugins from this repo (maven-mcp, sensitive-guard, extend). No third-party plugin skills/agents.
 - **MCP servers:** `mobile` MCP is explicitly allowed for testing. Other MCP servers (Perplexity, DeepWiki, Context7, etc.) are environment-level — use when available, but skills must NOT hardcode their tool names or break without them. Describe the task ("search the web for approaches"), not the tool (`perplexity_research`).
 - **External tools:** if a capability requires something the user may not have installed, describe what's needed and let the user decide — don't write it as a mandatory instruction.
