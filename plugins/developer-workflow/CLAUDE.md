@@ -17,6 +17,7 @@ docs/WORKFLOW.md          # Full pipeline documentation with diagrams
 - **External tools:** if a capability requires something the user may not have installed, describe what's needed and let the user decide — don't write it as a mandatory instruction.
 - Skills use YAML frontmatter: `name`, `description` (required), optionally `disable-model-invocation`
 - Agents use YAML frontmatter: `name`, `description`, `model`, `color`, `memory`, `tools`, optionally `maxTurns`, `disallowedTools`
+- `swift-engineer` and `swiftui-developer` agents mirror `kotlin-engineer` and `compose-developer` for iOS/macOS targets
 - `code-reviewer` agent is read-only — no Edit, Write, NotebookEdit, or Bash tools
 - Workspace directories (`*-workspace/`) are runtime artifacts, not skills
 - Pipeline orchestration rules live at `~/.claude/rules/dev-workflow-orchestration.md` (user-global, not in this repo)
