@@ -149,13 +149,13 @@ See `references/snapshot-and-verify.md` for detailed verify procedures (regressi
 ## When Things Go Wrong
 
 **Verify fails (tests don't pass after migration):**
-Use `superpowers:systematic-debugging` if available. Otherwise: read the failing test, compare old vs new code, revert a single file to confirm it was green before, then narrow down what broke it. Fix in the migrated code — never weaken the test.
+Reproduce the issue, isolate the failing component, form a hypothesis, verify, fix. Read error output carefully, check logs. Compare old vs new code, revert a single file to confirm it was green before, then narrow down what broke it. Fix in the migrated code — never weaken the test.
 
 **Before claiming done:**
-Use `superpowers:verification-before-completion` if available. Otherwise: run through the done checklist above line by line. Run the actual commands, don't assume they'll pass.
+Run full build, run all tests, verify acceptance criteria from the migration checklist. Run through the done checklist above line by line. Run the actual commands, don't assume they'll pass.
 
 **Scope unexpectedly larger than expected:**
 Stop. Describe the new scope to the user with a revised file count and risk assessment. Agree on a new strategy before continuing — do not silently expand the migration.
 
 **Large migration needing a structured plan:**
-Use `superpowers:writing-plans` if available. Otherwise: write a `migration-checklist.md` (see Phase 1, step 7 for the format) and share it with the user for approval before starting Phase 2.
+Create a `migration-checklist.md` with: scope, files to migrate, order of operations, verification steps, rollback plan. See Phase 1, step 7 for the format. Share it with the user for approval before starting Phase 2.

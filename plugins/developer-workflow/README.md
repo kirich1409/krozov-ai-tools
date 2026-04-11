@@ -58,6 +58,35 @@ Guides a full migration of an Android module to Kotlin Multiplatform (KMP):
 
 Use when migrating a module to share code with iOS, JVM, or other platforms.
 
+### `migrate-to-compose`
+
+Guides View-to-Compose migration for Activities, Fragments, and custom Views:
+- Maps View hierarchy to Compose equivalents (layouts, widgets, custom views)
+- Discovers project Compose patterns (theme, state model, shared components) before writing code
+- Delegates implementation to `compose-developer` agent with a structured migration brief
+- Supports incremental migration via `ComposeView` bridge or full rewrite
+- Verifies visual fidelity with before/after comparison
+
+Use when migrating Android View-based UI to Jetpack Compose.
+
+### `plan-review`
+
+Multi-agent review of an implementation plan using the PoLL (Panel of LLM Evaluators) consensus protocol:
+- Runs 3 independent reviewer agents in parallel, each evaluating the plan blind
+- Aggregates verdicts: APPROVE (all pass), REVISE (majority concerns), REJECT (majority critical issues)
+- Produces a structured review report with per-reviewer findings and consensus summary
+
+Use when you want an independent quality check on a plan before implementation.
+
+### `research`
+
+Structured investigation skill for exploring codebases, technologies, and approaches:
+- Launches parallel research agents (codebase, web, docs, deps, architecture)
+- Produces a consolidated research report with findings, recommendations, and open questions
+- Mandatory web lookup — never relies solely on codebase analysis and training data
+
+Use for investigation tasks that don't require implementation — evaluations, comparisons, feasibility studies.
+
 ### `generate-test-plan`
 
 Creates a structured, reusable test plan from a specification source without executing any tests:
@@ -140,6 +169,76 @@ Writes production-ready Kotlin for Android and KMP client applications — busin
 - Writes unit tests alongside implementation (fakes over mocks, Turbine for Flow testing)
 
 Use when you need Kotlin feature code — everything except Compose UI (which goes to `compose-developer`).
+
+### `architecture-expert`
+
+Reviews and validates architectural decisions, module structure, and dependency direction:
+- Evaluates module decomposition, layer boundaries, and API design between modules
+- Validates plans and implementations against architectural best practices
+- Analyzes dependency graphs for circular dependencies and incorrect direction
+- Advises on when and how to extract modules or introduce abstractions
+
+Use when a plan or implementation involves architectural decisions that need validation.
+
+### `business-analyst`
+
+Evaluates plans, features, and technical decisions from a product and business value perspective:
+- Analyzes requirements for completeness, consistency, and implicit assumptions
+- Scopes MVPs and prioritizes features by business value
+- Formulates concrete acceptance criteria from vague requirements
+- Performs trade-off analysis covering cost, time-to-market, and risk
+
+Use when you need product-side evaluation of scope, requirements, or technical trade-offs.
+
+### `security-expert`
+
+Reviews code, architecture, and plans for security vulnerabilities:
+- OWASP Top 10 analysis, data storage security, network security
+- Authentication and authorization flow review
+- CI/CD secrets management and mobile platform security
+- Read-only — reports findings with severity and remediation guidance
+
+Use when code touches auth, encryption, token storage, network requests, permissions, or user data.
+
+### `performance-expert`
+
+Analyzes code and plans for performance issues and resource efficiency:
+- Detects N+1 queries, memory leaks, threading problems, UI jank
+- Reviews Compose recomposition scope, LazyList efficiency, network batching
+- Checks coroutine dispatcher usage and potential coroutine leaks
+- Read-only — reports findings with severity and optimization suggestions
+
+Use when code touches RecyclerView/LazyColumn, database queries, image loading, hot loops, or large collections.
+
+### `ux-expert`
+
+Evaluates user experience, UI design decisions, and accessibility:
+- Reviews user flows, navigation structure, and UI state handling
+- Checks platform convention compliance (Material Design, HIG)
+- Validates accessibility: contrast, touch targets, screen reader support
+- Assesses error states, loading states, and empty states completeness
+
+Use when implementing or reviewing screens, navigation, or user-facing features.
+
+### `devops-expert`
+
+Handles CI/CD pipelines, deployment automation, and release workflows:
+- Diagnoses and optimizes CI/CD pipeline performance
+- Configures release automation, artifact publishing, and environment management
+- Sets up dependency scanning and vulnerability monitoring
+- Designs Docker, Kubernetes, and cloud deployment configurations
+
+Use when working with GitHub Actions, GitLab CI, Docker, deployment, or release automation.
+
+### `build-engineer`
+
+Specializes in Gradle configuration, build performance, and multi-module project structure:
+- Diagnoses and optimizes build performance (caching, parallelism, configuration avoidance)
+- Configures AGP, KMP source sets, convention plugins, and version catalogs
+- Manages dependency resolution, conflict handling, and BOM alignment
+- Designs multi-module project structure and module dependency graphs
+
+Use when working with Gradle configuration, build performance, or module structure in JVM/Kotlin/Android projects.
 
 ## Installation
 
