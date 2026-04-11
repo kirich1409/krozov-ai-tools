@@ -4,6 +4,18 @@ Claude Code plugin with skills for developer workflow habits — safe code migra
 
 ## Skills
 
+### `decompose-feature`
+
+Breaks a feature idea, PRD, or epic into a structured task list with dependencies, acceptance criteria, complexity estimates, and implementation order:
+- Accepts text, URLs, PRDs, or Figma links as input
+- Launches parallel expert agents (codebase, architecture, business analyst) for context gathering
+- Decomposes into tasks with IDs, dependencies, acceptance criteria, and complexity (S/M/L)
+- Orders tasks into waves via topological sort by dependency graph
+- Auto-reviews via business-analyst for completeness and scope creep
+- Saves artifact to `swarm-report/<slug>-decomposition.md`
+
+Use when breaking down a feature idea into implementable tasks before starting work.
+
 ### `implement-task`
 
 Orchestrates the full development cycle for any implementation task:
