@@ -18,7 +18,7 @@ disable-model-invocation: true
 Full autonomous implementation cycle — from understanding the task to a merge-ready PR.
 Ask the user only when a decision is **architecturally significant** or **irreversible**. Everything else: decide and proceed.
 
-If any phase fails: identify the root cause — if it's in current changes, fix and re-enter the phase; if pre-existing, ask the user; if unclear, debug inline: reproduce the issue → isolate the failing component → form a hypothesis → verify → fix.
+If any phase fails: identify the root cause — if it's in current changes, fix and re-enter the phase; if pre-existing, ask the user; if unclear, debug systematically: reproduce → isolate → hypothesize → verify → fix. Read error output fully, check logs, narrow the search space before attempting a fix.
 
 ---
 
@@ -134,24 +134,11 @@ When escalating: state what was tried, what the options are, and what decision i
 
 ### 0.1 Worktree
 
-1. Determine the base branch:
-     ```bash
-     BASE_BRANCH=$(git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's@^refs/remotes/origin/@@')
-     BASE_BRANCH=${BASE_BRANCH:-main}  # fallback: main
-     ```
-2. Check current location:
-   - Already in a worktree that fits the task → stay, no action needed
-   - On the base branch → create a new worktree:
-     ```bash
-     SLUG="short-task-description"  # kebab-case, 2-4 words
-     BRANCH="feature/$SLUG"         # or fix/$SLUG, chore/$SLUG
-     WORKTREE_DIR=".worktrees/$(echo $BRANCH | tr '/' '-')"
-     mkdir -p .worktrees
-     git worktree add "$WORKTREE_DIR" "$BASE_BRANCH"
-     cd "$WORKTREE_DIR"
-     git checkout -b "$BRANCH"
-     ```
-3. All subsequent work happens in the worktree.
+Create an isolated worktree for the task:
+1. From `main` (or the project's default branch), create a worktree in `.worktrees/<branch-name>`
+2. Branch naming: `feature/short-description`, `fix/short-description`, or `chore/short-description` — kebab-case
+3. If already in a worktree whose branch fits the current task — stay, do not create a new one
+4. All subsequent work happens in that worktree
 
 ### 0.2 Understand the task
 
@@ -182,23 +169,33 @@ Classify the task using the Task Profile Selection table above. This determines 
 
 ### 0.4 Design (non-trivial tasks only)
 
-For tasks that touch more than one file or introduce a new abstraction, invoke `superpowers:brainstorming` before writing code. Skip for single-file changes, Trivial profile, and focused bugfixes.
+For tasks that touch more than one file or introduce a new abstraction, explore the design space before writing code:
+1. Launch an Explore agent to analyze the codebase — understand existing patterns, constraints, and integration points
+2. Present 2-3 approaches with trade-offs (complexity, maintainability, performance, consistency with existing code)
+3. Recommend one approach with reasoning
+4. Proceed with the recommendation unless the user objects
 
-### 0.5 Skill selection
+Skip for single-file changes, Trivial profile, and focused bugfixes.
 
-Select the most specific applicable skill and invoke it. If research report exists, include `swarm-report/<slug>-research.md` path in the skill invocation context so the chosen skill has access to research findings.
+### 0.5 Implementation strategy
 
-| Task type | Approach |
+Select the strategy based on task type. If research report exists, include `swarm-report/<slug>-research.md` path in the strategy context so the chosen approach has access to research findings.
+
+| Task type | Strategy |
 |-----------|----------|
 | Android/Kotlin technology migration | Invoke `developer-workflow:code-migration` |
 | KMP migration | Invoke `developer-workflow:kmp-migration` |
-| Multi-step feature or architecture change | Create implementation plan (sections: Scope, Approach, Files to modify, Testing Strategy, Verification Approach, Acceptance Criteria), save to `swarm-report/<slug>-plan.md`, then implement step by step, updating progress and committing after each logical unit |
-| Bug or unexpected behavior | Reproduce → isolate the failing component → form a hypothesis → verify → fix. Read error output carefully, check logs, use debugger if available |
-| Any other implementation work (default) | Write failing test → implement → verify test passes → refactor. Repeat for each logical unit. If no test infrastructure exists, proceed implementation-first and flag in PR description |
+| Multi-step feature or architecture change | **Plan then execute** (see below) |
+| Bug or unexpected behavior | **Systematic debugging** (see below) |
+| Any other implementation work | **TDD** (see below) |
 
-Follow the chosen approach throughout implementation. Switch to a more specific one if a better match emerges.
+**Plan then execute:** Create an implementation plan with sections: Scope, Approach, Files to modify, Testing Strategy, Verification Approach, Acceptance Criteria. Save to `swarm-report/<slug>-plan.md`. Then follow the plan step by step — update progress after each logical unit, commit after each meaningful stage.
 
-The core TDD contract: **write a failing test before writing the implementation code it covers.** If the codebase has no test infrastructure, proceed implementation-first and flag the gap in the PR description.
+**Systematic debugging:** Reproduce → isolate → hypothesize → verify → fix. Read error output fully, check logs, narrow the search space before attempting a fix.
+
+**TDD (default):** Write a failing test first → verify it fails → implement the code → verify the test passes → refactor. If the codebase has no test infrastructure, proceed implementation-first and flag the gap in the PR description.
+
+Follow the chosen strategy throughout implementation. Switch to a more specific one if a better match emerges.
 
 ---
 
@@ -215,6 +212,8 @@ Update the PR description after each major change so it stays current.
 ## Phase 2: Quality Loop
 
 Once implementation is complete, invoke `developer-workflow:prepare-for-pr`. It runs build, simplify, self-review, intent verification, optional expert reviews, and lint/tests in a loop — exit criteria and hook behavior are defined inside that skill.
+
+**Backward transition:** if the quality loop finds issues requiring significant code changes → log the issues in `swarm-report/<slug>-quality.md` → re-anchor → return to implementation (Phase 0.5 strategy).
 
 ---
 
@@ -256,8 +255,6 @@ After the quality loop exits clean, execute the verification approach defined in
 - This backward transition follows the state machine: `Verify → Implement` (verification fails — fix and re-verify)
 - Maximum 2 verification retries. After that, escalate to the user.
 
-**Backward transition:** if the quality loop finds issues requiring significant code changes → log the issues in `swarm-report/<slug>-quality.md` → re-anchor → return to implementation (Phase 0.5 skill).
-
 **Stage artifact:** write `swarm-report/<slug>-quality.md` with gates passed/failed, issues found/fixed, and review verdicts.
 
 ---
@@ -291,12 +288,10 @@ Wait for CI/CD checks to pass (monitor manually or via the platform UI). Once re
 
 ## Phase 5: Wrap-up
 
-After the PR is merged, clean up the development environment:
-1. Verify all commits are pushed and the branch is clean (`git status` shows nothing)
-2. Remove any temporary files created during development
-3. Switch back to the base branch
-4. Remove the worktree directory created in Phase 0.1
-5. Delete the local branch: `git branch -d <branch>`
+After the PR is merged, clean up:
+1. Verify all commits are pushed and the branch is clean (no uncommitted changes, no temp files)
+2. Switch back to the main worktree
+3. Delete the feature worktree and its branch
 
 ---
 
