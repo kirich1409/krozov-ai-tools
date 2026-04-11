@@ -14,3 +14,4 @@ package-lock.json
 .claude/settings.local.json
 .claude/agent-memory/
 .claude/worktrees/
+swarm-report/
