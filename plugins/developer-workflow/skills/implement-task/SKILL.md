@@ -76,7 +76,7 @@ Each stage produces an artifact in `swarm-report/`. The next stage **must** read
 
 | Stage | Artifact | Required before starting |
 |-------|----------|------------------------|
-| Research | `<slug>-research.md` | — (first stage) |
+| Research | `<slug>-research.md` | — (first stage; produced by the `research` skill, not by implement-task) |
 | Plan | `<slug>-plan.md` | `<slug>-research.md` (Feature/Migration profiles) |
 | Implement | `<slug>-implement.md` | `<slug>-plan.md` |
 | Quality | `<slug>-quality.md` | `<slug>-implement.md` |
@@ -87,7 +87,7 @@ Each stage produces an artifact in `swarm-report/`. The next stage **must** read
 
 **If the previous artifact is missing** → the previous stage did not complete → do not proceed. Either complete the missing stage or escalate.
 
-**Trivial profile exception:** tasks using the Trivial profile skip Research and Plan stages — their first artifact is `<slug>-implement.md`.
+**Profile-specific gating:** artifacts are required only for profiles that include the corresponding stage. Trivial profile skips Research and Plan — their artifacts are not required (first artifact is `<slug>-implement.md`). Bug Fix profile skips Research — its artifact is not required. Research-only profile produces only `<slug>-research.md`.
 
 ### Stage artifact content
 
@@ -256,6 +256,18 @@ After the quality loop exits clean, execute the verification approach defined in
 - Maximum 2 verification retries. After that, escalate to the user.
 
 **Stage artifact:** write `swarm-report/<slug>-quality.md` with gates passed/failed, issues found/fixed, and review verdicts.
+
+---
+
+## Phase 2.5: Verify
+
+Run the verification approach defined in the plan (`swarm-report/<slug>-plan.md` → Verification Approach section). This typically includes running the full test suite, build checks, and any manual or automated verification steps specified during planning.
+
+**Gate check:** `swarm-report/<slug>-quality.md` must exist and show PASS before entering verification.
+
+**Backward transition:** if verification fails → log the failure in `swarm-report/<slug>-verify.md` → re-anchor → return to implementation (Phase 0.5 strategy) to fix the issue, then re-enter Quality Loop (Phase 2) before re-verifying.
+
+**Stage artifact:** write `swarm-report/<slug>-verify.md` with verification steps executed, PASS/FAIL verdict, and any issues found. If no verification approach was defined in the plan (e.g., Trivial profile), skip this phase — PR gating falls back to `<slug>-quality.md`.
 
 ---
 
