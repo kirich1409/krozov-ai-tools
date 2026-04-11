@@ -66,6 +66,8 @@ Auto-detect from keywords and context. If ambiguous — state the assumed profil
 
 **Trivial profile:** not every task needs research and planning. For single-file changes, focused bugfixes, config tweaks, and other obviously scoped work — skip directly to implementation. The overhead of the full pipeline must be proportional to the task complexity.
 
+**Bug Fix profile:** skips Research and Plan — starts at Phase 0 (understand task), then Phase 0.4 skill selection routes to systematic debugging (reproduce → isolate → hypothesize → verify → fix). Quality → PR → Merge phases apply as normal.
+
 ---
 
 ## Receipt-Based Gating
@@ -106,8 +108,8 @@ Each artifact must include:
 Before each stage transition, the orchestrator re-anchors to prevent drift during long sessions:
 
 1. Re-read the **original task description** (verbatim from user request)
-2. Re-read the **research report** (`swarm-report/<slug>-research.md`) — if exists
-3. Re-read the **plan** (`swarm-report/<slug>-plan.md`) — if exists
+2. Re-read the **research report** (`swarm-report/<slug>-research.md`) — if it exists
+3. Re-read the **plan** (`swarm-report/<slug>-plan.md`) — if it exists
 4. Include these paths in the next agent's context prompt — the agent reads them itself
 
 This is mandatory at every stage boundary, including backward transitions. The agent entering a stage must have the original intent loaded — not a telephone-game summary passed through multiple agents.
@@ -205,7 +207,7 @@ Invoke `developer-workflow:create-pr` with draft intent as soon as the first mea
 
 Update the PR description after each major change so it stays current.
 
-**Stage artifact:** write `swarm-report/<slug>-implement.md` summarizing changes made, files touched, and any decisions taken during implementation.
+**Stage artifact:** when implementation is complete (all planned changes committed), write `swarm-report/<slug>-implement.md` before moving to the Quality Loop. Include: files changed, key decisions made, and tests added. This artifact is the gate receipt for Phase 2.
 
 ---
 
