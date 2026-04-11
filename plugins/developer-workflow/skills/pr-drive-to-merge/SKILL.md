@@ -57,7 +57,9 @@ MR_IID=$(echo "$MR_INFO" | jq -r .iid)
 MR_URL=$(echo "$MR_INFO" | jq -r .web_url)
 IS_DRAFT=$(echo "$MR_INFO" | jq -r '.title | startswith("Draft:")')
 BASE=$(echo "$MR_INFO" | jq -r .target_branch)
-PROJECT=$(glab repo view --output json | jq -r '.path_with_namespace')
+PROJECT=$(glab repo view --output json | jq -r '.path_with_namespace | @uri')
+# Note: path_with_namespace contains '/' (e.g. "group/repo") which must be
+# URL-encoded to "%2F" for GitLab REST API path segments. @uri in jq handles this.
 ```
 
 ### 1.3 Validate preconditions
@@ -124,9 +126,9 @@ If `gh pr checks --watch` is unavailable or times out, fall back to a manual pol
 ```bash
 while true; do
   STATUS=$(gh pr checks "$PR_NUMBER" --json name,state,conclusion \
-    --jq '[.[] | select(.state != "COMPLETED" or .conclusion == "FAILURE")]')
+    --jq '[.[] | select(.state != "COMPLETED" or (.conclusion | test("FAILURE|CANCELLED|TIMED_OUT|ACTION_REQUIRED|STARTUP_FAILURE|STALE")))]')
   PENDING=$(echo "$STATUS" | jq '[.[] | select(.state != "COMPLETED")] | length')
-  FAILED=$(echo "$STATUS" | jq '[.[] | select(.conclusion == "FAILURE")] | length')
+  FAILED=$(echo "$STATUS" | jq '[.[] | select(.conclusion | test("FAILURE|CANCELLED|TIMED_OUT|ACTION_REQUIRED|STARTUP_FAILURE|STALE"))] | length')
 
   if [ "$PENDING" -eq 0 ] && [ "$FAILED" -eq 0 ]; then
     break  # All green
@@ -488,9 +490,8 @@ Stop and ask the user when:
 This skill operates both standalone and as a phase in larger workflows:
 
 - **Standalone:** user has an existing PR and wants it merged — invoke directly
-- **Pipeline phase:** `implement-task` invokes this skill as its final phase
-  (Phase 4: CI/CD and Review + Phase 5: Wrap-up) to drive the PR to merge
-  after the quality loop is complete
+- **Pipeline phase:** `implement-task` invokes this skill as its Phase 4 (Drive to Merge)
+  after the quality loop (Phase 2) and PR creation (Phase 3) are complete
 
 In both cases, the skill takes ownership from the current PR state and drives
 forward until merge or escalation.
