@@ -65,7 +65,7 @@ digraph prepare_for_pr {
     build [label="Build", shape=box];
     build_pass [label="Passes?", shape=diamond];
     scope_build [label="Scope decision\n(see below)", shape=box];
-    simplify [label="Simplify\n[1st iteration only]", shape=box];
+    simplify [label="Invoke simplify skill\n[1st iteration only]", shape=box];
     selfrev [label="Self-review: git diff $BASE...HEAD\nCheck logic, security, edge cases", shape=box];
     lint [label="Lint + Tests", shape=box];
     intent [label="Intent Verification\n(separate Explore agent)", shape=box];
@@ -132,14 +132,9 @@ digraph scope {
 
 ## Simplify
 
-Review all changed code (`git diff $BASE...HEAD`) for unnecessary complexity, duplication, and unclear naming. Simplify where possible without changing behavior:
-- Remove dead code, unused imports, unreachable branches introduced by current changes
-- Extract duplicated logic into shared functions
-- Simplify overly nested conditionals or verbose patterns
-- Rename unclear variables/functions to express intent
-- Replace manual implementations with standard library equivalents where obvious
+Invoke the `simplify` skill to review changed code for reuse, quality, and efficiency.
 
-Fix issues inline, stage and commit. If no simplification opportunities — proceed to self-review.
+Stage and commit any fixes. If no simplification opportunities — proceed to self-review.
 
 ## Self-Review Criteria
 
