@@ -37,6 +37,7 @@ If any phase fails: identify the root cause — if it's in current changes, fix 
      SLUG="short-task-description"  # kebab-case, 2-4 words
      BRANCH="feature/$SLUG"         # or fix/$SLUG, chore/$SLUG
      WORKTREE_DIR=".worktrees/$(echo $BRANCH | tr '/' '-')"
+     mkdir -p .worktrees
      git worktree add "$WORKTREE_DIR" "$BASE_BRANCH"
      cd "$WORKTREE_DIR"
      git checkout -b "$BRANCH"
@@ -181,7 +182,7 @@ After the PR is merged, clean up the development environment:
 1. Verify all commits are pushed and the branch is clean (`git status` shows nothing)
 2. Remove any temporary files created during development
 3. Switch back to the base branch
-4. Remove the worktree: `git worktree remove .worktrees/<branch>`
+4. Remove the worktree directory created in Phase 0.1
 5. Delete the local branch: `git branch -d <branch>`
 
 ---
