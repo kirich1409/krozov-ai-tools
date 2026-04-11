@@ -211,6 +211,29 @@ Writes production-ready Kotlin for Android and KMP client applications — busin
 
 Use when you need Kotlin feature code — everything except Compose UI (which goes to `compose-developer`).
 
+### `swift-engineer`
+
+Writes production-ready Swift for iOS and macOS applications — business logic, data layer, networking, models, repositories, and services:
+- Implements services, repositories, data sources, models, and platform-specific code
+- Discovers project architecture patterns before writing code
+- Uses modern Swift: async/await, actors, Sendable, protocols, generics, value types
+- Supports both standalone iOS/macOS projects and KMP platform-specific (`actual`) implementations
+- Writes unit tests alongside implementation
+
+Use when you need Swift feature code — everything except SwiftUI views (which goes to `swiftui-developer`).
+
+### `swiftui-developer`
+
+Writes production-ready SwiftUI UI code for iOS, macOS, and watchOS:
+- Implements screens from Figma mockups, screenshots, wireframes, or feature specs
+- Discovers project SwiftUI patterns (theme, state model, shared components) before writing code
+- Follows modern best practices: MV pattern, @Observable, NavigationStack, .task {} for async work
+- Produces `#Preview` blocks for every significant view and distinct visual state
+- Full accessibility support: VoiceOver, Dynamic Type
+- Also used by the `migrate-to-swiftui` skill for UIKit → SwiftUI migration implementation
+
+Use when you need SwiftUI UI code written from a design, spec, or migration brief.
+
 ### Internal Expert Agents
 
 These agents are invoked by skills and the quality loop orchestration — not meant for direct user invocation. They are selected automatically based on the task (e.g., what code was touched, what the plan covers).
