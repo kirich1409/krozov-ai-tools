@@ -150,7 +150,7 @@ Extract from the plan:
 Find all available agents by scanning for real agent definition files:
 
 1. **Plugin agent directories** — `Glob("**/agents/*.md")` across plugin paths in the project
-2. **Built-in subagent types** — only those listed in the system prompt under "Available agent types" (e.g., `general-purpose`, `kotlin-engineer`, `compose-developer`, `manual-tester`, etc.)
+2. **Built-in subagent types** — only those listed in the system prompt under "Available agent types" (e.g., `general-purpose`, `manual-tester`, etc.)
 
 **Critical rule: only include agents that actually exist.** Read each agent file's frontmatter
 (`name`, `description`) to confirm it's real. Never invent, imagine, or assume agents that aren't
@@ -170,7 +170,7 @@ Mark the top-scoring agents as `recommended`. Prefer 2–3 agents, but quality o
 
 Use `AskUserQuestion` with `multiSelect: true` showing all discovered agents. Recommended agents are listed first with "(Recommended)" in the label and a one-sentence reason specific to this plan (not generic descriptions). Non-recommended agents are available below — the user knows their context best.
 
-**Explicit agent specification:** if the user named specific agents (e.g., "review with kotlin-engineer and security"), skip discovery entirely and use those agents directly. No confirmation needed — the user already chose.
+**Explicit agent specification:** if the user named specific agents (e.g., "review with kotlin-engineer and security-expert"), skip discovery entirely and use those agents directly. No confirmation needed — the user already chose.
 
 ## Step 3 — Parallel Independent Review
 
