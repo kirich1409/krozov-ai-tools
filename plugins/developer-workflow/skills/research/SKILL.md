@@ -362,8 +362,8 @@ Based on the research findings, propose the logical next step:
 
 Frame the suggestion as an actionable proposal, not a question:
 
-> **Следующий шаг:** фича разбивается на 3 независимых части → предлагаю `/decompose-feature`.
-> Или если хочешь сразу в код — `/implement`.
+> **Next step:** feature splits into 3 independent parts → suggesting `/decompose-feature`.
+> Or if ready to code right away — `/implement`.
 
 ---
 

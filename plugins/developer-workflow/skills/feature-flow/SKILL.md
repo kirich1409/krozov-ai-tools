@@ -47,7 +47,7 @@ PR         -> Implement        (review feedback requires code changes)
 
 **ALL other transitions are FORBIDDEN.** Before every transition, announce:
 
-> **Стадия: [текущая] → Переход на: [следующая]. Причина: [почему]**
+> **Stage: [current] → Transition to: [next]. Reason: [why]**
 
 ---
 
@@ -75,7 +75,7 @@ Ask **one clarifying question** if ambiguous. Otherwise proceed.
 
 Auto-detect the profile from keywords and context. Then confirm:
 
-> **Определён профиль: Бизнес-фича. Верно?**
+> **Detected profile: Feature. Correct?**
 
 If the user says it's a bug — redirect to `/bugfix-flow`.
 If the task is trivial (single-file, obvious change) — announce skip and go to Implement.
@@ -113,7 +113,7 @@ to implement directly.
 
 If `swarm-report/<slug>-plan.md` or `swarm-report/<slug>-decomposition.md` was produced:
 - Invoke `developer-workflow:plan-review` with that artifact
-- If FAIL → **Стадия: PlanReview → Research.** Back to 1.1 with gaps identified
+- If FAIL → **Stage: PlanReview → Research.** Back to 1.1 with gaps identified
 - If CONDITIONAL → proceed with noted concerns
 - If PASS → proceed
 
@@ -151,9 +151,9 @@ context compaction and are NOT re-checked on resume.
 Wait for `swarm-report/<slug>-acceptance.md`.
 
 **Route by result:**
-- VERIFIED → **Стадия: Acceptance → PR**
-- FAILED (P0/P1, obvious cause) → **Стадия: Acceptance → Implement.** Max 3 round-trips.
-- FAILED (P0/P1, unclear cause) → **Стадия: Acceptance → Debug.** Then Implement.
+- VERIFIED → **Stage: Acceptance → PR**
+- FAILED (P0/P1, obvious cause) → **Stage: Acceptance → Implement.** Max 3 round-trips.
+- FAILED (P0/P1, unclear cause) → **Stage: Acceptance → Debug.** Then Implement.
 - PARTIAL (P2/P3) → ask user: fix now or ship as-is
 - Out-of-scope bugs → create issues, don't block
 

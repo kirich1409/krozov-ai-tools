@@ -40,7 +40,7 @@ PR         -> Implement        (review feedback requires code changes)
 
 **ALL other transitions are FORBIDDEN.** Before every transition, announce:
 
-> **Стадия: [текущая] → Переход на: [следующая]. Причина: [почему]**
+> **Stage: [current] → Transition to: [next]. Reason: [why]**
 
 ---
 
@@ -67,7 +67,7 @@ Generate a slug: kebab-case, 2-4 words.
 
 Auto-detect the profile. Then confirm:
 
-> **Определён профиль: Поиск бага. Верно?**
+> **Detected profile: Bug fix. Correct?**
 
 If the user says it's a feature — redirect to `/feature-flow`.
 If the fix is trivially obvious (typo, missing null check) — announce skip and go to Implement.
@@ -88,8 +88,8 @@ This section is persistent state — survives context compaction. Re-read it bef
 action that depends on reproduction steps.
 
 **Route by status:**
-- **Diagnosed, simple fix** (single file, clear direction) → **Стадия: Debug → Implement.**
-- **Diagnosed, complex fix** (multiple files, architectural impact, unclear approach) → **Стадия: Debug → Plan.**
+- **Diagnosed, simple fix** (single file, clear direction) → **Stage: Debug → Implement.**
+- **Diagnosed, complex fix** (multiple files, architectural impact, unclear approach) → **Stage: Debug → Plan.**
 - **Not Reproducible** → report to user, ask for more info. Stop.
 - **Escalated** → report findings, stop. Bug needs user decision.
 
