@@ -140,7 +140,7 @@ jobs:
             [ -f "$plugin_json" ] || continue
             skills_rel=$(jq -r '.skills // empty' "$plugin_json")
             [ -n "$skills_rel" ] || continue
-            skills_path="${source}/${skills_rel#./}"
+            skills_path=$(realpath -m "${source}/.claude-plugin/${skills_rel}")
             if [ ! -d "$skills_path" ]; then
               echo "ERROR: '$name' skills path does not exist: $skills_path"
               MISSING=1
@@ -160,7 +160,7 @@ jobs:
             [ -f "$plugin_json" ] || continue
             agents_rel=$(jq -r '.agents // empty' "$plugin_json")
             [ -n "$agents_rel" ] || continue
-            agents_path="${source}/${agents_rel#./}"
+            agents_path=$(realpath -m "${source}/.claude-plugin/${agents_rel}")
             if [ ! -d "$agents_path" ]; then
               echo "ERROR: '$name' agents path does not exist: $agents_path"
               MISSING=1
