@@ -23,12 +23,16 @@ Thin orchestrator for features — routes through the full pipeline autonomously
 - Strict state machine with explicit allowed transitions
 - Stops at human review, PARTIAL verdict, and escalation points
 
+See [detailed flow diagram](docs/ORCHESTRATORS.md#feature-flow-feature-flow).
+
 ### `bugfix-flow`
 
 Thin orchestrator for bug fixes — routes through diagnosis to merge:
 - debug → implement → acceptance → PR → merge
 - Verifies bug no longer reproduces before PR
 - Stops at human review and when bug is not reproducible
+
+See [detailed flow diagram](docs/ORCHESTRATORS.md#bugfix-flow-bugfix-flow).
 
 ### `implement`
 
