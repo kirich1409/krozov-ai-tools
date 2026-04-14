@@ -12,7 +12,7 @@ description: >-
   Use when: "implement", "write the code", "fix this", "сделай", "реализуй", "напиши код",
   "пофикси", or when an orchestrator delegates the implementation stage.
   Do NOT use for: debugging/investigation (use debug), research (use research),
-  PR creation (use create-pr), live QA (use test-feature).
+  PR creation (use create-pr), live QA (use acceptance).
 ---
 
 # Implement

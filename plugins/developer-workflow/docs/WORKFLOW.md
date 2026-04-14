@@ -295,7 +295,7 @@ Each artifact includes:
 | `pr-drive-to-merge` | Merge | CI monitoring, review handling, drive to merge |
 | `address-review-feedback` | Merge (sub-skill) | Analysis and handling of reviewer comments |
 | `generate-test-plan` | Plan / Verify | Structured test plan from specification |
-| `test-feature` | Verify | Feature verification on live app vs. specification |
+| `acceptance` | Verify | Acceptance verification on live app — features and bug fixes |
 | `exploratory-test` | Verify | Undirected bug hunting without a specification |
 | `decompose-feature` | Research / Plan | Feature decomposition into tasks |
 | `write-tests` | Implement | Retroactive test writing |
@@ -347,7 +347,7 @@ Each artifact includes:
 | **Perplexity** | Web research: approaches, best practices, pitfalls | Research (Web Expert) |
 | **DeepWiki** | AI-generated documentation for GitHub repositories | Research (Docs Expert) |
 | **Context7** | Library and framework documentation | Research (Docs Expert) |
-| **mobile MCP** | Testing on real devices and emulators | Verify (`manual-tester`, `test-feature`) |
+| **mobile MCP** | Testing on real devices and emulators | Verify (`manual-tester`, `acceptance`) |
 | **playwright MCP** | Web application testing in the browser | Verify (`manual-tester`) |
 
 

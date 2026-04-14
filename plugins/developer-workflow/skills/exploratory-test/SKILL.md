@@ -10,14 +10,14 @@ description: >-
   the user reports vague bugs and wants exploration, or for a quick accessibility sweep. Launches
   the manual-tester agent with device/browser MCP tools for real interaction.
   Do NOT trigger when: the user provides a spec/mockup/PRD and wants verification against it (use
-  test-feature), the user only wants test cases written without execution (use generate-test-plan),
+  acceptance), the user only wants test cases written without execution (use generate-test-plan),
   or the user asks about automated unit/integration tests (out of scope).
 ---
 
 # Exploratory Test
 
 Explore a running application to discover bugs, UX issues, and edge cases — guided by testing
-heuristics rather than a specification. This is fundamentally different from `test-feature`:
+heuristics rather than a specification. This is fundamentally different from `acceptance`:
 there is no spec to verify against, no pass/fail verdict, and no predefined test plan. The goal
 is to find problems the team hasn't anticipated.
 
@@ -38,7 +38,7 @@ Ask or infer from context:
 - **Web app** — need a URL
 
 If the user says "the app is already running" or provides a device/URL, use it directly.
-Otherwise, follow the same launch logic as `test-feature` Step 2 (build, install, start
+Otherwise, follow the same launch logic as `acceptance` Step 2 (build, install, start
 dev server, etc.).
 
 ### 1.2 Focus area (optional)
@@ -69,7 +69,7 @@ If they say "quick check" or "just the settings screen", use Quick. If they say 
 ## Step 2: Launch Manual Tester in Exploratory Mode
 
 Spawn the `manual-tester` agent with an exploratory prompt. The prompt structure differs from
-`test-feature` — instead of a spec and test plan, it provides heuristics and exploration rules.
+`acceptance` — instead of a spec and test plan, it provides heuristics and exploration rules.
 
 ```
 You are performing exploratory testing — there is no specification to verify against.
@@ -202,16 +202,16 @@ P0 Blockers: [n] | P1 Major: [n] | P2 Minor: [n] | P3 Cosmetic: [n]
 Based on findings, guide the user toward the right next action:
 
 **P0 blockers found** — Critical issues need fixing before further testing. After fixes,
-re-run exploratory-test on the affected area, or use `test-feature` with a spec for targeted
+re-run exploratory-test on the affected area, or use `acceptance` with a spec for targeted
 verification.
 
 **P1/P2 bugs found, no blockers** — The app is functional but has issues. Consider creating
 a test plan for the affected areas using `generate-test-plan`, then verifying fixes with
-`test-feature`.
+`acceptance`.
 
 **Only P3 bugs or observations** — No critical issues. The app is in reasonable shape for the
 areas explored. If pre-release confidence is needed, consider a spec-based verification pass
-with `test-feature`.
+with `acceptance`.
 
 **Nothing found** — The explored scope looks clean. Consider increasing scope to Deep, focusing
 on a specific area the team is concerned about, or moving on to spec-based verification.

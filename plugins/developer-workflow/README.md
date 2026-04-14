@@ -131,11 +131,11 @@ Creates a structured, reusable test plan from a specification source without exe
 - Identifies risk areas, edge cases, and state combinations
 - Writes prioritized test cases (P0–P3) across Smoke / Feature / Regression tiers
 - Cross-references multiple spec sources and flags discrepancies
-- Produces a `docs/testplans/<feature>-test-plan.md` ready for `manual-tester` or `test-feature`
+- Produces a `docs/testplans/<feature>-test-plan.md` ready for `manual-tester` or `acceptance`
 
 Use when planning testing separately from execution — for review, reuse, or handoff.
 
-### `test-feature`
+### `acceptance`
 
 Verifies a running application against a specification:
 - Accepts a spec (Figma, PRD, acceptance criteria) and/or a test plan

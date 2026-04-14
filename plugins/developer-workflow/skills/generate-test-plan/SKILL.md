@@ -8,9 +8,9 @@ description: >-
   describes requirements or acceptance criteria and asks how to verify them, or wants to plan testing
   before actually running tests. Produces a structured, prioritized test plan document saved to
   docs/testplans/ with risk analysis, coverage matrix, automation candidates, and proper TC format.
-  Do NOT trigger when: the user wants to execute tests on a running app (use test-feature or
+  Do NOT trigger when: the user wants to execute tests on a running app (use acceptance or
   exploratory-test), the user wants automated unit/integration tests written in code (out of scope),
-  or the user wants to run an existing test plan (use test-feature). This skill never launches an
+  or the user wants to run an existing test plan (use acceptance). This skill never launches an
   app, device, or browser — it only produces a document.
 ---
 

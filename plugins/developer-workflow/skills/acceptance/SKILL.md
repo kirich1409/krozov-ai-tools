@@ -1,19 +1,21 @@
 ---
-name: test-feature
+name: acceptance
 description: >
-  Verify a feature against its specification by running manual QA on a live app. Use this skill
-  whenever the user wants to test, verify, or validate an implemented feature — whether they provide
-  a test plan, a spec (PRD, Figma mockup, acceptance criteria, PR description), or both.
-  Trigger on: "test this feature", "verify against spec", "QA the implementation", "check if it matches
+  Acceptance verification — confirm that implementation meets requirements (feature) or that a bug
+  no longer reproduces (bug fix). Runs manual QA on a live app against a spec source.
+  Accepts any spec: PRD, Figma mockup, acceptance criteria, PR description, GitHub issue,
+  debug.md artifact (reproduction steps), or a test plan.
+  Trigger on: "test this", "verify against spec", "QA the implementation", "check if it matches
   the design", "run the test plan", "validate the acceptance criteria", "does it match the mockup",
-  "verify the PR", or any request to compare a running app against a specification source.
-  Also trigger when the user finishes implementing a feature and wants confirmation it works before
-  creating or finalizing a PR.
+  "verify the PR", "verify the fix", "confirm bug is gone", "acceptance", "приёмка", "проверь",
+  "протестируй", or any request to compare a running app against a specification source.
+  Also trigger when the user finishes implementing a feature or bug fix and wants confirmation
+  it works before creating or finalizing a PR.
 ---
 
-# Test Feature
+# Acceptance
 
-Verify that a running application matches its specification. This skill bridges implementation and
+Verify that a running application meets its acceptance criteria. This skill bridges implementation and
 review — it takes a spec source and/or a test plan, ensures the app is running, launches QA
 against it, and produces a verification result.
 

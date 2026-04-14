@@ -8,7 +8,7 @@ description: >-
   Use when the user says: "write tests for", "add tests to", "test this class", "increase
   coverage", "add unit tests", "this code has no tests", "cover with tests", "retroactive tests".
   Do NOT trigger when: the user wants a test plan document without code (use generate-test-plan),
-  the user wants to run tests on a live app (use test-feature), the user wants exploratory QA
+  the user wants to run tests on a live app (use acceptance), the user wants exploratory QA
   (use exploratory-test), or tests are part of a new feature being implemented (kotlin-engineer
   handles this within the implement skill). This skill orchestrates — it does not write test code
   directly; kotlin-engineer or compose-developer agents produce the test files.
