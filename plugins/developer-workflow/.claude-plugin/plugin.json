@@ -1,6 +1,6 @@
 {
   "name": "developer-workflow",
-  "version": "0.7.0",
+  "version": "0.8.0",
   "description": "Developer workflow skills — full task implementation cycle, View→Compose and UIKit→SwiftUI migration, safe code migration, test plan generation, exploratory QA testing, feature verification, PR preparation, PR creation (draft or ready), and review feedback analysis with triage and response",
   "skills": "./skills"
 }

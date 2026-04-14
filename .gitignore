@@ -15,3 +15,5 @@ package-lock.json
 .claude/agent-memory/
 .claude/worktrees/
 swarm-report/
+
+*-workspace/

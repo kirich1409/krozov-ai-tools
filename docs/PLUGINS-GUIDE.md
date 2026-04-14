@@ -1,6 +1,6 @@
 # krozov-ai-tools: Руководство по плагинам
 
-Монорепозиторий Claude Code плагинов от krozov. Версия 0.7.0. Все плагины используют единую версионность — каждый релиз обновляет все плагины до одной версии.
+Монорепозиторий Claude Code плагинов от krozov. Версия 0.8.0. Все плагины используют единую версионность — каждый релиз обновляет все плагины до одной версии.
 
 Репозиторий: [github.com/kirich1409/krozov-ai-tools](https://github.com/kirich1409/krozov-ai-tools)
 
@@ -23,7 +23,7 @@
 
 ```mermaid
 graph TB
-    subgraph repo["krozov-ai-tools v0.7.0"]
+    subgraph repo["krozov-ai-tools v0.8.0"]
         maven["maven-mcp<br/><i>MCP server</i>"]
         guard["sensitive-guard<br/><i>PreToolUse hook</i>"]
         workflow["developer-workflow<br/><i>Skills + Agents</i>"]
