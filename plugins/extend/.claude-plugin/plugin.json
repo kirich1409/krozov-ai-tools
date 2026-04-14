@@ -2,5 +2,5 @@
   "name": "extend",
   "version": "0.8.0",
   "description": "Extend Claude Code built-in features: agent review, skill optimization, configuration audit",
-  "skills": "./skills"
+  "skills": "../skills"
 }

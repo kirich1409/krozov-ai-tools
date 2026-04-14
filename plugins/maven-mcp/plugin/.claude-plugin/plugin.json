@@ -8,5 +8,5 @@
       "args": ["-y", "@krozov/maven-central-mcp"]
     }
   },
-  "skills": "./skills"
+  "skills": "../skills"
 }
