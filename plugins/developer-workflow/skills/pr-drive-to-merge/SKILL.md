@@ -286,13 +286,23 @@ Distinguish between **bot reviews** (CI, automated checks) and **human reviews**
 **Bot reviews** (review author is a bot or CI system) — wait and poll:
 ```bash
 # Poll for bot review activity (short cycle — bots respond in minutes)
+# Timeout: 15 minutes. If bots haven't responded — escalate.
+TIMEOUT=900
+ELAPSED=0
 while true; do
   sleep 60
+  ELAPSED=$((ELAPSED + 60))
   CURRENT_DECISION=$(gh pr view "$PR_NUMBER" --json reviewDecision -q .reviewDecision)
   # Check for new bot reviews...
   # Break when bot activity detected
+  if [ "$ELAPSED" -ge "$TIMEOUT" ]; then
+    # Bot timeout — report and stop
+    break
+  fi
 done
 ```
+If bots don't respond within 15 minutes — report the stall and stop. This likely indicates
+a CI infrastructure issue, not something the skill can fix.
 
 **Human reviews** — **do NOT poll**. Human reviews can take hours or days.
 Instead, stop and report to the user:
