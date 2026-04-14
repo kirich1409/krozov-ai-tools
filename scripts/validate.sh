@@ -8,6 +8,12 @@
 # Exit code: 0 if all checks pass, 1 if any error found.
 set -uo pipefail
 
+# Require jq
+if ! command -v jq &> /dev/null; then
+  echo "ERROR: jq is required but not installed" &>\set -uo pipefail2
+  exit 1
+fi
+
 MARKETPLACE=".claude-plugin/marketplace.json"
 ERRORS=0
 
@@ -39,7 +45,7 @@ check_json_syntax() {
 
 check_no_duplicates() {
   echo "--- L2: No duplicate plugin names ---"
-  DUPES=$(jq -r '[.plugins[].name] | group_by(.) | map(select(length > 1) | .[0]) | .[]' "$MARKETPLACE")
+  DUPES=$(jq -r '[.plugins[].name] | sort | group_by(.) | map(select(length > 1) | .[0]) | .[]' "$MARKETPLACE")
   if [ -n "$DUPES" ]; then
     fail "Duplicate plugin names in marketplace.json: $DUPES"
   else
@@ -218,10 +224,10 @@ check_agents_dirs() {
   done < <(jq -r '.plugins[] | [.name, .source] | @tsv' "$MARKETPLACE")
 }
 
-# ---------- L7: Hook scripts ----------
+# ---------- L6: Hook scripts ----------
 
 check_hook_scripts() {
-  echo "--- L7: Hook scripts executable ---"
+  echo "--- L6: Hook scripts executable ---"
   while IFS=$'\t' read -r name source; do
     hooks_dir="${source}/hooks"
     [ -d "$hooks_dir" ] || continue
@@ -231,7 +237,7 @@ check_hook_scripts() {
       else
         ok "'$name' $(basename "$script") is executable"
       fi
-    done < <(find "$hooks_dir" -name "*.sh")
+    done < <(find "$hooks_dir" -type f -name "*.sh")
   done < <(jq -r '.plugins[] | [.name, .source] | @tsv' "$MARKETPLACE")
 }
 
