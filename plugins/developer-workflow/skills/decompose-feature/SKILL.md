@@ -9,10 +9,10 @@ description: >-
   feature", "epic", "what's the scope", "I want to add", "here's a PRD", "split into tasks",
   "task breakdown", "what do I need to build", "scope this out", "how many tasks", "work
   breakdown", "implementation steps", "feature planning".
-  Do NOT invoke for: bug fixes (use implement-task Bug Fix profile), code review (use
+  Do NOT invoke for: bug fixes (use debug skill), code review (use
   code-reviewer agent), research-only questions (use research skill), single concrete tasks
   that don't need decomposition, migrations (use code-migration or kmp-migration skills).
-  Cross-references: produces task lists that feed into implement-task for execution. Tasks
+  Cross-references: produces task lists that feed into the implement skill for execution. Tasks
   flagged with research-recommended feed into the research skill. The output artifact can be
   reviewed via plan-review before implementation begins.
 ---
@@ -25,7 +25,7 @@ before splitting work into concrete tasks with acceptance criteria and implement
 
 **Key principle:** decomposition and implementation are separate concerns. This skill produces
 a task list — it does not implement anything. Each task in the output is a self-contained unit
-that can be handed to `implement-task` or a specialist agent independently.
+that can be handed to `implement` or a specialist agent independently.
 
 ---
 
@@ -431,7 +431,7 @@ This skill operates as a pre-implementation planning tool:
 - **Standalone:** user has a feature idea, gets a structured task list. Can be reviewed via
   `plan-review` before implementation begins.
 - **Pipeline entry:** the decomposition artifact (`<slug>-decomposition.md`) provides the
-  task list for `implement-task` to execute. Each task becomes an independent implementation
+  task list for `implement` to execute. Each task becomes an independent implementation
   unit.
 - **Research handoff:** tasks flagged with `research-recommended: true` can be individually
   investigated via the `research` skill before implementation.

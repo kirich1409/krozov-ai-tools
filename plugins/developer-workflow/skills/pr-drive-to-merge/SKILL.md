@@ -9,10 +9,10 @@ description: >
   "finish this PR", "get it merged", "land this PR", "ship this PR",
   "доведи PR до мержа", "следи за CI и мержь".
   Do NOT use for: creating new PRs (use create-pr), writing code or implementing features
-  (use implement-task), reviewing code (use code-reviewer agent), addressing a single
+  (use implement), reviewing code (use code-reviewer agent), addressing a single
   round of review comments without merge intent (use address-review-feedback directly).
   Cross-references: invokes address-review-feedback for review handling. Invoked by
-  implement-task as its final phase.
+  the orchestrator as the final pipeline stage.
 ---
 
 # PR Drive to Merge
@@ -490,7 +490,7 @@ Stop and ask the user when:
 This skill operates both standalone and as a phase in larger workflows:
 
 - **Standalone:** user has an existing PR and wants it merged — invoke directly
-- **Pipeline phase:** `implement-task` invokes this skill as its Phase 4 (Drive to Merge)
+- **Pipeline phase:** the orchestrator invokes this skill after implementation, quality loop,
   after the quality loop (Phase 2) and PR creation (Phase 3) are complete
 
 In both cases, the skill takes ownership from the current PR state and drives

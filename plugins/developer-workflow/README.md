@@ -16,15 +16,15 @@ Breaks a feature idea, PRD, or epic into a structured task list with dependencie
 
 Use when breaking down a feature idea into implementable tasks before starting work.
 
-### `implement-task`
+### `implement`
 
-Orchestrates the full development cycle for any implementation task:
-- Creates an isolated worktree, timeboxes exploration, selects the best-matching sub-skill
-- Brainstorms design for multi-file changes; follows TDD throughout
-- Creates a draft PR early, runs quality loop (simplify + quality gates + `code-reviewer` agent), then marks the PR ready
-- Delegates review comment handling to `address-review-feedback`
+Standalone implementation stage — takes a task with optional context and produces working code:
+- Accepts any task source: text, issue URL, or pipeline artifacts (`research.md`, `debug.md`, `plan.md`)
+- Delegates code writing to specialist agents (`kotlin-engineer`, `compose-developer`, etc.)
+- Runs `simplify` + quality loop (build → lint → tests → `code-reviewer` → expert reviews)
+- Produces `implement.md` + `quality.md` artifacts for the next pipeline stage
 
-Explicit-only — invoke directly with `/developer-workflow:implement-task`.
+Can be invoked by an orchestrator or directly by the user.
 
 ### `create-pr`
 

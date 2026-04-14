@@ -37,7 +37,7 @@ IDEA / FEATURE REQUEST
 [Plan Mode + plan-review] ---- Implementation plan + PoLL review
   |                              Artifact: swarm-report/<slug>-plan.md
   v
-[implement-task] ---- Full autonomous cycle
+[implement] ---- Full autonomous cycle
   |  |-- kotlin-engineer / compose-developer / code-migration
   |  |-- Quality Loop (6 gates + code-reviewer)
   |  |     Artifact: swarm-report/<slug>-quality.md
@@ -287,7 +287,7 @@ Each artifact includes:
 |-------|---------------|-------------|
 | `research` | Research | Research Consortium — up to 5 parallel experts, synthesis, auto-review |
 | `plan-review` | Plan | PoLL review of the plan by multiple agents |
-| `implement-task` | Implement -> Quality -> PR -> Merge | Full autonomous cycle (explicit-only) |
+| `implement` | Implement -> Quality | Standalone implementation stage with quality loop |
 | `code-migration` | Implement (Migration) | Discover -> snapshot -> migrate -> verify -> cleanup |
 | `kmp-migration` | Implement (Migration) | Module migration to Kotlin Multiplatform |
 | `migrate-to-compose` | Implement (Migration) | View -> Compose migration with visual baseline |

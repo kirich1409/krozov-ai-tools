@@ -10,7 +10,7 @@ description: >-
   Do NOT trigger when: the user wants a test plan document without code (use generate-test-plan),
   the user wants to run tests on a live app (use test-feature), the user wants exploratory QA
   (use exploratory-test), or tests are part of a new feature being implemented (kotlin-engineer
-  handles this within implement-task). This skill orchestrates — it does not write test code
+  handles this within the implement skill). This skill orchestrates — it does not write test code
   directly; kotlin-engineer or compose-developer agents produce the test files.
   Cross-references: consumes test plans from generate-test-plan (docs/testplans/) when available;
   feeds into the Quality Loop as additional coverage.

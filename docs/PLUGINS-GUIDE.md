@@ -303,7 +303,7 @@ flowchart LR
 
 | Skill | Команда | Назначение |
 |-------|---------|------------|
-| implement-task | `/implement-task` | Полный автономный цикл реализации (только по явному вызову) |
+| implement | `/implement` | Standalone-стадия реализации: код → simplify → quality loop |
 | debug | `/debug` | Систематический поиск root cause до попытки исправления |
 
 ### Skills: Migration
@@ -365,7 +365,7 @@ flowchart LR
 ```mermaid
 flowchart TB
     subgraph Skills
-        impl[implement-task]
+        impl[implement]
         migrate[migrate-to-compose]
         kmp[kmp-migration]
         codeMig[code-migration]
@@ -423,7 +423,7 @@ flowchart TB
 ```mermaid
 flowchart LR
     research["/research"] --> planReview["/plan-review"]
-    planReview --> impl["/implement-task"]
+    planReview --> impl["/implement"]
     decompose["/decompose-feature"] --> planReview
     impl --> createPR["/create-pr"]
     createPR --> drive["/pr-drive-to-merge"]
@@ -490,7 +490,7 @@ Meta-инструменты для улучшения самих агентов 
 | `/research` | developer-workflow | Параллельное исследование темы экспертами |
 | `/decompose-feature` | developer-workflow | Декомпозиция фичи в список задач |
 | `/plan-review` | developer-workflow | Multi-agent ревью плана (PoLL) |
-| `/implement-task` | developer-workflow | Полный автономный цикл реализации |
+| `/implement` | developer-workflow | Standalone-стадия реализации с quality loop |
 | `/debug` | developer-workflow | Систематический поиск root cause |
 | `/code-migration` | developer-workflow | Миграция технологии/библиотеки |
 | `/kmp-migration` | developer-workflow | Миграция модуля в KMP |

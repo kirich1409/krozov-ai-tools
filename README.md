@@ -69,7 +69,7 @@ Developer workflow skills and expert agents for the full development cycle — f
 - `/test-feature` — verify a feature against its specification on a live app
 - `/exploratory-test` — undirected bug hunting and QA exploration on a running app
 - `/plan-review` — multi-agent review of implementation plans using PoLL consensus protocol
-- `/implement-task` — full development cycle: worktree → TDD → implementation → quality loop → draft PR (explicit invocation only)
+- `/implement` — standalone implementation stage: code → simplify → quality loop → artifacts
 
 **Agents (10):** architecture-expert, build-engineer, business-analyst, compose-developer, devops-expert, kotlin-engineer, manual-tester, performance-expert, security-expert, ux-expert
 

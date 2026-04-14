@@ -10,12 +10,12 @@ description: >-
   "evaluate alternatives", "how should we approach", "what libraries exist for",
   "is it possible to", "what would it take to", "pros and cons of", "spike on",
   "before we start — let's understand", "what do we need to know before".
-  Also invoke when implement-task or code-migration needs a Research stage, or when a plan-review
+  Also invoke when the implement skill or code-migration needs a Research stage, or when a plan-review
   verdict is FAIL and gaps require investigation.
-  Do NOT invoke for: code review (use code-reviewer agent), implementation (use implement-task),
+  Do NOT invoke for: code review (use code-reviewer agent), implementation (use implement),
   plan review (use plan-review), specific library version lookup (use maven-mcp:latest-version
   directly), debugging existing bugs.
-  Cross-references: feeds into plan-review and implement-task as the Research stage of the
+  Cross-references: feeds into plan-review and the implement skill as the Research stage of the
   dev-workflow-orchestration pipeline.
 ---
 
@@ -385,7 +385,7 @@ Stop and escalate to the user when:
 This skill operates both standalone and as a stage in larger workflows:
 
 - **Standalone** (Research profile): user asks a question, gets a report. No implementation follows.
-- **Pipeline stage** (Feature/Migration profile): `implement-task` or `code-migration` invokes
+- **Pipeline stage** (Feature/Migration profile): the `implement` skill or `code-migration` invokes
   research as Phase 0. The output artifact (`<slug>-research.md`) feeds into the Plan stage
   via the receipt-based gating protocol.
 - **Recovery** (backward transition): when `plan-review` returns FAIL due to missing context,
