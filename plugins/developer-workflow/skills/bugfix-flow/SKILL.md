@@ -83,8 +83,8 @@ Invoke `developer-workflow:debug` with the bug description.
 
 Wait for `swarm-report/<slug>-debug.md`.
 
-The debug skill saves reproduction steps to `swarm-report/<slug>-reproduce.md`.
-This file is persistent state — survives context compaction. Re-read it before any
+The debug artifact includes a **Reproduction Steps** section in `swarm-report/<slug>-debug.md`.
+This section is persistent state — survives context compaction. Re-read it before any
 action that depends on reproduction steps.
 
 **Route by status:**

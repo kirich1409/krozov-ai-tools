@@ -100,10 +100,19 @@ If the task is large enough to split into independent sub-tasks:
 
 Skip for single-task features.
 
-### 1.3 Plan review (optional)
+### 1.3 Create plan (optional)
 
-If a plan or decomposition was produced:
-- Invoke `developer-workflow:plan-review`
+If the task remains a single task after research but is complex enough to benefit from review:
+- Create a short implementation plan in Plan Mode
+- Save it to `swarm-report/<slug>-plan.md`
+
+Skip if decomposition already produced the execution plan, or if the task is simple enough
+to implement directly.
+
+### 1.4 Plan review (optional)
+
+If `swarm-report/<slug>-plan.md` or `swarm-report/<slug>-decomposition.md` was produced:
+- Invoke `developer-workflow:plan-review` with that artifact
 - If FAIL → **Стадия: PlanReview → Research.** Back to 1.1 with gaps identified
 - If CONDITIONAL → proceed with noted concerns
 - If PASS → proceed

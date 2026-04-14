@@ -52,7 +52,7 @@ If artifact paths are provided (by orchestrator or user), read them:
 - `swarm-report/<slug>-plan.md` — scope, file list, testing strategy, acceptance criteria
 
 If no artifacts exist — proceed from the task description alone. Do a minimal codebase
-analysis (Explore agent) to understand the change surface before writing code.
+exploration to understand the change surface before writing code.
 
 ### 1.3 Generate slug
 

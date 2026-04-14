@@ -287,17 +287,20 @@ Distinguish between **bot reviews** (CI, automated checks) and **human reviews**
 ```bash
 # Poll for bot review activity (short cycle — bots respond in minutes)
 # Timeout: 15 minutes. If bots haven't responded — escalate.
+BASELINE_REVIEWS=$(gh api "repos/$OWNER/$REPO_NAME/pulls/$PR_NUMBER/reviews" \
+  --jq '[.[] | select(.user.type == "Bot")] | length')
 TIMEOUT=900
 ELAPSED=0
 while true; do
   sleep 60
   ELAPSED=$((ELAPSED + 60))
-  CURRENT_DECISION=$(gh pr view "$PR_NUMBER" --json reviewDecision -q .reviewDecision)
-  # Check for new bot reviews...
-  # Break when bot activity detected
+  CURRENT_REVIEWS=$(gh api "repos/$OWNER/$REPO_NAME/pulls/$PR_NUMBER/reviews" \
+    --jq '[.[] | select(.user.type == "Bot")] | length')
+  if [ "$CURRENT_REVIEWS" -gt "$BASELINE_REVIEWS" ]; then
+    break  # New bot review detected — re-enter the loop at 3.2
+  fi
   if [ "$ELAPSED" -ge "$TIMEOUT" ]; then
-    # Bot timeout — report and stop
-    break
+    break  # Bot timeout — report and stop
   fi
 done
 ```

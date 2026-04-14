@@ -14,7 +14,7 @@ description: >-
   or the user asks about automated unit/integration tests (out of scope).
 ---
 
-# Exploratory Test
+# Bug Hunt
 
 Explore a running application to discover bugs, UX issues, and edge cases — guided by testing
 heuristics rather than a specification. This is fundamentally different from `acceptance`:
@@ -157,7 +157,7 @@ When the manual-tester agent completes, process its output into a structured rep
 ### Report Format
 
 ```
-## Exploratory Testing Report
+## Bug Hunting Report
 
 **Date:** [date]
 **App:** [name, version, or URL]
