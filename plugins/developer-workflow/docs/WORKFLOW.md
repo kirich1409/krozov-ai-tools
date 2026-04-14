@@ -302,7 +302,7 @@ starting work. No stage starts without the previous stage's receipt.
 | Debug | `<slug>-debug.md` | Implement (Bug Fix) |
 | Plan | `<slug>-plan.md` | Implement (when planning is done) |
 | Implement | `<slug>-implement.md` + `<slug>-quality.md` | Acceptance |
-| Acceptance | Verification Report | PR |
+| Acceptance | `<slug>-acceptance.md` | PR |
 | PR | `<slug>-pr.md` | Merge |
 
 **Slug:** kebab-case from the task description, 2–4 words.
