@@ -1,5 +1,5 @@
 ---
-name: explore-app
+name: bug-hunt
 description: >-
   This skill should be used when the user asks to "find bugs", "check if anything is broken",
   "poke around the app", "explore the app", "do a sanity check", "QA the app", "stress test",
@@ -202,7 +202,7 @@ P0 Blockers: [n] | P1 Major: [n] | P2 Minor: [n] | P3 Cosmetic: [n]
 Based on findings, guide the user toward the right next action:
 
 **P0 blockers found** — Critical issues need fixing before further testing. After fixes,
-re-run explore-app on the affected area, or use `acceptance` with a spec for targeted
+re-run bug-hunt on the affected area, or use `acceptance` with a spec for targeted
 verification.
 
 **P1/P2 bugs found, no blockers** — The app is functional but has issues. Consider creating

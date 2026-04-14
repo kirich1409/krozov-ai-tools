@@ -9,7 +9,7 @@ description: >-
   coverage", "add unit tests", "this code has no tests", "cover with tests", "retroactive tests".
   Do NOT trigger when: the user wants a test plan document without code (use generate-test-plan),
   the user wants to run tests on a live app (use acceptance), the user wants exploratory QA
-  (use explore-app), or tests are part of a new feature being implemented (kotlin-engineer
+  (use bug-hunt), or tests are part of a new feature being implemented (kotlin-engineer
   handles this within the implement skill). This skill orchestrates — it does not write test code
   directly; kotlin-engineer or compose-developer agents produce the test files.
   Cross-references: consumes test plans from generate-test-plan (docs/testplans/) when available;

@@ -398,7 +398,7 @@ Each artifact includes:
 | `address-review-feedback` | Merge (sub-skill) | Analysis and handling of reviewer comments |
 | `generate-test-plan` | Plan / Verify | Structured test plan from specification |
 | `acceptance` | Verify | Acceptance verification on live app — features and bug fixes |
-| `explore-app` | Verify | Undirected bug hunting without a specification |
+| `bug-hunt` | Verify | Undirected bug hunting without a specification |
 | `decompose-feature` | Research / Plan | Feature decomposition into tasks |
 | `write-tests` | Implement | Retroactive test writing |
 | `simplify`* | Quality | Code review for reuse, quality, and efficiency |

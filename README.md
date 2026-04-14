@@ -67,7 +67,7 @@ Developer workflow skills and expert agents for the full development cycle — f
 - `/migrate-to-compose` — migrate View-based Android UI (Activity, Fragment, custom View) to Jetpack Compose
 - `/generate-test-plan` — generate structured, prioritized test plan from spec or code
 - `/acceptance` — verify a feature against its specification on a live app
-- `/explore-app` — undirected bug hunting and QA exploration on a running app
+- `/bug-hunt` — undirected bug hunting and QA exploration on a running app
 - `/plan-review` — multi-agent review of implementation plans using PoLL consensus protocol
 - `/implement` — standalone implementation stage: code → simplify → quality loop → artifacts
 

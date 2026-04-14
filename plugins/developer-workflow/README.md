@@ -160,7 +160,7 @@ Verifies a running application against a specification:
 
 Use after implementing a feature to confirm it matches the spec before PR.
 
-### `explore-app`
+### `bug-hunt`
 
 Undirected bug hunting on a running app — no spec or test plan required:
 - Explores screens guided by usability heuristics, error handling checks, and input edge cases
