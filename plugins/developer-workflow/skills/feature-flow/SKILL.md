@@ -29,7 +29,8 @@ Setup      -> Implement        (trivial/simple task — skip research/planning)
 Research   -> Decompose        (large feature — split into tasks)
 Research   -> PlanReview       (complex single-task — needs plan review)
 Research   -> Implement        (simple single-task — research was enough)
-Decompose  -> PlanReview
+Decompose  -> PlanReview       (complex decomposition — needs review)
+Decompose  -> Implement        (straightforward tasks — skip review)
 PlanReview -> Implement
 PlanReview -> Research         (FAIL — knowledge gaps)
 Implement  -> Acceptance

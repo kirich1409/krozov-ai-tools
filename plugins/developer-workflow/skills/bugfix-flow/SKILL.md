@@ -30,6 +30,7 @@ Debug      -> Plan             (complex fix — needs planning)
 Debug      -> Implement        (simple fix — root cause diagnosed, fix is clear)
 Debug      -> Report           (not reproducible or escalated)
 Plan       -> Implement
+Plan       -> Debug            (plan review FAIL — need more diagnostic context)
 Implement  -> Acceptance
 Acceptance -> PR               (VERIFIED — bug gone)
 Acceptance -> Implement        (FAILED — bug still reproduces or new bugs)

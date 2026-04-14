@@ -281,40 +281,16 @@ fi
 
 ### 3.6 Wait for reviewer response
 
-Distinguish between **bot reviews** (CI, automated checks) and **human reviews**:
+CI/automated checks (status checks, check runs) are already monitored in **Phase 2**.
+Step 3.6 only concerns **code review responses from people**.
 
-**Bot reviews** (review author is a bot or CI system) — wait and poll:
-```bash
-# Poll for bot review activity (short cycle — bots respond in minutes)
-# Timeout: 15 minutes. If bots haven't responded — escalate.
-BASELINE_REVIEWS=$(gh api "repos/$OWNER/$REPO_NAME/pulls/$PR_NUMBER/reviews" \
-  --jq '[.[] | select(.user.type == "Bot")] | length')
-TIMEOUT=900
-ELAPSED=0
-while true; do
-  sleep 60
-  ELAPSED=$((ELAPSED + 60))
-  CURRENT_REVIEWS=$(gh api "repos/$OWNER/$REPO_NAME/pulls/$PR_NUMBER/reviews" \
-    --jq '[.[] | select(.user.type == "Bot")] | length')
-  if [ "$CURRENT_REVIEWS" -gt "$BASELINE_REVIEWS" ]; then
-    break  # New bot review detected — re-enter the loop at 3.2
-  fi
-  if [ "$ELAPSED" -ge "$TIMEOUT" ]; then
-    break  # Bot timeout — report and stop
-  fi
-done
-```
-If bots don't respond within 15 minutes — report the stall and stop. This likely indicates
-a CI infrastructure issue, not something the skill can fix.
-
-**Human reviews** — **do NOT poll**. Human reviews can take hours or days.
+**Human reviews — do NOT poll.** Human reviews can take hours or days.
 Instead, stop and report to the user:
 
 1. Log current state in the state file
 2. Report:
    - PR URL and current status
    - Which reviewers were requested
-   - What bot checks remain (if any)
    - All automated work is complete — waiting for human review
 3. **Stop the skill.** The user resumes when a reviewer responds (e.g., "check PR",
    "reviewer responded", "continue with PR")

@@ -81,7 +81,7 @@ BUG REPORT / ISSUE
   |                           swarm-report/<slug>-quality.md
   v
 [acceptance] ---- Verify bug no longer reproduces on live app
-  |                Artifact: Verification Report (VERIFIED / FAILED / PARTIAL)
+  |                Artifact: swarm-report/<slug>-acceptance.md
   v
 [create-pr] ---- Draft PR -> Ready for Review
   |                Artifact: swarm-report/<slug>-pr.md
@@ -309,8 +309,9 @@ starting work. No stage starts without the previous stage's receipt.
 Example: task "Add user avatar upload" -> slug `user-avatar-upload`.
 
 **Profile-dependent gating:** artifacts are only required for stages included in the profile.
-Trivial: first artifact is `<slug>-implement.md`, skips Acceptance. Bug Fix: starts from
-`<slug>-debug.md`, no research artifact required.
+Trivial: first artifacts are `<slug>-implement.md` + `<slug>-quality.md`, skips Acceptance —
+PR stage depends on `<slug>-quality.md`. Bug Fix: starts from `<slug>-debug.md`, no research
+artifact required.
 
 **If an artifact is missing** -> the previous stage did not complete -> do not proceed.
 

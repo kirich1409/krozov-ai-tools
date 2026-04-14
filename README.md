@@ -69,6 +69,8 @@ Developer workflow skills and expert agents for the full development cycle — f
 - `/acceptance` — verify a feature against its specification on a live app
 - `/bug-hunt` — undirected bug hunting and QA exploration on a running app
 - `/plan-review` — multi-agent review of implementation plans using PoLL consensus protocol
+- `/feature-flow` — end-to-end feature orchestrator: research → decompose → implement → acceptance → PR → merge
+- `/bugfix-flow` — end-to-end bug fix orchestrator: debug → implement → acceptance → PR → merge
 - `/implement` — standalone implementation stage: code → simplify → quality loop → artifacts
 
 **Agents (10):** architecture-expert, build-engineer, business-analyst, compose-developer, devops-expert, kotlin-engineer, manual-tester, performance-expert, security-expert, ux-expert
