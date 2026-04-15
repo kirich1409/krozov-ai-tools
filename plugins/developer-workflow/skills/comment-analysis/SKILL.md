@@ -43,12 +43,20 @@ REMOTE_URL=$(git remote get-url origin)
 
 ```bash
 # GitHub
-PR_INFO=$(gh pr view --json number,baseRefName,headRefName,title,body)
+PR_INFO=$(gh pr view --json number,baseRefName,headRefName,title,body,labels,milestone,closingIssuesReferences)
 PR_NUMBER=$(echo "$PR_INFO" | jq -r .number)
 BASE=$(echo "$PR_INFO" | jq -r .baseRefName)
+PR_TITLE=$(echo "$PR_INFO" | jq -r .title)
+PR_BODY=$(echo "$PR_INFO" | jq -r .body)
 REPO=$(gh repo view --json nameWithOwner -q .nameWithOwner)
 OWNER=$(echo "$REPO" | cut -d/ -f1)
 REPO_NAME=$(echo "$REPO" | cut -d/ -f2)
+
+# Fetch linked issues — their descriptions often contain acceptance criteria
+# and constraints that explain why the code is written a certain way
+for ISSUE_NUM in $(echo "$PR_INFO" | jq -r '.closingIssuesReferences[].number'); do
+  gh issue view "$ISSUE_NUM" --json title,body --jq '"Issue #\(.number // "?"): \(.title)\n\(.body)"'
+done
 
 # Full diff — the entire change surface for this PR
 git diff "$BASE"...HEAD
@@ -57,12 +65,37 @@ git diff "$BASE"...HEAD
 MR_INFO=$(glab mr view --output json)
 MR_IID=$(echo "$MR_INFO" | jq -r .iid)
 BASE=$(echo "$MR_INFO" | jq -r .target_branch)
+MR_TITLE=$(echo "$MR_INFO" | jq -r .title)
+MR_BODY=$(echo "$MR_INFO" | jq -r .description)
 PROJECT=$(glab repo view --output json | jq -r '.path_with_namespace | @uri')
+
+# GitLab — linked issues from "Closes #N" patterns in description
+echo "$MR_BODY" | grep -Eo '(Closes?|Fixes?|Resolves?) #[0-9]+' | sed 's/.*#//' | while read IID; do
+  glab api "/projects/$PROJECT/issues/$IID" --jq '"Issue #\(.iid): \(.title)\n\(.description)"'
+done
 
 git diff "$BASE"...HEAD
 ```
 
-### 1.3 Fetch the comments to analyze
+### 1.3 Build PR/MR intent summary
+
+Before analyzing comments, extract the intent from the description and linked issues:
+
+- **Goal** — what the PR is trying to achieve (from title + description)
+- **Scope** — what was intentionally changed and why
+- **Stated constraints** — any decisions the author justified in the description
+  (e.g., "using `var` here because the value is set lazily after init",
+  "skipping error handling intentionally — this is a fire-and-forget call")
+- **Acceptance criteria** — from linked issues, if present
+
+This summary is the lens through which every comment is later interpreted.
+A reviewer may flag something the author already explained and justified in the description —
+that is a DISCUSSION item, not a fix. Conversely, a comment that aligns with a known
+acceptance criterion is almost certainly a required fix.
+
+Record the summary as plain text before proceeding. It is referenced in Phase 2.
+
+### 1.4 Fetch the comments to analyze
 
 If the user provided specific comments (quoted text, comment ID, or thread URL) — use those.
 Otherwise fetch all open review comments from the PR/MR:
@@ -86,7 +119,7 @@ glab api "/projects/$PROJECT/merge_requests/$MR_IID/discussions" \
 Skip: replies in threads (only analyze root comments), already-resolved threads,
 and pure praise with no actionable concern.
 
-### 1.4 Build the list of changed files
+### 1.5 Build the list of changed files
 
 ```bash
 # Files touched in this PR — needed for targeted pattern search
@@ -97,7 +130,9 @@ git diff "$BASE"...HEAD --name-only
 
 ## Phase 2: Per-Comment Deep Analysis
 
-For each comment, extract two levels of meaning:
+For each comment, extract two levels of meaning. Use the PR/MR intent summary from
+Phase 1.3 as background throughout — it explains what the author was trying to do
+and what decisions were already justified.
 
 ### 2.1 Surface issue
 
@@ -106,10 +141,19 @@ What the reviewer literally described:
 - The exact code they objected to (read the hunk containing that line from the diff)
 - What they said should change
 
+Cross-check against the PR description: if the author already explained this exact
+choice in the description or linked issue — note it. The comment may be a
+DISCUSSION (reviewer unaware of the constraint) rather than a required fix.
+
 ### 2.2 Underlying principle
 
-What rule or principle the reviewer is enforcing. Derive this from the comment body
-combined with the code context. Examples:
+What rule or principle the reviewer is enforcing. Derive this from:
+1. The comment body
+2. The code context at the referenced location
+3. The PR intent summary — does the principle align with the PR's stated goal,
+   or does it conflict with a constraint the author described?
+
+Examples:
 
 | Surface complaint | Underlying principle |
 |-------------------|---------------------|
@@ -180,6 +224,11 @@ Check all changed files, not just the file where the reviewer commented. A revie
 commenting on `LoginViewModel.kt` about error handling might be pointing to a pattern
 that also exists in `RegistrationViewModel.kt` if both were changed in the same PR.
 
+When evaluating candidates in other files, use the PR intent summary as a filter:
+if the description explains why a specific file was intentionally written differently
+(e.g., "this module uses a different error strategy — see the linked ADR"), exclude
+it from the fix list and note the reason.
+
 ---
 
 ## Phase 4: Consolidate and Present
@@ -189,11 +238,20 @@ Before fixing anything, present the full picture to the user.
 ```markdown
 ## Comment Analysis
 
+**PR/MR:** {title}
+**Goal:** {one-sentence goal from description}
+**Scope constraints from description:** {any decisions the author justified, or "none stated"}
+
+---
+
 ### Comment by @{reviewer} at {file}:{line}
 
 **What they said:** "{reviewer's comment text}"
 
 **Underlying principle:** {extracted principle — one sentence}
+
+**Relation to PR description:** {aligns with PR goal | conflicts with stated constraint →
+treat as DISCUSSION | author already justified this choice → flagged, not a fix}
 
 **Pattern signature:** {what to look for}
 
@@ -209,6 +267,8 @@ Before fixing anything, present the full picture to the user.
 
 **Point fix only:** {file}:{line} — {reason this is a one-off, not part of a pattern}
 
+**Excluded (justified in description):** {file}:{line} — {what the author said in the PR body}
+
 ---
 
 ### Summary
@@ -217,6 +277,7 @@ Before fixing anything, present the full picture to the user.
 - {M} principles extracted
 - {K} stated locations + {L} discovered locations = {total} fixes needed
 - {P} point fixes (one-off, no propagation)
+- {Q} excluded — author-justified in PR description
 ```
 
 Wait for user confirmation before proceeding with fixes. The user may:
@@ -317,6 +378,9 @@ state what changed and where, no performative agreement.
 |-----------|--------|
 | Principle is clear and generalizable | Sweep entire diff, fix all matches |
 | Comment is ambiguous — could mean two different things | Ask one clarifying question before extracting pattern |
+| PR description explicitly justifies the flagged pattern | Mark as DISCUSSION — present the conflict to the user, do not fix unilaterally |
+| PR description is silent on the pattern, reviewer flags it | Treat as a required fix — no justification means the reviewer is correct |
+| Linked issue contains acceptance criteria that requires the pattern | The pattern may be intentional — surface the conflict, ask the user |
 | Discovered location exists in code NOT added by this PR | Note it, do not fix — out of scope; optionally surface to user as a follow-up issue |
 | Fix at a discovered location would require significant refactoring | Note it, ask user before proceeding |
 | Reviewer said "fix this here" with no generalizable principle | Point fix only — fix exactly that location |
