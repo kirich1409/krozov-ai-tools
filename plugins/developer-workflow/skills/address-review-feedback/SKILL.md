@@ -176,6 +176,13 @@ For each BLOCKING, IMPORTANT, or SUGGESTION comment that points to a specific co
 
 This prevents fixes that address the reported location but leave identical problems elsewhere.
 
+**Deep pattern analysis:** for comments where the principle behind the complaint is
+non-obvious or potentially widespread, delegate to the `comment-analysis` skill instead
+of doing a manual search. `comment-analysis` extracts the underlying principle,
+derives a pattern signature, and sweeps the entire diff — finding instances the reviewer
+did not name. Use it when a comment looks like it could represent a systemic issue
+rather than a one-off mistake.
+
 ### Group related comments
 
 - Comments from different reviewers about the same logical issue → one group, one action item
