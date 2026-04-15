@@ -155,12 +155,27 @@ Wait for `swarm-report/<slug>-acceptance.md`.
 
 Invoke `developer-workflow:create-pr`.
 
-### 4.2 Drive to merge
+### 4.2 Feedback Stage
 
-Invoke `developer-workflow:pr-drive-to-merge`.
+Invoke `developer-workflow:feedback-stage` with the PR reference and all artifacts.
 
-When it stops for human review — **this orchestrator also stops**.
+It reads all feedback sources, classifies items, and returns a verdict:
+- **ROUTING: code/functional/approach** → route to the appropriate stage, then re-run feedback-stage
+- **CLEAR** → proceed to merge (4.3)
+
+When waiting for human review — **this orchestrator also stops**.
 Resume when the user says to continue.
+
+### 4.3 Merge
+
+When feedback-stage returns CLEAR:
+
+1. Confirm with the user (unless pre-approved)
+2. Execute merge:
+   ```bash
+   gh pr merge "$PR_NUMBER" --squash --delete-branch
+   ```
+3. Cleanup worktree if applicable
 
 ---
 

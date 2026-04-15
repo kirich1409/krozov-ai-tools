@@ -67,26 +67,15 @@ Examples: Java Date → Kotlin Date, XML layouts → Jetpack Compose, data bindi
 
 Use when migrating code from one technology to another within an existing project.
 
-### `pr-drive-to-merge`
+### `feedback-stage`
 
-Drives an existing PR/MR from its current state to a successful merge:
-- Monitors CI/CD pipelines, investigates failures, and auto-fixes issues caused by PR changes
-- Handles multi-round code review by delegating to `address-review-feedback`
-- Undrafts the PR when CI passes, updates the branch when behind base
-- Merges with user confirmation (squash + delete branch)
-- Persists state for compaction resilience across long-running merge cycles
+Source-agnostic feedback processor — reads feedback from any source (CI, reviewer comments, bots, UAT, direct input), understands it in the context of the full diff, and routes each item to the appropriate stage:
+- Generalizes specific comments to systemic patterns across all changes
+- Classifies by type: code issue → implement, approach issue → research, functional issue → acceptance
+- Two wait modes: active polling for fast sources (CI, bots), session-stop for slow sources (human review)
+- Concludes with a verdict: actionable items found (routed) or no feedback requiring changes
 
-Use when a PR already exists and needs to be driven through CI, review, and merge.
-
-### `address-review-feedback`
-
-Handles reviewer comments on an existing PR/MR:
-- Analyzes and categorizes all open review comments (BLOCKING / IMPORTANT / SUGGESTION / NIT / QUESTION / PRAISE / OUT_OF_SCOPE)
-- Produces follow-up tasks for actionable comments; delegates code changes to implementation agents
-- Responds to reviewers and resolves comment threads
-- Asks user for decisions on out-of-scope or architectural concerns
-
-Use after receiving reviewer feedback on a PR.
+Use after creating a PR, or whenever feedback from any source needs to be processed and routed.
 
 ### `kmp-migration`
 

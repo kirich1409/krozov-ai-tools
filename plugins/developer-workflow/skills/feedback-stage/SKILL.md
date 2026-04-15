@@ -1,22 +1,26 @@
 ---
 name: feedback-stage
 description: >-
-  Feedback processing stage — monitors all feedback sources after a PR is created, classifies
-  each feedback item, and delegates to the appropriate stage. Source-agnostic: handles CI/CD
-  output, code review comments, bot reports, UAT results, or any other form of feedback.
-  Analogous to decompose-feature, but for feedback instead of features: reads input,
-  understands it, breaks it into actionable items, routes each item to the right stage.
+  Feedback processing stage — monitors feedback sources, reads and classifies each item,
+  and returns a routing verdict to the orchestrator. Source-agnostic: handles CI/CD output,
+  code review comments, bot reports, UAT results, or any other form of feedback.
+  Analogous to decompose-feature, but for feedback: reads input, understands it in context
+  of the full diff, breaks it into actionable items, tells the orchestrator where each goes.
+  Does NOT fix code, run tests, or execute merges — strictly reads and routes.
   Trigger on: "check the PR", "process feedback", "what did reviewers say", "CI failed",
   "handle review comments", or when orchestrator transitions to FeedbackStage.
-  Do NOT use for: initial implementation (use implement), QA verification (use acceptance).
+  Do NOT use for: initial implementation (use implement), QA verification (use acceptance),
+  executing a merge (orchestrator's responsibility based on verdict).
 disable-model-invocation: true
 ---
 
 # Feedback Stage
 
-Reads feedback from any source, understands what it means in the context of all changes made,
-classifies each item, and delegates to the appropriate stage. Does not fix issues itself —
-it routes them.
+Reads feedback from any source, understands it in the context of all changes made,
+classifies each item, and returns a routing verdict to the orchestrator.
+
+**Does NOT fix issues, write code, or execute merges.** Those are handled by the stages
+it routes to (implement, acceptance, research) and by the orchestrator itself.
 
 **Core principle:** a comment about one file often signals a systemic issue across all changes.
 Always read the full git diff alongside the feedback — understand the pattern, not just the
@@ -179,9 +183,16 @@ After the routed stage completes — re-run this feedback-stage to re-check rema
 
 Summarize for the user. They decide: fix now or proceed.
 
-### 5.3 If all feedback resolved and CI green + approved
+### 5.3 If all feedback resolved — no actionable changes required
 
-Trigger merge. Report to orchestrator: **Done**.
+Report verdict to the orchestrator: **CLEAR — no changes required**.
+
+Include in the verdict:
+- Which sources were checked
+- Which items were P2/P3 only (not blocking)
+- Current PR state: CI status, review decision, unresolved threads
+
+The orchestrator decides what happens next (e.g. proceed to merge).
 
 ---
 

@@ -48,12 +48,14 @@ flowchart TD
     next_task -->|Yes| impl
     next_task -->|No| create_pr
 
-    create_pr[/create-pr/] --> drive[/pr-drive-to-merge/]
-    drive -->|Bot checks| drive
-    drive -->|"Human review (STOP)"| wait_review([Wait for user])
-    wait_review --> drive
-    drive -->|Review needs code changes| impl
-    drive -->|Approved| merge([Merged ✓])
+    create_pr[/create-pr/] --> feedback[/feedback-stage/]
+    feedback -->|"Fast feedback (CI, bots)"| feedback
+    feedback -->|"Human review (STOP)"| wait_review([Wait for user])
+    wait_review --> feedback
+    feedback -->|code issue| impl
+    feedback -->|approach issue| research
+    feedback -->|functional issue| acceptance
+    feedback -->|Approved + CI green| merge([Merged ✓])
 
     style research fill:#e1f5fe
     style decompose fill:#e1f5fe
@@ -121,12 +123,14 @@ flowchart TD
     user_decision -->|Fix| impl
     user_decision -->|Ship| create_pr
 
-    create_pr[/create-pr/] --> drive[/pr-drive-to-merge/]
-    drive -->|Bot checks| drive
-    drive -->|"Human review (STOP)"| wait_review([Wait for user])
-    wait_review --> drive
-    drive -->|Review needs code changes| impl
-    drive -->|Approved| merge([Merged ✓])
+    create_pr[/create-pr/] --> feedback[/feedback-stage/]
+    feedback -->|"Fast feedback (CI, bots)"| feedback
+    feedback -->|"Human review (STOP)"| wait_review([Wait for user])
+    wait_review --> feedback
+    feedback -->|code issue| impl
+    feedback -->|approach issue| research
+    feedback -->|functional issue| acceptance
+    feedback -->|Approved + CI green| merge([Merged ✓])
 
     report[Report] --> done([Done])
     merge --> report

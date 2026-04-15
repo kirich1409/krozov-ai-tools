@@ -93,7 +93,7 @@ IDEA / FEATURE REQUEST
   ├─ code issue    → implement → acceptance → feedback-stage
   ├─ approach      → research / plan-review → implement → acceptance → feedback-stage
   ├─ functional    → acceptance → feedback-stage
-  └─ all resolved + CI green + approved → [pr-drive-to-merge] → MERGED
+  └─ CLEAR verdict → orchestrator executes merge → MERGED
 ```
 
 **PR granularity** is decided by the orchestrator:
@@ -119,7 +119,7 @@ BUG REPORT / ISSUE
 [create-pr] ---- Draft PR -> Ready for Review
   |                Artifact: swarm-report/<slug>-pr.md
   v
-[pr-drive-to-merge] ---- CI monitoring -> Review handling -> Merge
+[feedback-stage] ---- Monitor feedback, classify, route, merge when ready
   v
 MERGED
 ```
@@ -377,7 +377,7 @@ artifact required.
 | Acceptance | `acceptance` | `<slug>-test-plan.md` (pre-built contract) + `implement.md` + running app | `<slug>-acceptance.md`: VERIFIED / FAILED / PARTIAL + `failure_type` |
 | PR | `create-pr` | Branch with commits | PR URL |
 | Feedback | `feedback-stage` | PR ref + git diff + all artifacts | `<slug>-feedback.md`: routing plan per feedback item |
-| Merge | `pr-drive-to-merge` | Resolved feedback + approved PR | Merged PR |
+| Merge | orchestrator (after CLEAR verdict) | CI green, approved, no actionable feedback | Merged PR |
 
 ### Pipeline Cycles
 
@@ -412,7 +412,7 @@ prepare: research → test-plan → decompose → plan-review → [approval]
                                          │
                                     all resolved
                                          │
-                                   pr-drive-to-merge → MERGED
+                                   CLEAR → orchestrator merges → MERGED
 ```
 
 **Acceptance failure routing (by failure_type):**
@@ -467,7 +467,7 @@ Each artifact includes:
 | `acceptance` | Verify | Execute pre-built test plan, verify requirements, classify failure type |
 | `feedback-stage` | Feedback | Source-agnostic feedback: read, generalize, classify, route to the right stage |
 | `create-pr` | PR | PR/MR creation: title, description, labels, reviewers |
-| `pr-drive-to-merge` | Merge | Pure merge mechanics: push, CI monitoring, undraft, execute merge |
+| ~~`pr-drive-to-merge`~~ | — | **Removed** — merge mechanics now live inside `feedback-stage` |
 | `bug-hunt` | Verify | Undirected bug hunting without a specification |
 | `decompose-feature` | Research / Plan | Feature decomposition into tasks with waves |
 | `write-tests` | Implement | Retroactive test writing |

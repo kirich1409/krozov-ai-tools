@@ -225,20 +225,35 @@ Invoke `developer-workflow:feedback-stage` with:
 - All artifacts: `research.md`, `test-plan.md`, `implement.md`, `acceptance.md`
 - Full git diff of changes
 
-The feedback-stage monitors all feedback sources, classifies each item, and delegates
-to the appropriate stage. This orchestrator resumes when feedback-stage returns a routing
-decision.
+The feedback-stage reads all feedback sources, classifies each item, and returns a verdict
+to this orchestrator. It does NOT fix code or execute merges.
 
 **Route by feedback-stage verdict:**
 
-| Verdict | Transition |
-|---------|-----------|
-| code issue | → Implement |
-| approach issue | → Research or PlanReview |
-| functional issue | → Acceptance |
-| merged | → Done |
+| Verdict | Orchestrator action |
+|---------|-------------------|
+| ROUTING: code issue | → Implement, then re-run Acceptance → feedback-stage |
+| ROUTING: approach issue | → Research or PlanReview, then Implement → Acceptance → feedback-stage |
+| ROUTING: functional issue | → Acceptance, then feedback-stage |
+| CLEAR | → Merge (see 3.3) |
 
-When routed back to Implement or earlier — re-run Acceptance and feedback-stage again.
+### 3.3 Merge
+
+When feedback-stage returns CLEAR (no actionable items, CI green, approved):
+
+1. Confirm with the user (unless pre-approved: "merge when ready")
+2. Execute merge:
+   ```bash
+   # GitHub
+   gh pr merge "$PR_NUMBER" --squash --delete-branch
+   # GitLab
+   glab mr merge "$MR_IID" --squash --remove-source-branch --yes
+   ```
+3. Cleanup worktree if applicable:
+   ```bash
+   git checkout "$BASE" && git pull origin "$BASE"
+   git worktree remove ".worktrees/$HEAD" 2>/dev/null
+   ```
 
 ---
 
