@@ -18,28 +18,34 @@ Use when breaking down a feature idea into implementable tasks before starting w
 
 ### `feature-flow`
 
-Thin orchestrator for features — routes through the full pipeline autonomously:
-- research → decompose → plan review → [implement → acceptance] per task → PR → merge
-- Strict state machine with explicit allowed transitions
-- Stops at human review, PARTIAL verdict, and escalation points
+Thin orchestrator for features — front-loads all planning, then executes autonomously:
+- research → generate-test-plan → decompose → plan-review → **consolidated approval** → [implement → acceptance] per task → PR → feedback-stage → merge
+- Worktree is created outside the flow by the environment or parent orchestrator
+- Test plan is produced before implementation as the acceptance contract
+- Independent tasks within a decomposition wave run in parallel
+- Acceptance routes failures by type: code bug → implement, design flaw → plan-review, wrong approach → research
+- feedback-stage classifies all feedback (CI, reviewers, bots, UAT) and routes to the right stage
+- Stops only at: profile confirmation, consolidated approval, PARTIAL verdict, human review, merge confirmation, and critical escalations
 
 See [detailed flow diagram](docs/ORCHESTRATORS.md#feature-flow-feature-flow).
 
 ### `bugfix-flow`
 
 Thin orchestrator for bug fixes — routes through diagnosis to merge:
-- debug → implement → acceptance → PR → merge
-- Verifies bug no longer reproduces before PR
-- Stops at human review and when bug is not reproducible
+- debug → implement → acceptance → PR → feedback-stage → merge
+- Acceptance routes failures by type: code bug → implement, approach → debug/plan
+- feedback-stage classifies post-PR feedback and routes to the right stage
+- Stops at: profile confirmation, human review, merge confirmation, and escalations
 
 See [detailed flow diagram](docs/ORCHESTRATORS.md#bugfix-flow-bugfix-flow).
 
 ### `implement`
 
 Standalone implementation stage — takes a task with optional context and produces working code:
-- Accepts any task source: text, issue URL, or pipeline artifacts (`research.md`, `debug.md`, `plan.md`)
+- Accepts any task source: text, issue URL, or pipeline artifacts (`research.md`, `debug.md`, `plan.md`, `test-plan.md`)
 - Delegates code writing to specialist agents (`kotlin-engineer`, `compose-developer`, etc.)
-- Runs `simplify` + quality loop (build → lint → tests → `code-reviewer` → expert reviews)
+- Runs `simplify` + quality loop: build → lint → tests → `code-reviewer` → expert reviews (5 gates)
+- Responsible for **code quality only** — functional correctness is verified by `acceptance`
 - Produces `implement.md` + `quality.md` artifacts for the next pipeline stage
 
 Can be invoked by an orchestrator or directly by the user.
@@ -134,24 +140,28 @@ Use when adding tests to existing, untested code — not for tests as part of ne
 ### `generate-test-plan`
 
 Creates a structured, reusable test plan from a specification source without executing any tests:
-- Accepts Figma mockups, PRDs, acceptance criteria, issues, or existing code as input
+- **Pipeline mode:** invoked by `feature-flow` before implementation — produces `swarm-report/<slug>-test-plan.md` as the acceptance contract that `acceptance` later executes
+- **Standalone mode:** invoked directly by the user — saves to `docs/testplans/<feature>-test-plan.md`
+- Accepts Figma mockups, PRDs, acceptance criteria, issues, existing code, or research artifacts as input
 - Identifies risk areas, edge cases, and state combinations
 - Writes prioritized test cases (P0–P3) across Smoke / Feature / Regression tiers
 - Cross-references multiple spec sources and flags discrepancies
-- Produces a `docs/testplans/<feature>-test-plan.md` ready for `manual-tester` or `acceptance`
+- Presents the plan to the user for review before proceeding
 
-Use when planning testing separately from execution — for review, reuse, or handoff.
+Use when planning testing separately from execution, or as part of `feature-flow` preparation.
 
 ### `acceptance`
 
-Verifies a running application against a specification:
-- Accepts a spec (Figma, PRD, acceptance criteria) and/or a test plan
-- Ensures the app is running on device/simulator/browser
-- Launches the `manual-tester` agent for full QA execution
-- Produces a verification result: VERIFIED, FAILED, or PARTIAL
+Verifies a running application against a pre-built test plan and requirements:
+- Executes the test plan produced by `generate-test-plan` (the acceptance contract)
+- Performs an intent check: re-reads the original task and verifies the implementation matches it
+- Launches the `manual-tester` agent for full QA execution on device/simulator/browser
+- Classifies failures by type: code bug / design flaw / wrong approach / requirements misunderstood
+- Produces a verification result: VERIFIED, FAILED (with `failure_type`), or PARTIAL
 - Supports re-verification loops after bug fixes
 
-Use after implementing a feature to confirm it matches the spec before PR.
+Use after implementing a feature to confirm it matches the spec before PR. In the pipeline,
+the orchestrator routes the next stage based on the failure type.
 
 ### `bug-hunt`
 
