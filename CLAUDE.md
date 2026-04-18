@@ -37,8 +37,8 @@ See each plugin's own `CLAUDE.md` for plugin-specific instructions.
 
 All plugins must comply with [`docs/PLUGIN-STANDARDS.md`](docs/PLUGIN-STANDARDS.md). Before every release:
 
-1. Run `bash validate.sh` — must be green
-2. Run `plugin-dev:plugin-validator` agent on each of the 4 plugins — must be PASS or only Minor findings
+1. Run `bash scripts/validate.sh` — must be green
+2. Run `plugin-dev:plugin-validator` agent on each of the 7 plugins listed in `.claude-plugin/marketplace.json` — must be PASS or only Minor findings
 3. Go through the pre-release checklist in `docs/PLUGIN-STANDARDS.md` section 10
 
 Any Critical or Major violations block the release — fix first, release later.
