@@ -8,7 +8,6 @@ docs/plans/
 .claire/
 .remember/
 firebase-debug.log
-package-lock.json
 
 # Claude Code - local only
 .claude/settings.local.json
