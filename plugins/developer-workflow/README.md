@@ -90,7 +90,7 @@ free-form feedback). Auto-detects the source; asks when ambiguous.
 Never edits code, never pushes commits, never merges. Actionable items
 (BLOCKING / IMPORTANT / SUGGESTION / QUESTION / NEEDS_CLARIFICATION /
 DISCUSSION) are marked as delegates in the manifest — the downstream skill
-that actually fixes or answers them (`implement-task`, `debug`,
+that actually fixes or answers them (`implement`, `debug`,
 `decompose-feature`) posts the closing reply when the real action lands.
 
 ### `kmp-migration`
