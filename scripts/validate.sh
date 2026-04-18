@@ -190,37 +190,70 @@ check_tag_versions() {
   done < <(jq -r '.plugins[] | [.name, .version] | @tsv' "$MARKETPLACE")
 }
 
-# ---------- L5: Skills / agents directories ----------
+# ---------- L5: plugin.json component paths ----------
+#
+# Claude Code schema rules for component-path fields:
+#   - Path is resolved from the plugin ROOT (not from .claude-plugin/)
+#   - Must start with "./"
+#   - Must not contain "../" — path traversal outside plugin root is rejected
+#     by the manifest validator ("Validation errors: <field>: Invalid input").
+#   - For standard directories (skills/, agents/, commands/, hooks/,
+#     output-styles/, monitors/), auto-discovery works when the field is
+#     omitted entirely; that is the preferred form.
 
-check_skills_dirs() {
-  echo "--- L5: Skills directories exist ---"
-  while IFS=$'\t' read -r name source; do
-    plugin_json="${source}/.claude-plugin/plugin.json"
-    [ -f "$plugin_json" ] || continue
-    skills_rel=$(jq -r '.skills // empty' "$plugin_json")
-    [ -n "$skills_rel" ] || continue
-    skills_path=$(python3 -c "import os; print(os.path.normpath(os.path.join('${source}/.claude-plugin', '${skills_rel}')))")
-    if [ ! -d "$skills_path" ]; then
-      fail "'$name' skills path does not exist: $skills_path"
-    else
-      ok "'$name' skills at $skills_path"
-    fi
-  done < <(jq -r '.plugins[] | [.name, .source] | @tsv' "$MARKETPLACE")
+PATH_FIELDS=(skills agents commands outputStyles hooks mcpServers lspServers monitors)
+
+# Validates a single path string against the schema rules.
+# Args: plugin_name field path_value
+_check_path_shape() {
+  local name="$1" field="$2" p="$3"
+  case "$p" in
+    ../*|*/../*|*/..)
+      fail "'$name' $field path contains '../' — Claude Code rejects path traversal: $p"
+      return 1
+      ;;
+  esac
+  case "$p" in
+    ./*) return 0 ;;
+    *)
+      fail "'$name' $field path must start with './' (got: $p)"
+      return 1
+      ;;
+  esac
 }
 
-check_agents_dirs() {
-  echo "--- L5: Agents directories exist ---"
+# Emits each path string from a plugin.json field. Accepts string or array.
+# Inline objects (hooks/mcpServers/lspServers configs) emit nothing.
+_emit_paths() {
+  local plugin_json="$1" field="$2"
+  jq -r --arg f "$field" '
+    .[$f] as $v
+    | if   $v == null             then empty
+      elif ($v | type) == "string" then $v
+      elif ($v | type) == "array"  then $v[] | select(type == "string")
+      else empty
+      end
+  ' "$plugin_json"
+}
+
+check_component_paths() {
+  echo "--- L5: plugin.json component paths (shape + existence) ---"
   while IFS=$'\t' read -r name source; do
     plugin_json="${source}/.claude-plugin/plugin.json"
     [ -f "$plugin_json" ] || continue
-    agents_rel=$(jq -r '.agents // empty' "$plugin_json")
-    [ -n "$agents_rel" ] || continue
-    agents_path=$(python3 -c "import os; print(os.path.normpath(os.path.join('${source}/.claude-plugin', '${agents_rel}')))")
-    if [ ! -d "$agents_path" ]; then
-      fail "'$name' agents path does not exist: $agents_path"
-    else
-      ok "'$name' agents at $agents_path"
-    fi
+
+    for field in "${PATH_FIELDS[@]}"; do
+      while IFS= read -r p; do
+        [ -n "$p" ] || continue
+        _check_path_shape "$name" "$field" "$p" || continue
+        abs=$(python3 -c "import os; print(os.path.normpath(os.path.join('${source}', '${p}')))")
+        if [ ! -e "$abs" ]; then
+          fail "'$name' $field path does not exist: $abs"
+        else
+          ok "'$name' $field -> $abs"
+        fi
+      done < <(_emit_paths "$plugin_json" "$field")
+    done
   done < <(jq -r '.plugins[] | [.name, .source] | @tsv' "$MARKETPLACE")
 }
 
@@ -278,8 +311,7 @@ main() {
   check_name_consistency
   check_version_consistency
   check_semver
-  check_skills_dirs
-  check_agents_dirs
+  check_component_paths
   check_hook_scripts
   check_frontmatter
 

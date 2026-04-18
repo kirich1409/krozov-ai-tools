@@ -12,7 +12,7 @@
       "author": {
         "name": "kirich1409"
       },
-      "version": "0.9.0",
+      "version": "0.9.1",
       "category": "development",
       "homepage": "https://github.com/kirich1409/krozov-ai-tools",
       "source": "./plugins/maven-mcp/plugin"
@@ -23,7 +23,7 @@
       "author": {
         "name": "kirich1409"
       },
-      "version": "0.9.0",
+      "version": "0.9.1",
       "category": "security",
       "homepage": "https://github.com/kirich1409/krozov-ai-tools",
       "source": "./plugins/sensitive-guard"
@@ -34,7 +34,7 @@
       "author": {
         "name": "kirich1409"
       },
-      "version": "0.9.0",
+      "version": "0.9.1",
       "category": "development",
       "homepage": "https://github.com/kirich1409/krozov-ai-tools",
       "source": "./plugins/developer-workflow"
@@ -45,7 +45,7 @@
       "author": {
         "name": "kirich1409"
       },
-      "version": "0.9.0",
+      "version": "0.9.1",
       "category": "development",
       "homepage": "https://github.com/kirich1409/krozov-ai-tools",
       "source": "./plugins/developer-workflow-experts"
@@ -56,7 +56,7 @@
       "author": {
         "name": "kirich1409"
       },
-      "version": "0.9.0",
+      "version": "0.9.1",
       "category": "development",
       "homepage": "https://github.com/kirich1409/krozov-ai-tools",
       "source": "./plugins/developer-workflow-kotlin"
@@ -67,7 +67,7 @@
       "author": {
         "name": "kirich1409"
       },
-      "version": "0.9.0",
+      "version": "0.9.1",
       "category": "development",
       "homepage": "https://github.com/kirich1409/krozov-ai-tools",
       "source": "./plugins/developer-workflow-swift"
@@ -78,7 +78,7 @@
       "author": {
         "name": "kirich1409"
       },
-      "version": "0.9.0",
+      "version": "0.9.1",
       "category": "development",
       "homepage": "https://github.com/kirich1409/krozov-ai-tools",
       "source": "./plugins/extend"

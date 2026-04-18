@@ -1,6 +1,6 @@
 {
   "name": "extend",
-  "version": "0.9.0",
+  "version": "0.9.1",
   "description": "Extend Claude Code built-in features: agent review, skill optimization, configuration audit",
   "author": {
     "name": "kirich1409"
@@ -11,6 +11,5 @@
     "claude-code",
     "meta",
     "agent-review"
-  ],
-  "skills": "../skills"
+  ]
 }

@@ -29,12 +29,14 @@
 Запрещено:
 
 - `hooks`, `mcpServers`, `permissionMode` **внутри agent frontmatter** — эти поля запрещены в plugin-shipped агентах (security). Допускаются только в проектных агентах.
-- Пути с `../` outside plugin root — не работают после установки (cache не копирует внешние файлы). Валидный путь может использовать `..` внутри плагина, если он не выходит за корень, но лучше избегать — см. п. 2.
+- **Любые пути с `../`** в `plugin.json` (`skills`, `agents`, `commands`, `hooks`, `mcpServers`, `outputStyles`, `monitors`, `lspServers`) — traversal наружу плагина запрещён схемой Claude Code. Плагин не загрузится: `Plugin has an invalid manifest file … Validation errors: <field>: Invalid input`.
+- Пути, **не начинающиеся с `./`** — схема требует explicit relative paths.
 
 ## 2. Paths
 
-- Пути к компонентам (`skills`, `agents`, `commands`, `hooks` и т.д.) в `plugin.json` **резолвятся относительно `.claude-plugin/` директории**, не от корня плагина. Чтобы указать на `<plugin-root>/skills`, нужно писать `"../skills"`.
-- Если директория лежит в корне плагина со стандартным именем (`skills/`, `agents/`, `commands/`, `hooks/`) — поле **можно не указывать вообще**, автодискавер работает. Это предпочтительнее явного `"../skills"`.
+- Пути к компонентам (`skills`, `agents`, `commands`, `hooks`, `mcpServers`, `outputStyles`, `monitors`, `lspServers`) в `plugin.json` **резолвятся от корня плагина**, не от `.claude-plugin/`. Корректно: `"./skills/"`, `"./agents/"`, `"./custom/tool.md"`.
+- **Auto-discovery**: если директория лежит в корне плагина со стандартным именем (`skills/`, `agents/`, `commands/`, `hooks/`, `output-styles/`, `monitors/`) — поле **можно не указывать вообще**. Это дефолтный и предпочтительный путь, убирает лишний источник ошибок.
+- **Никаких `../`**: путь не может выходить за корень плагина. Claude Code при установке копирует в cache только содержимое корня плагина (`~/.claude/plugins/cache/...`), `../` ссылается наружу и ломает плагин после установки. Частая ошибка — написать `"../skills"` из уверенности, что пути резолвятся относительно `.claude-plugin/`. Это не так, раньше так было, сейчас — нет.
 - В скриптах хуков и в references используй `${CLAUDE_PLUGIN_ROOT}` вместо абсолютных или `dirname $0`. Это кросс-платформенно и стабильно при symlink-резолюции.
 - В SKILL.md и агентах ссылайся на `references/` через `${CLAUDE_PLUGIN_ROOT}/agents/references/foo.md`.
 
@@ -130,7 +132,7 @@ Frontmatter:
 - [ ] Описания skills (`description` frontmatter) ≤ 1024 символа
 - [ ] SKILL.md ≤ 500 строк или имеет `references/`
 - [ ] Никаких `hooks`/`mcpServers`/`permissionMode` внутри agent frontmatter
-- [ ] Пути в `plugin.json` не выходят за корень плагина через `..`
+- [ ] Пути в `plugin.json` начинаются с `./` и не содержат `../` (`skills`, `agents`, `commands`, `hooks`, `mcpServers`, `outputStyles`, `monitors`, `lspServers`). Для стандартных директорий в корне плагина — предпочтительно auto-discovery (поле не указывать)
 - [ ] Все referenced файлы существуют
 
 ## 11. Что автоматизируется (`validate.sh`)
@@ -144,5 +146,5 @@ Frontmatter:
 - `description` length ≤ 1024 для skills
 - SKILL.md size warning при > 500 строк без `references/`
 - Forbidden fields в agent frontmatter (`hooks`, `mcpServers`, `permissionMode`)
-- Path traversal (`../` outside plugin root) в `plugin.json`
-- Существование файлов, на которые ссылаются manifests
+- Path traversal (`../`) и invalid prefixes (не `./`) в component-path полях `plugin.json`
+- Существование файлов, на которые ссылаются manifests (относительно корня плагина)
