@@ -1,0 +1,12 @@
+{
+  "name": "developer-workflow-swift",
+  "version": "0.9.0",
+  "description": "Swift, iOS, and macOS specialist agents — swift-engineer and swiftui-developer, with references covering Swift concurrency, testing, and SwiftUI patterns/state/performance. Extends developer-workflow for Apple platforms.",
+  "author": {
+    "name": "kirich1409"
+  },
+  "homepage": "https://github.com/kirich1409/krozov-ai-tools",
+  "category": "development",
+  "keywords": ["swift", "swiftui", "ios", "macos", "apple"],
+  "agents": "../agents"
+}

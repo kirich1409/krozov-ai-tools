@@ -1,0 +1,12 @@
+{
+  "name": "developer-workflow-experts",
+  "version": "0.9.0",
+  "description": "Reusable expert agents for code review, architecture, security, performance, UX, build, DevOps, business analysis, and debugging. Safe to install standalone — no skills, no hooks, no MCP servers.",
+  "author": {
+    "name": "kirich1409"
+  },
+  "homepage": "https://github.com/kirich1409/krozov-ai-tools",
+  "category": "development",
+  "keywords": ["agents", "code-review", "architecture", "security", "performance", "ux"],
+  "agents": "../agents"
+}
