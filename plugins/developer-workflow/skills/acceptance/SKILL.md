@@ -82,7 +82,13 @@ receipt has not been produced yet.
 1. Emit a mount-receipt at `swarm-report/<slug>-test-plan.md` following the canonical
    format in `plugins/developer-workflow/skills/generate-test-plan/SKILL.md` §Receipt
    with the mount overrides: `status: Mounted`, `review_verdict: skipped`,
-   `source_spec: existing (pre-orchestration)`, `phase_coverage: []`.
+   `source_spec: existing (pre-orchestration)`, and `phase_coverage` derived from the
+   permanent file's phase labels when present (scan for `### Phase N ...` headings
+   under `## Test Cases`). Do **not** hardcode `phase_coverage: []`; use the empty
+   list only when the permanent file genuinely has no phase segmentation. When phase
+   coverage cannot be determined reliably from the permanent file (malformed headings,
+   mixed conventions), omit the `phase_coverage` field entirely rather than recording
+   an incorrect value.
 2. Pass the **permanent file** to the `manual-tester` agent as the primary test-plan source.
 3. In the verification report set `test_plan_source: mounted`.
 
