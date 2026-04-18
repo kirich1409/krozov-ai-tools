@@ -69,19 +69,29 @@ Use when migrating code from one technology to another within an existing projec
 
 ### `triage-feedback`
 
-Analyzes feedback without acting on it. Works on two source types: an open PR/MR
-(review comments, review summaries, PR-level comments) and user-provided text
-pasted in the chat (bug reports, stacktraces, CI logs, free-form feedback).
-Auto-detects the source; asks when ambiguous.
+Analyzes feedback, optionally closes the noise. Works on two source types:
+an open PR/MR (review comments, review summaries, PR-level comments) and
+user-provided text pasted in the chat (bug reports, stacktraces, CI logs,
+free-form feedback). Auto-detects the source; asks when ambiguous.
 
 - Normalizes items from any source into a common shape
 - Categorizes (BLOCKING / IMPORTANT / SUGGESTION / NIT / QUESTION / PRAISE / OUT_OF_SCOPE)
 - Assesses actionability (FIXABLE / NEEDS_CLARIFICATION / DISCUSSION / NO_ACTION)
 - Verifies suggestions against the diff; detects pattern matches in other locations
 - Groups and dedups; writes a structured report to `swarm-report/<slug>-triage.md`
+- For PR/MR source, additionally writes an editable actions manifest
+  (`swarm-report/<slug>-actions.yaml`): dismiss entries for terminal-verdict
+  items (PRAISE / OUT_OF_SCOPE / NO_ACTION, plus NIT with NO_ACTION) and
+  delegate entries for everything else
+- On an explicit apply trigger (`apply`, `apply manifest`, `исполни actions`,
+  etc.), posts dismiss replies and resolves those threads — only after
+  per-item principal + thread-ownership + integrity verification
 
-Never edits code, replies, resolves threads, or merges. The report is consumed
-by the user or by downstream skills (`implement-task`, `debug`, `decompose-feature`).
+Never edits code, never pushes commits, never merges. Actionable items
+(BLOCKING / IMPORTANT / SUGGESTION / QUESTION / NEEDS_CLARIFICATION /
+DISCUSSION) are marked as delegates in the manifest — the downstream skill
+that actually fixes or answers them (`implement`, `debug`,
+`decompose-feature`) posts the closing reply when the real action lands.
 
 ### `kmp-migration`
 

@@ -393,7 +393,7 @@ Each artifact includes:
 | `kmp-migration` | Implement (Migration) | Module migration to Kotlin Multiplatform |
 | `migrate-to-compose` | Implement (Migration) | View -> Compose migration with visual baseline |
 | `create-pr` | PR | PR/MR creation: title, description, labels, reviewers |
-| `triage-feedback` | Post-PR | Analyze, categorize, and prioritize feedback (PR comments or pasted text). Produces action plan; no code changes |
+| `triage-feedback` | Post-PR | Analyze, categorize, and prioritize feedback (PR comments or pasted text). Produces action plan. Optionally posts replies + resolves threads via an editable manifest on explicit apply trigger for terminal-verdict items (PRAISE / OUT_OF_SCOPE / NO_ACTION, plus NIT with NO_ACTION); never edits code |
 | `generate-test-plan` | Plan / Verify | Structured test plan from specification |
 | `acceptance` | Verify | Acceptance verification on live app — features and bug fixes |
 | `bug-hunt` | Verify | Undirected bug hunting without a specification |
