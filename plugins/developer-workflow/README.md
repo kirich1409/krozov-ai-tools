@@ -81,8 +81,8 @@ free-form feedback). Auto-detects the source; asks when ambiguous.
 - Groups and dedups; writes a structured report to `swarm-report/<slug>-triage.md`
 - For PR/MR source, additionally writes an editable actions manifest
   (`swarm-report/<slug>-actions.yaml`): dismiss entries for terminal-verdict
-  items (PRAISE / OUT_OF_SCOPE / NO_ACTION) and delegate entries for
-  everything else
+  items (PRAISE / OUT_OF_SCOPE / NO_ACTION, plus NIT with NO_ACTION) and
+  delegate entries for everything else
 - On an explicit apply trigger (`apply`, `apply manifest`, `исполни actions`,
   etc.), posts dismiss replies and resolves those threads — only after
   per-item principal + thread-ownership + integrity verification

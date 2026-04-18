@@ -5,7 +5,7 @@ description: >
   before acting on it — regardless of where the feedback came from. This skill
   produces a structured action plan; it does NOT fix code, push commits, or
   merge PRs. As an opt-in post-analysis step, it may post replies and resolve
-  threads for items with a terminal verdict (PRAISE, OUT_OF_SCOPE, NO_ACTION)
+  threads for items with a terminal verdict (PRAISE, OUT_OF_SCOPE, NO_ACTION, or NIT whose actionability is NO_ACTION)
   via an editable manifest file; actionable items (BLOCKING, IMPORTANT,
   SUGGESTION, QUESTION, NEEDS_CLARIFICATION, DISCUSSION) are delegated —
   this skill does not reply or resolve for them. Sources supported: an
@@ -43,7 +43,7 @@ never edits code, never pushes commits, never merges. After analysis, the
 skill writes a manifest of proposed actions. It **executes on the feedback
 source (reply + thread resolution) only for items with terminal verdicts** —
 items where its own analysis concluded no code change is needed (PRAISE,
-OUT_OF_SCOPE, NO_ACTION). For items that require code change, discussion,
+OUT_OF_SCOPE, NO_ACTION, and NIT whose actionability is NO_ACTION). For items that require code change, discussion,
 or clarification, the manifest carries a **delegation** marker; the skill
 does not post replies for those. The downstream skill that closes the item
 posts the reply after the real action lands.
@@ -158,28 +158,38 @@ gh api "repos/$OWNER/$REPO_NAME/issues/$PR_NUMBER/comments" \
 # node id (for addPullRequestReviewComment inReplyTo), databaseId (to map
 # resolution state onto REST comments fetched above), and principal hints
 # (pr number, repo nameWithOwner) for post-analysis ownership checks.
-gh api graphql -f query='
-  query($owner:String!,$repo:String!,$number:Int!) {
-    repository(owner:$owner,name:$repo) {
-      id
-      nameWithOwner
-      pullRequest(number:$number) {
-        number
-        reviewThreads(first:100) {
-          nodes {
-            id
-            isResolved
-            pullRequest { number repository { id nameWithOwner } }
-            comments(first:1) {
-              nodes { id databaseId }
+#
+# Uses keyset-style pagination via `after:$cursor` — GitHub GraphQL caps
+# `first` at 100 per page, so PRs with more than 100 threads must paginate.
+# Loop until `pageInfo.hasNextPage == false`. Collect all pages into
+# `review_threads.jsonl`; if the loop is interrupted, the partial file
+# reveals how far pagination reached.
+CURSOR=null
+: > review_threads.jsonl
+while :; do
+  PAGE=$(gh api graphql -f query='
+    query($owner:String!,$repo:String!,$number:Int!,$cursor:String) {
+      repository(owner:$owner,name:$repo) {
+        id
+        nameWithOwner
+        pullRequest(number:$number) {
+          number
+          reviewThreads(first:100, after:$cursor) {
+            pageInfo { hasNextPage endCursor }
+            nodes {
+              id
+              isResolved
+              pullRequest { number repository { id nameWithOwner } }
+              comments(first:1) {
+                nodes { id databaseId }
+              }
             }
           }
         }
       }
     }
-  }
-' -f owner="$OWNER" -f repo="$REPO_NAME" -F number="$PR_NUMBER" \
-  --jq '[.data.repository.pullRequest.reviewThreads.nodes[] | {
+  ' -f owner="$OWNER" -f repo="$REPO_NAME" -F number="$PR_NUMBER" -f cursor="$CURSOR")
+  echo "$PAGE" | jq -c '.data.repository.pullRequest.reviewThreads.nodes[] | {
     threadNodeId: .id,
     rootNodeId:   .comments.nodes[0].id,
     rootId:       .comments.nodes[0].databaseId,
@@ -187,7 +197,11 @@ gh api graphql -f query='
     prNumber:       .pullRequest.number,
     repoId:         .pullRequest.repository.id,
     repoNameWithOwner: .pullRequest.repository.nameWithOwner
-  }]'
+  }' >> review_threads.jsonl
+  HAS_NEXT=$(echo "$PAGE" | jq -r .data.repository.pullRequest.reviewThreads.pageInfo.hasNextPage)
+  [ "$HAS_NEXT" = "true" ] || break
+  CURSOR=$(echo "$PAGE" | jq -r .data.repository.pullRequest.reviewThreads.pageInfo.endCursor)
+done
 
 # Principal snapshot — used by later phases to verify the manifest was
 # generated in the same session/account and the PR still resolves to the
@@ -446,7 +460,7 @@ Generic, tool-agnostic — the user decides what to invoke next:
 - **OUT_OF_SCOPE** → user chooses: decline with a note, or log as a follow-up
   issue.
 - **NO_ACTION** → acknowledge silently (PRAISE) or leave the thread as-is.
-- **Dismiss candidates** (PRAISE / OUT_OF_SCOPE / NO_ACTION) on PR/MR source
+- **Dismiss candidates** (PRAISE / OUT_OF_SCOPE / NO_ACTION, plus NIT with NO_ACTION) on PR/MR source
   → Phase 10 writes `swarm-report/<slug>-actions.yaml`. After you review
   and edit the file, run this skill again with an apply trigger to post
   replies and resolve those threads.
@@ -660,7 +674,8 @@ actions:
     resolve: true
     # --- below: do not edit ---
     thread_id: <graphql node id>
-    root_comment_id: <graphql node id>
+    root_comment_database_id: <numeric; used for REST in_reply_to>
+    root_comment_node_id: <graphql node id for the same root comment>
     source_ref: <comment id>
     thread_fetched_isresolved: false
     executed: false             # flipped after Phase 11
@@ -689,7 +704,8 @@ Delegate record:
       Post reply + resolve after the fix commit lands.
     # --- below: do not edit ---
     thread_id: <graphql node id>
-    root_comment_id: <graphql node id>
+    root_comment_database_id: <numeric>
+    root_comment_node_id: <graphql node id>
     source_ref: <comment id>
 ```
 
@@ -741,7 +757,7 @@ a literal apply trigger and a manifest exists at `swarm-report/<slug>-actions.ya
    `Principal` — abort.
 5. **Repo identity re-verification:** query the repository node id
    independently via GraphQL using the `owner/repo` derived from the header
-   URL (`gh api graphql -f query='query($o:String!,$r:String!){repository(owner:$o,name:$r){id}}' -f o=$OWNER -f r=$REPO`).
+   URL (`gh api graphql -f query='query($o:String!,$r:String!){repository(owner:$o,name:$r){id}}' -f o=$OWNER -f r=$REPO_NAME`).
    Compare the returned id to header `Repository id`. Mismatch — abort.
    (A renamed or transferred repo would pass a plain `owner/repo` string
    check but fail node-id equality.) Do not rely on `gh pr view --json`
@@ -783,7 +799,15 @@ gh api graphql -f query='
 
 **Step 2 — send reply via stdin + JSON (never shell interpolation):**
 
+Use `root_comment_database_id` from the manifest record (numeric, used as
+REST `in_reply_to`). Do not confuse it with `root_comment_node_id` — the
+latter is the GraphQL node id and goes only into GraphQL mutations
+(Step 3 or the `addPullRequestReviewComment` mutation, not this REST
+endpoint).
+
 ```bash
+ROOT_ID="$root_comment_database_id"   # from the manifest entry
+
 # Pre-validate numeric IDs.
 [[ "$ROOT_ID" =~ ^[0-9]+$ ]] || { mark_failed "invalid_root_id"; continue; }
 
@@ -791,7 +815,7 @@ jq -n \
   --arg    b "$TEXT" \
   --argjson r "$ROOT_ID" \
   '{body: $b, in_reply_to: $r}' \
-| gh api "repos/$OWNER/$REPO/pulls/$PR_NUMBER/comments" \
+| gh api "repos/$OWNER/$REPO_NAME/pulls/$PR_NUMBER/comments" \
     -X POST --input -
 ```
 
@@ -919,7 +943,7 @@ Explicit assumptions and vectors — anchor for later review:
   neutralized by the sanitize pipeline. If the current repository has
   custom autolinks configured, extend sanitize step 7 locally with a
   pattern matching those prefixes before writing the manifest. Check
-  `gh api repos/$OWNER/$REPO/autolinks` to detect them.
+  `gh api repos/$OWNER/$REPO_NAME/autolinks` to detect them.
 
 ---
 
@@ -951,7 +975,7 @@ stop and ask. Do not guess or fabricate items.
 
 **Execute only on terminal verdicts.** This skill posts replies and resolves
 threads only where its own analysis concluded no code change is needed
-(PRAISE, OUT_OF_SCOPE, NO_ACTION). Anything actionable is delegated via the
+(PRAISE, OUT_OF_SCOPE, NO_ACTION, or NIT with NO_ACTION). Anything actionable is delegated via the
 manifest; the downstream skill that actually fixes or answers posts the
 reply when the real action lands.
 

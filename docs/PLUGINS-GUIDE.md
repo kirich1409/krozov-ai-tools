@@ -328,7 +328,7 @@ flowchart LR
 | Skill | Команда | Назначение |
 |-------|---------|------------|
 | create-pr | `/create-pr` | Создание PR/MR: push, draft/ready, описание, reviewers |
-| triage-feedback | `/triage-feedback` | Анализ фидбэка (PR-комментарии или текст пользователя): категоризация, приоритизация, паттерны, отчёт. Опционально: dismiss-ответы и resolve тредов для терминальных вердиктов (PRAISE / OUT_OF_SCOPE / NO_ACTION) через editable manifest по явному apply-триггеру — без правок кода |
+| triage-feedback | `/triage-feedback` | Анализ фидбэка (PR-комментарии или текст пользователя): категоризация, приоритизация, паттерны, отчёт. Опционально: dismiss-ответы и resolve тредов через editable manifest по явному apply-триггеру — для терминальных вердиктов (PRAISE / OUT_OF_SCOPE / NO_ACTION) и NIT при actionability = NO_ACTION; без правок кода |
 
 ### Agents: Implementation
 
@@ -496,7 +496,7 @@ Meta-инструменты для улучшения самих агентов 
 | `/acceptance` | developer-workflow | Верификация фичи на устройстве |
 | `/bug-hunt` | developer-workflow | Поиск багов без спецификации |
 | `/create-pr` | developer-workflow | Создание pull request |
-| `/triage-feedback` | developer-workflow | Анализ фидбэка: категоризация, приоритизация, паттерны; опционально — dismiss/resolve терминальных вердиктов через manifest |
+| `/triage-feedback` | developer-workflow | Анализ фидбэка: категоризация, приоритизация, паттерны; опционально — dismiss/resolve терминальных вердиктов (PRAISE / OUT_OF_SCOPE / NO_ACTION, плюс NIT с NO_ACTION) через manifest |
 | `/agent-reviewer` | extend | Аудит агента Claude Code |
 
 ---
