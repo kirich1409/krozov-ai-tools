@@ -1,24 +1,6 @@
 ---
 name: write-spec
-description: >-
-  Specification-Driven Development — transforms a feature idea into an exhaustive specification
-  document that enables fully autonomous implementation with no user interruptions downstream.
-  Researches the codebase, interviews the user in multiple rounds (with pre-filled suggested
-  answers to minimize friction), produces a structured spec with acceptance criteria, affected
-  modules, technical constraints, and all decisions made explicitly. The spec is then reviewed
-  (self-review + plan-review), discussed with the user, and saved as a permanent document.
-  Use when: "write a spec", "spec this out", "design doc", "let's spec it before building",
-  "spec-driven", "I have a feature idea — let's design it", "write a specification for",
-  "I want to add X — let's plan it properly", "design the architecture for", "let's think
-  through X before coding", "create a technical spec", "before we implement — let's write a spec",
-  "let's do this properly", "I don't want to wing it".
-  Invoke proactively when a feature appears complex enough that jumping straight to
-  implementation would be risky — ask the user if they want a spec first.
-  Do NOT invoke for: bug fixes (use debug + implement-task), research-only questions (use
-  research skill), single-file or trivial changes that don't need design, decomposition
-  without design (use decompose-feature directly).
-  Cross-references: saved spec feeds into decompose-feature and implement-task as a
-  standalone document. Uses plan-review for spec validation.
+description: "Specification-Driven Development — transforms a feature idea into an exhaustive spec that enables autonomous implementation without user interruptions downstream. Researches codebase, interviews user with pre-filled suggestions, produces structured spec with acceptance criteria, affected modules, constraints, and decisions. Spec is auto-reviewed (self-review + plan-review), discussed with user, saved as permanent document. Use when: \"write a spec\", \"spec this out\", \"design doc\", \"spec-driven\", \"let's spec it before building\", \"write a specification for\", \"design the architecture for\", \"let's plan it properly\", \"I don't want to wing it\". Invoke proactively when a feature is complex enough that jumping straight to implementation would be risky. Do NOT use for: bug fixes (use debug + implement-task), research-only questions (use research skill), single-file changes, decomposition without design (use decompose-feature). Saved spec feeds into decompose-feature and implement-task."
 ---
 
 # Write Spec

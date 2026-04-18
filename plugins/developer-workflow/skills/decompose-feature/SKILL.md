@@ -1,20 +1,6 @@
 ---
 name: decompose-feature
-description: >-
-  Break a feature idea, PRD, or epic into a structured task list with dependencies, acceptance
-  criteria, complexity estimates, and implementation order. Launches parallel expert agents to
-  gather codebase context, architectural fit, and scope analysis, then decomposes the feature
-  into waves of tasks sorted by dependency order.
-  Use when the user says: "break this down", "decompose", "what tasks do I need", "plan the
-  feature", "epic", "what's the scope", "I want to add", "here's a PRD", "split into tasks",
-  "task breakdown", "what do I need to build", "scope this out", "how many tasks", "work
-  breakdown", "implementation steps", "feature planning".
-  Do NOT invoke for: bug fixes (use debug skill), code review (use
-  code-reviewer agent), research-only questions (use research skill), single concrete tasks
-  that don't need decomposition, migrations (use code-migration or kmp-migration skills).
-  Cross-references: produces task lists that feed into the implement skill for execution. Tasks
-  flagged with research-recommended feed into the research skill. The output artifact can be
-  reviewed via plan-review before implementation begins.
+description: "Break a feature idea, PRD, or epic into a structured task list with dependencies, acceptance criteria, complexity estimates, and implementation order. Launches parallel expert agents to gather codebase context, architectural fit, scope analysis, then decomposes into waves of tasks sorted by dependency order. Use when: \"break this down\", \"decompose\", \"what tasks do I need\", \"plan the feature\", \"epic\", \"what's the scope\", \"I want to add\", \"here's a PRD\", \"split into tasks\", \"task breakdown\", \"scope this out\", \"work breakdown\", \"implementation steps\", \"feature planning\". Do NOT use for: bug fixes (use debug), code review (use code-reviewer agent), research-only questions (use research), trivial single tasks, or migrations (use code-migration / kmp-migration). Produces task lists feeding into implement. Output artifact can be reviewed via plan-review before implementation."
 ---
 
 # Decompose Feature

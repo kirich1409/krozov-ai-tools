@@ -1,22 +1,6 @@
 ---
 name: research
-description: >-
-  Research Consortium — parallel expert investigation of a topic, idea, problem, or technology
-  question before implementation begins. Launches up to 5 domain experts simultaneously (codebase,
-  web, docs, dependencies, architecture), synthesizes findings into a structured report, and
-  auto-reviews for completeness via business-analyst.
-  Use when the user says: "research", "investigate", "explore this idea", "technical spike",
-  "feasibility", "can we do X?", "what are the options for", "compare approaches",
-  "evaluate alternatives", "how should we approach", "what libraries exist for",
-  "is it possible to", "what would it take to", "pros and cons of", "spike on",
-  "before we start — let's understand", "what do we need to know before".
-  Also invoke when the implement skill or code-migration needs a Research stage, or when a plan-review
-  verdict is FAIL and gaps require investigation.
-  Do NOT invoke for: code review (use code-reviewer agent), implementation (use implement),
-  plan review (use plan-review), specific library version lookup (use maven-mcp:latest-version
-  directly), debugging existing bugs.
-  Cross-references: feeds into plan-review and the implement skill as the Research stage of the
-  dev-workflow-orchestration pipeline.
+description: "Research Consortium — parallel expert investigation of a topic, idea, problem, or technology before implementation. Launches up to 5 domain experts simultaneously (codebase, web, docs, dependencies, architecture), synthesizes findings into a structured report, auto-reviews via business-analyst. Use when: \"research\", \"investigate\", \"explore this idea\", \"technical spike\", \"feasibility\", \"can we do X?\", \"what are the options for\", \"compare approaches\", \"evaluate alternatives\", \"pros and cons of\", \"before we start — let's understand\", \"what do we need to know before\". Also invoked when implement or code-migration needs a Research stage, or when plan-review verdict is FAIL. Do NOT use for: code review (use code-reviewer agent), implementation (use implement), plan review (use plan-review), library version lookup (use maven-mcp:latest-version), debugging existing bugs."
 disable-model-invocation: true
 ---
 

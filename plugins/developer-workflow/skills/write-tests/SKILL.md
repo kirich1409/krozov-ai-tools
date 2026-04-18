@@ -1,19 +1,6 @@
 ---
 name: write-tests
-description: >-
-  Write retroactive tests for existing code — classes, modules, or directories that lack test
-  coverage. Discovers the project's test infrastructure (framework, assertions, mocking, naming
-  conventions), plans test cases, delegates code generation to kotlin-engineer (or
-  compose-developer for Compose UI), verifies tests compile and pass, and reports findings.
-  Use when the user says: "write tests for", "add tests to", "test this class", "increase
-  coverage", "add unit tests", "this code has no tests", "cover with tests", "retroactive tests".
-  Do NOT trigger when: the user wants a test plan document without code (use generate-test-plan),
-  the user wants to run tests on a live app (use acceptance), the user wants exploratory QA
-  (use bug-hunt), or tests are part of a new feature being implemented (kotlin-engineer
-  handles this within the implement skill). This skill orchestrates — it does not write test code
-  directly; kotlin-engineer or compose-developer agents produce the test files.
-  Cross-references: consumes test plans from generate-test-plan (docs/testplans/) when available;
-  feeds into the Quality Loop as additional coverage.
+description: "Write retroactive tests for existing code — classes, modules, or directories lacking test coverage. Discovers test infrastructure (framework, assertions, mocking, naming), plans test cases, delegates generation to kotlin-engineer or compose-developer for Compose UI, verifies tests compile and pass, reports findings. Use when: \"write tests for\", \"add tests to\", \"test this class\", \"increase coverage\", \"add unit tests\", \"this code has no tests\", \"cover with tests\", \"retroactive tests\". Do NOT use when: user wants a test plan document without code (use generate-test-plan), run tests on live app (use acceptance), exploratory QA (use bug-hunt), or tests are part of a new feature (kotlin-engineer handles within implement). Orchestrator — delegates actual test code to engineer agents. Consumes test plans from generate-test-plan when available."
 ---
 
 # Write Tests
