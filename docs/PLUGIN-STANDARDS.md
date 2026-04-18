@@ -17,7 +17,7 @@
 Обязательное:
 
 - `name` — kebab-case, уникальный в пределах `marketplace.json`
-- `version` — валидный semver (`0.9.0`, `1.0.0`). В монорепо все плагины релизятся одной версией (unified versioning).
+- `version` — валидный semver (`0.9.0`, `1.0.0`). В монорепо каждый плагин версионируется независимо через [Changesets](https://github.com/changesets/changesets) — версия задаётся одной из `npm`-сессий в Version Packages PR, не правится руками.
 
 Обязательно рекомендуется (для самодостаточности плагина без опоры на marketplace):
 
@@ -102,31 +102,34 @@ Frontmatter:
 ```
 
 - Semver ranges: `^`, `~`, exact (`=`), range (`>=1.4.0`)
-- Для resolution нужны **git-теги формата `{plugin-name}--v{version}`** в release workflow
+- Для resolution нужны **git-теги формата `{plugin-name}--v{version}`** в release workflow — `scripts/changesets-publish.mjs` создаёт их автоматически
 - Cross-marketplace deps требуют allowlist в корневом `marketplace.json`
-- При unified versioning в монорепо — рекомендуется `^X.Y.0` (совместимость в рамках одной major-minor серии)
+- В монорепо `scripts/changesets-version.mjs` автоматически переписывает `dependencies[].version` в `^MAJOR.MINOR.0` от новой версии зависимого плагина — править руками не нужно
+- Пре-релизный диапазон `^0.x.0` в npm semver резолвится как `>=0.x.0 <0.(x+1).0` (то же поведение у резолвера Claude Code) — пока мы не вышли на 1.0, это рабочий диапазон совместимости в рамках одной minor-серии
 
 ## 8. Marketplace (`marketplace.json`)
 
 - Один `marketplace.json` на репо (в `.claude-plugin/`)
 - Для каждого плагина entry: `name`, `source`, `description`, `version`, `author`, опционально `homepage`, `category`, `keywords`
-- `version` в marketplace entry **должна совпадать** с `version` в `plugin.json` (unified versioning)
-- `source: "./plugins/<name>"` — относительный path от корня репо
+- `version` в marketplace entry **должна совпадать** с `version` в `plugin.json` и `version` в workspace `package.json` соответствующего плагина — three-way invariant, проверяется `scripts/validate.sh`
+- `source: "./plugins/<name>"` — относительный path от корня репо. Для `maven-mcp` указывает на `./plugins/maven-mcp/plugin/` (manifest лежит на уровень глубже workspace)
 
 ## 9. Versioning
 
-- **Unified versioning**: все плагины в репо релизятся одной версией при каждом релизе
-- Bump правила: MAJOR — breaking, MINOR — features/additions, PATCH — fixes
-- Tag format: корневой `vX.Y.Z` + per-plugin `{plugin-name}--vX.Y.Z` (для semver resolution в `dependencies`)
-- `CHANGELOG.md` на уровне репо (если нужно — per-plugin)
+- **Per-plugin independent versioning**: каждый плагин версионируется независимо через [Changesets](https://github.com/changesets/changesets). Релиз плагина A не обязан тянуть релиз плагина B.
+- **Workspace shim**: каждая директория `plugins/*` содержит `package.json` (для `maven-mcp` — реальный npm-манифест, для остальных — приватные shim'ы с минимальными полями `name`/`version`/`private`/`dependencies`). Это требование `@manypkg/get-packages`, который Changesets использует для discovery. `dependencies` в shim'ах указывает на сиблингов через `"*"` — это semantic pointer, а не реальный constraint; реальные диапазоны живут в plugin.json.
+- Bump правила: MAJOR — breaking, MINOR — features/additions, PATCH — fixes. Контрибьютор задаёт уровень в changeset (`npx changeset`).
+- Tag format: per-plugin `{plugin-name}--vX.Y.Z` (для semver resolution в `dependencies` Claude Code). Глобальный `vX.Y.Z` тег больше не создаётся.
+- `CHANGELOG.md` per-plugin — генерируется Changesets'ом из `.changeset/*.md` файлов и коммитится в Version Packages PR.
+- Cascade: бамп `developer-workflow-experts` автоматически бампит `developer-workflow`/`-kotlin`/`-swift` patch-уровнем (через `updateInternalDependencies: "patch"` + `updateInternalDependents: "always"`); `scripts/changesets-version.mjs` синхронно переписывает их `plugin.json:dependencies[].version` в `^MAJOR.MINOR.0` от новой версии expers'ов.
 
 ## 10. Pre-release checklist
 
 Перед каждым релизом (см. `CLAUDE.md`):
 
-- [ ] `bash validate.sh` — зелёный
+- [ ] `bash scripts/validate.sh` — зелёный
 - [ ] `plugin-dev:plugin-validator` agent на каждом плагине — PASS или только Minor
-- [ ] Версии в `plugin.json` каждого плагина и в `marketplace.json` — синхронизированы
+- [ ] Version Packages PR (Changesets) — отревьюен и смерджен
 - [ ] Нет `.DS_Store`, `*-workspace/` runtime-папок в коммитах
 - [ ] Все shell-скрипты executable (`find plugins -name "*.sh" ! -executable`)
 - [ ] Описания skills (`description` frontmatter) ≤ 1024 символа
@@ -140,7 +143,7 @@ Frontmatter:
 Автоматически проверяется:
 
 - JSON validity всех `plugin.json` и `marketplace.json`
-- Version consistency между `plugin.json` и `marketplace.json`
+- Three-way version consistency для каждого плагина: workspace `package.json` ↔ `.claude-plugin/plugin.json` ↔ `marketplace.json` entry. Версии плагинов **между собой** более не сверяются (per-plugin versioning).
 - Executable bits на `*.sh` в `plugins/*/src`, `plugins/*/hooks`, `plugins/*/tests`
 - Frontmatter validity (YAML parses) для всех SKILL.md и agents/*.md
 - `description` length ≤ 1024 для skills

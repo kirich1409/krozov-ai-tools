@@ -36,7 +36,7 @@ See each plugin's own `CLAUDE.md` for plugin-specific instructions.
 All plugins must comply with [`docs/PLUGIN-STANDARDS.md`](docs/PLUGIN-STANDARDS.md). Before every release:
 
 1. Run `bash scripts/validate.sh` — must be green
-2. Run `plugin-dev:plugin-validator` agent on each of the 6 plugins listed in `.claude-plugin/marketplace.json` — must be PASS or only Minor findings
+2. Run `plugin-dev:plugin-validator` agent on each plugin listed in `.claude-plugin/marketplace.json` — must be PASS or only Minor findings
 3. Go through the pre-release checklist in `docs/PLUGIN-STANDARDS.md` section 10
 
 Any Critical or Major violations block the release — fix first, release later.
@@ -49,22 +49,18 @@ Always work on changes in a separate branch using a worktree (`.worktrees/`). Cr
 
 **Never run `npm publish` locally.** Publishing happens exclusively via GitHub Actions.
 
-All plugins use **unified versioning** — every release bumps all plugins to the same version.
+Each plugin versions independently, managed via [Changesets](https://github.com/changesets/changesets). Workspace `package.json` files in each plugin directory are the source of truth for Changesets; `scripts/changesets-version.mjs` mirrors the bumps into `.claude-plugin/plugin.json` and `.claude-plugin/marketplace.json`. Contributor instructions live in [`.changeset/README.md`](.changeset/README.md).
 
-To release a new version:
-1. Bump `version` in all of these files to the new version:
-   - `plugins/maven-mcp/package.json`
-   - `plugins/maven-mcp/plugin/.claude-plugin/plugin.json`
-   - `plugins/sensitive-guard/.claude-plugin/plugin.json`
-   - `plugins/developer-workflow/.claude-plugin/plugin.json`
-   - `plugins/developer-workflow-experts/.claude-plugin/plugin.json`
-   - `plugins/developer-workflow-kotlin/.claude-plugin/plugin.json`
-   - `plugins/developer-workflow-swift/.claude-plugin/plugin.json`
-   - `.claude-plugin/marketplace.json` (all 6 plugin entries)
-2. Inside the `developer-workflow-*` family, also bump the semver ranges in each `dependencies` array if the range needs to widen (usually `^MAJOR.MINOR.0` is stable).
-3. Merge to `main`.
-4. Push a git tag matching the version: `git tag v0.9.0 && git push origin v0.9.0`.
-5. GitHub Actions (`.github/workflows/release.yml`) triggers on `v*` tags: verifies all versions match, runs lint/tests/build, publishes to npm, **then creates one per-plugin tag `{plugin-name}--v{version}` for each plugin in `marketplace.json`**. These per-plugin tags are what Claude Code uses to resolve `dependencies` semver ranges.
+Release flow:
+
+1. **Contributor** — when a PR touches `plugins/*`, run `npx changeset` and pick the affected plugins + bump kind. Use `npx changeset --empty` for docs/CI-only PRs that don't ship anything. Commit the generated `.changeset/<id>.md`.
+2. **Merge** the PR to `main`. The `Release` workflow runs and either:
+   - Opens (or updates) a **Version Packages** PR that contains the version bumps + CHANGELOG updates, or
+   - If no `.changeset/*.md` content files are present, runs the publish script (idempotent — no-op when nothing was bumped).
+3. **Reviewer** — review and merge the Version Packages PR. This is the human gate before any release artifact ships.
+4. **CI** — the next workflow run sees no pending changesets, runs `scripts/changesets-publish.mjs`: publishes `@krozov/maven-central-mcp` to npm if its version changed, then creates one per-plugin tag `{plugin-name}--v{version}` for each plugin in `marketplace.json` (idempotent — existing tags are skipped). These per-plugin tags are what Claude Code uses to resolve `dependencies` semver ranges between plugins in the `developer-workflow*` family.
+
+Internal `dependencies` semver ranges in each `developer-workflow-*` `plugin.json` are rewritten by `scripts/changesets-version.mjs` to `^MAJOR.MINOR.0` of the dependency's new version — no manual bookkeeping required.
 
 ## Worktrees
 
