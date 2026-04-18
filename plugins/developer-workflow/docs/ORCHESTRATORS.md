@@ -3,6 +3,11 @@
 Two thin orchestrators manage the full development cycle. Each routes tasks through
 modular skills — no implementation logic, only state transitions.
 
+**Preconditions (caller's responsibility).** Both orchestrators assume the caller (main
+agent, wrapping agent, or user) has already prepared a working branch/worktree and the
+correct working directory. The orchestrators never inspect, create, switch, or clean up
+branches or worktrees.
+
 For stage contracts and artifact formats, see [WORKFLOW.md](WORKFLOW.md).
 
 ---
@@ -11,7 +16,7 @@ For stage contracts and artifact formats, see [WORKFLOW.md](WORKFLOW.md).
 
 ```mermaid
 flowchart TD
-    start([Task received]) --> setup[Setup: worktree + slug]
+    start([Task received]) --> setup[Setup: slug + intake]
     setup --> confirm{Profile confirmation}
     confirm -->|Bug| redirect_bug[→ /bugfix-flow]
     confirm -->|Trivial| impl
@@ -89,7 +94,7 @@ flowchart TD
 
 ```mermaid
 flowchart TD
-    start([Bug reported]) --> setup[Setup: worktree + slug]
+    start([Bug reported]) --> setup[Setup: slug + intake]
     setup --> confirm{Profile confirmation}
     confirm -->|Feature| redirect_feat[→ /feature-flow]
     confirm -->|Trivial fix| impl

@@ -17,6 +17,13 @@ Contains no implementation logic — each stage is a separate skill invocation v
 **STRICT RULE:** The orchestrator DOES NOT write code, run tests, or perform analysis directly.
 It only manages transitions, passes context between stages, and reports summaries to the user.
 
+**Preconditions (caller's responsibility, NOT this skill's):**
+- A working branch suitable for the fix is already set up (via worktree or otherwise)
+  and the current working directory is where the fix should be made.
+- The caller (main agent, wrapping agent, or user) has resolved this before invoking
+  the skill. The skill itself does not inspect, create, switch, or clean up branches
+  or worktrees.
+
 ---
 
 ## Strict State Machine
@@ -47,14 +54,7 @@ PR         -> Implement        (review feedback requires code changes)
 
 ## Phase 0: Setup
 
-### 0.1 Worktree
-
-Create an isolated worktree:
-1. From the default branch, create a worktree in `.worktrees/<branch-name>`
-2. Branch naming: `fix/short-description` — kebab-case
-3. If already in a fitting worktree — stay
-
-### 0.2 Understand the bug
+### 0.1 Understand the bug
 
 Extract from the user's input:
 - **Symptom** — what's broken
@@ -64,7 +64,7 @@ Extract from the user's input:
 
 Generate a slug: kebab-case, 2-4 words.
 
-### 0.3 Profile confirmation
+### 0.2 Profile confirmation
 
 Auto-detect the profile. Then confirm:
 
@@ -187,7 +187,7 @@ Each backward transition:
 ## Stop Points
 
 The orchestrator **stops and waits for the user** at:
-- Profile confirmation (Phase 0.3)
+- Profile confirmation (Phase 0.2)
 - Bug not reproducible (need more info)
 - Debug escalation (architectural issue, needs decision)
 - PARTIAL acceptance verdict
