@@ -137,10 +137,34 @@ gh api "repos/$OWNER/$REPO_NAME/pulls/$PR_NUMBER/reviews" \
 gh api "repos/$OWNER/$REPO_NAME/issues/$PR_NUMBER/comments" \
   --jq '[.[] | {id, user:.user.login, body, created_at}]'
 
-# GitLab — all discussions in one call
+# GitHub — thread resolution state (REST doesn't expose this; GraphQL does).
+# Build a map from the root comment id to isResolved so inline comments can be
+# filtered by thread state below.
+gh api graphql -f query='
+  query($owner:String!,$repo:String!,$number:Int!) {
+    repository(owner:$owner,name:$repo) {
+      pullRequest(number:$number) {
+        reviewThreads(first:100) {
+          nodes {
+            isResolved
+            comments(first:1) { nodes { databaseId } }
+          }
+        }
+      }
+    }
+  }
+' -f owner="$OWNER" -f repo="$REPO_NAME" -F number="$PR_NUMBER" \
+  --jq '[.data.repository.pullRequest.reviewThreads.nodes[] | {rootId: .comments.nodes[0].databaseId, isResolved}]'
+
+# GitLab — all discussions in one call (resolution state already in the response)
 glab api "/projects/$PROJECT/merge_requests/$MR_IID/discussions" \
   --jq '[.[] | {id, notes: [.notes[] | {id, author:.author.username, body, position:.position, resolved, created_at}]}]'
 ```
+
+Join the resolution map into each inline comment by matching the root comment
+id (the first node's `databaseId` identifies the thread root). Comments
+without a matching thread are PR-level or review-summary items — mark their
+`thread_state` as `n/a`.
 
 Fetch the PR diff — used for pattern detection and suggestion verification:
 
