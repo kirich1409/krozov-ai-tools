@@ -48,10 +48,10 @@ name: test-plan-receipt
 description: Test plan artifact for <slug>
 slug: <slug>
 type: test-plan-receipt
-status: Draft | Ready | Approved
+status: Draft | Ready | Approved | Mounted
 permanent_path: docs/testplans/<slug>-test-plan.md
 source_spec: <path to spec if any, or "inline spec">
-review_verdict: pending | PASS | WARN | FAIL
+review_verdict: pending | PASS | WARN | FAIL | skipped
 phase_coverage: [Phase 1, Phase 2, ...]
 created: YYYY-MM-DD
 updated: YYYY-MM-DD
@@ -74,8 +74,10 @@ updated: YYYY-MM-DD
 
 Field conventions:
 - `status`: `Draft` right after generation; `Ready` after plan-review returns PASS/WARN;
-  `Approved` when the user explicitly signs off.
-- `review_verdict`: `pending` at creation. Updated by `plan-review` to `PASS | WARN | FAIL`.
+  `Approved` when the user explicitly signs off; `Mounted` when a user-authored permanent
+  file is adopted without regeneration (see `feature-flow/SKILL.md` §1.5 Pre-check).
+- `review_verdict`: `pending` at creation; updated by `plan-review` to
+  `PASS | WARN | FAIL`; `skipped` on mount (no review occurs).
 - `phase_coverage`: list of phase labels present in the permanent file. Empty list if the
   feature has no phase segmentation.
 - `created` / `updated`: ISO dates (`YYYY-MM-DD`). `updated` must change whenever either the

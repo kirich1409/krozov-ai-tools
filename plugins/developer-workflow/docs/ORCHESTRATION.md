@@ -64,7 +64,7 @@ Allowed transitions between stages. Forward is default; backward transitions are
 ```
 Research ──→ Plan
 Plan ──→ TestPlan           (test-plan stage not skipped)
-Plan ──→ Implement          (test-plan stage skipped: 5 skip-detector conditions or --skip-test-plan)
+Plan ──→ Implement          (test-plan stage skipped: skip-detector conditions or --skip-test-plan)
 Plan ──→ Research           (plan review reveals gaps or missing context)
 TestPlan ──→ TestPlanReview
 TestPlanReview ──→ Implement  (PASS or WARN)

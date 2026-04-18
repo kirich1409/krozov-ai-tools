@@ -37,7 +37,7 @@ flowchart TD
     plan_review -->|CONDITIONAL| testplan_gate
     plan_review -->|FAIL| research
 
-    testplan_gate{Skip test plan?<br/>5 skip conditions<br/>or --skip-test-plan}
+    testplan_gate{Skip test plan?<br/>detector conditions<br/>or --skip-test-plan}
     testplan_gate -->|Skip| impl
     testplan_gate -->|Run| test_plan[/generate-test-plan/]
 

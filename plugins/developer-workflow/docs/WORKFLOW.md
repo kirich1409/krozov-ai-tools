@@ -100,7 +100,7 @@ PR CREATED ---- hand-off to user; triage-feedback triages review comments when t
 
 | Profile | Pipeline | Signals | Skips |
 |---------|----------|---------|-------|
-| **Feature** | Research -> Decompose -> Plan Review -> Test Plan -> Test Plan Review -> [Implement -> Acceptance] per task -> Create PR | "add", "implement", "build", "create" | Decompose optional for single-task features; Test Plan skipped for 5 explicit conditions or `--skip-test-plan` override |
+| **Feature** | Research -> Decompose -> Plan Review -> Test Plan -> Test Plan Review -> [Implement -> Acceptance] per task -> Create PR | "add", "implement", "build", "create" | Decompose optional for single-task features; Test Plan skipped per [detector conditions](../skills/feature-flow/SKILL.md#testplan-stage-skip-detection) or `--skip-test-plan` override |
 | **Bug Fix** | Debug -> Implement -> Acceptance -> Create PR | "fix", "broken", "crash", "regression" | Research, Plan |
 | **Migration** | Research -> Snapshot -> Migrate -> Acceptance -> Create PR | "migrate", "replace", "switch to" | Plan (delegates to `code-migration`) |
 | **Research** | Research -> Report | "investigate", "compare", "evaluate" | Implement, Acceptance, PR |

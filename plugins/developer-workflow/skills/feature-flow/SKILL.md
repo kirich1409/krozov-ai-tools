@@ -60,7 +60,7 @@ PR             -> Implement        (review feedback requires code changes)
 - **Skip Research:** task is well-understood, no external APIs, no unfamiliar libraries
 - **Skip Decompose:** task is a single logical unit, no independent sub-parts
 - **Skip PlanReview:** change is straightforward, touches 1-3 files, no architectural impact
-- **Skip TestPlan (+ TestPlanReview):** see [TestPlan Stage Skip Detection](#testplan-stage-skip-detection) — default-on stage, skipped only when one of the five explicit conditions fires.
+- **Skip TestPlan (+ TestPlanReview):** see [TestPlan Stage Skip Detection](#testplan-stage-skip-detection) — default-on stage, skipped only when a detector condition fires.
 
 **ALL other transitions are FORBIDDEN.** Before every transition, announce:
 
@@ -135,29 +135,21 @@ runs unless the skip detector or the `--skip-test-plan` override fires (see
 [Override: --skip-test-plan](#override---skip-test-plan)).
 
 **Pre-check — mount existing permanent test plan:** before invoking
-`generate-test-plan`, check whether a pre-orchestration test plan already exists:
+`generate-test-plan`, check whether a pre-orchestration test plan already exists. If
+`docs/testplans/<slug>-test-plan.md` exists AND `swarm-report/<slug>-test-plan.md`
+receipt does NOT exist — this is a user-authored plan. Do NOT regenerate. The
+orchestrator owns this write: emit a mount-receipt following the canonical format from
+`generate-test-plan/SKILL.md` §Receipt (field overrides: `status: Mounted`,
+`review_verdict: skipped`, `source_spec: existing (pre-orchestration)`). Skip both
+TestPlan and TestPlanReview; announce **Stage: PlanReview → Implement (test plan mounted
+from existing)**. To regenerate, the user must re-invoke with `--regenerate-test-plan`.
 
-- If `docs/testplans/<slug>-test-plan.md` exists AND `swarm-report/<slug>-test-plan.md`
-  receipt does NOT exist — this is a pre-orchestration artifact (e.g., plan written
-  manually before the TestPlan stage was introduced, or carried over from a previous
-  session).
-- Do NOT regenerate. Write a mount-receipt at `swarm-report/<slug>-test-plan.md` with
-  `status: Mounted`, `review_verdict: skipped`, `permanent_path` pointing to the existing
-  file, `source_spec: existing (pre-orchestration)`.
-- Skip both TestPlan and TestPlanReview stages; proceed directly to Implement. Announce:
-  **Stage: PlanReview → Implement (test plan mounted from existing)**.
-- Rationale: respect user-authored plans; regeneration would overwrite intentional
-  content. If the user wants to regenerate, they invoke `--regenerate-test-plan`
-  explicitly.
-
-**Standard path (no existing permanent):**
-
-- Invoke `developer-workflow:generate-test-plan` with the feature slug and paths to the
-  available artifacts (`research.md`, `decomposition.md`, `plan.md`, any spec document).
-- Wait for the permanent test plan at `docs/testplans/<slug>-test-plan.md` and the receipt
-  at `swarm-report/<slug>-test-plan.md` (receipt `status: Draft`, `review_verdict: pending`).
-- Announce: **Stage: PlanReview → TestPlan** (or from Research / Decompose when earlier
-  stages were skipped).
+Otherwise, invoke `developer-workflow:generate-test-plan` with the feature slug and
+paths to the available artifacts (`research.md`, `decomposition.md`, `plan.md`, any spec
+document). Wait for the permanent test plan at `docs/testplans/<slug>-test-plan.md` and
+the receipt at `swarm-report/<slug>-test-plan.md` (receipt `status: Draft`,
+`review_verdict: pending`). Announce: **Stage: PlanReview → TestPlan** (or from Research
+/ Decompose when earlier stages were skipped).
 
 ### 1.6 TestPlanReview (default-on)
 
@@ -175,7 +167,7 @@ Review the generated test plan via the test-plan branch of `plan-review`.
 ## TestPlan Stage Skip Detection
 
 The TestPlan stage (and its paired TestPlanReview) is **default-on**. It is skipped if
-**any one** of the following five conditions holds (boolean OR):
+**any one** of the following conditions holds (boolean OR):
 
 1. **Single-file change without behavior change** — the planned change touches exactly one
    file (per `git diff` stats or the decomposition artifact) AND the spec/task introduces
@@ -189,10 +181,9 @@ The TestPlan stage (and its paired TestPlanReview) is **default-on**. It is skip
 4. **Single-task decompose with low complexity** — `decompose-feature` produced ≤ 2 tasks
    AND every task is complexity `S` (small). Taken straight from the decomposition
    artifact's complexity column.
-5. **`bugfix-flow` invocation** — the pipeline type is `bug` (determined from the parent
-   orchestrator: `feature-flow` is never invoked from `bugfix-flow`, but if the user
-   manually invokes `feature-flow` with a "bug" framing — e.g. slug contains `bugfix-` or
-   user flags the profile as bug during Phase 0.3 — the stage is skipped).
+
+(Bug profiles route to `bugfix-flow` at Phase 0.2 and never reach this gate, so they do
+not need a dedicated skip condition here.)
 
 When the detector triggers, announce the reason on the stage transition, e.g.:
 
@@ -222,10 +213,8 @@ The permanent artifact `docs/testplans/<slug>-test-plan.md` can be modified afte
 initial TestPlan stage in two scenarios:
 
 **On rollback Acceptance → Implement (bugs discovered):**
-- When bugs of **P0 / P1** severity are found — append a new `## Regression TC` section to
-  the permanent file covering the new bugs. No wholesale regeneration.
-- When bugs of **P2 / P3** severity are found and the user decides to fix them — same
-  behavior: append `## Regression TC`.
+- Whenever a fix is undertaken — regardless of P0/P1/P2/P3 severity — append a new
+  `## Regression TC` section to the permanent file covering the new bugs.
 - The receipt keeps its existing `review_verdict` (no re-review required for appended
   regression TCs); only the `updated` timestamp is refreshed.
 
@@ -360,14 +349,3 @@ The orchestrator **stops and waits for the user** at:
 - TestPlanReview FAIL after 3 revise cycles — user picks: accept WARN manually, revise
   spec, or rerun with `--skip-test-plan`.
 - Escalation (scope explosion, repeated failures, architectural decision needed)
-
----
-
-## Self-reference Skip Note
-
-This PR (v0.10.0), which introduces the TestPlan stage itself, has no user-facing
-behavior — all changes are skill-markdown edits inside the `developer-workflow` plugin.
-It matches skip condition #3 (**internal utility without external contract change**): no
-new public API surface, no exported symbols, no endpoints. The TestPlan stage therefore
-does **not** apply to PR v0.10.0 — this is an intentional self-skip recorded here so
-future maintainers understand the decision.

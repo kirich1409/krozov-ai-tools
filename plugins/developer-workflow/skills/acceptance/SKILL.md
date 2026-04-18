@@ -68,36 +68,19 @@ when invoked from the orchestrator).
 **Condition:** Branch 1 did not fire **and** `docs/testplans/<slug>-test-plan.md` exists on
 disk without a matching receipt in `swarm-report/`.
 
-**Actions:** mount the existing test plan as-is. The file pre-dates the orchestration
-integration, so do not regenerate or re-review it.
+**Ownership:** the `feature-flow` orchestrator normally emits the mount-receipt in its
+Phase 1.5 Pre-check. This branch runs only when `acceptance` is invoked outside of
+`feature-flow` (standalone QA session, `bugfix-flow`, user-triggered mid-flow), so the
+receipt has not been produced yet.
 
-1. Create a new receipt at `swarm-report/<slug>-test-plan.md` with `status: Mounted` and
-   `review_verdict: skipped` using the template below.
+**Actions:**
+
+1. Emit a mount-receipt at `swarm-report/<slug>-test-plan.md` following the canonical
+   format in `plugins/developer-workflow/skills/generate-test-plan/SKILL.md` §Receipt
+   with the mount overrides: `status: Mounted`, `review_verdict: skipped`,
+   `source_spec: existing (pre-orchestration)`, `phase_coverage: []`.
 2. Pass the **permanent file** to the `manual-tester` agent as the primary test-plan source.
 3. In the verification report set `test_plan_source: mounted`.
-
-Mount-as-existing receipt template:
-
-```markdown
----
-name: test-plan-receipt
-description: Mounted existing test plan for <slug>
-slug: <slug>
-type: test-plan-receipt
-status: Mounted
-permanent_path: docs/testplans/<slug>-test-plan.md
-source_spec: existing (pre-orchestration)
-review_verdict: skipped
-phase_coverage: []
-created: <date when mounted>
-updated: <same>
----
-
-# Test Plan Receipt: <slug> (mounted)
-
-Existing permanent test plan mounted without regeneration.
-Review was skipped because the file pre-dates orchestration integration.
-```
 
 #### Branch 3 — On-the-fly generation from available inputs (`test_plan_source: on-the-fly`)
 
