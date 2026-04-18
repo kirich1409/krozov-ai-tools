@@ -20,8 +20,13 @@ Install a plugin:
 /plugin install maven-mcp@krozov-ai-tools
 /plugin install sensitive-guard@krozov-ai-tools
 /plugin install developer-workflow@krozov-ai-tools
+/plugin install developer-workflow-experts@krozov-ai-tools
+/plugin install developer-workflow-kotlin@krozov-ai-tools
+/plugin install developer-workflow-swift@krozov-ai-tools
 /plugin install extend@krozov-ai-tools
 ```
+
+Installing any of `developer-workflow`, `developer-workflow-kotlin`, or `developer-workflow-swift` automatically pulls in their dependencies (`developer-workflow-experts` and — for the platform plugins — `developer-workflow` core).
 
 ## Plugins
 
@@ -54,27 +59,53 @@ Prevents sensitive data (secrets, PII) from reaching AI servers. Scans files via
 
 See [`plugins/sensitive-guard/`](plugins/sensitive-guard/) for full documentation.
 
-### developer-workflow
+### developer-workflow family
 
-Developer workflow skills and expert agents for the full development cycle — from task implementation to QA testing to PR merge.
+Four plugins that split the dev-workflow pipeline along coherent lines. `developer-workflow` is the lifecycle core; `-experts` holds reusable review/consult agents; `-kotlin` and `-swift` hold platform specialists.
 
-**Skills:**
-- `/create-pr` — create a draft or ready PR with auto-generated title, description, labels, and reviewer suggestions
-- `/triage-feedback` — analyze feedback (PR/MR comments or user-pasted text): categorize, prioritize, detect patterns, write a structured action plan, and optionally close noise (PRAISE / OUT_OF_SCOPE / NO_ACTION, plus NIT with NO_ACTION) via an editable manifest on explicit apply trigger — never edits code
-- `/code-migration` — safe in-place or parallel migration of any technology in Gradle/Android/Kotlin projects
-- `/kmp-migration` — full Kotlin Multiplatform migration for Android modules
-- `/migrate-to-compose` — migrate View-based Android UI (Activity, Fragment, custom View) to Jetpack Compose
-- `/generate-test-plan` — generate structured, prioritized test plan from spec or code
-- `/acceptance` — verify a feature against its specification on a live app
-- `/bug-hunt` — undirected bug hunting and QA exploration on a running app
-- `/plan-review` — multi-agent review of implementation plans using PoLL consensus protocol
-- `/feature-flow` — end-to-end feature orchestrator: research → decompose → implement → acceptance → create PR
-- `/bugfix-flow` — end-to-end bug fix orchestrator: debug → implement → acceptance → create PR
-- `/implement` — standalone implementation stage: code → simplify → quality loop → artifacts
+#### developer-workflow (core)
 
-**Agents (10):** architecture-expert, build-engineer, business-analyst, compose-developer, devops-expert, kotlin-engineer, manual-tester, performance-expert, security-expert, ux-expert
+Lifecycle pipeline — research, decomposition, spec, plan review, implementation, debugging, QA, PR workflow.
 
-See [`plugins/developer-workflow/`](plugins/developer-workflow/) for full documentation.
+**Skills (14):** `/research`, `/decompose-feature`, `/write-spec`, `/plan-review`, `/implement`, `/debug`, `/write-tests`, `/generate-test-plan`, `/acceptance`, `/bug-hunt`, `/create-pr`, `/triage-feedback`, `/feature-flow`, `/bugfix-flow`
+
+**Agent:** `manual-tester`
+
+**Depends on:** `developer-workflow-experts`
+
+See [`plugins/developer-workflow/`](plugins/developer-workflow/).
+
+#### developer-workflow-experts
+
+Reusable review/consult agents. Safe to install standalone in any project — no skills, no hooks, no MCP servers.
+
+**Agents (9):** `code-reviewer`, `architecture-expert`, `security-expert`, `performance-expert`, `ux-expert`, `build-engineer`, `devops-expert`, `business-analyst`, `debugging-expert`
+
+See [`plugins/developer-workflow-experts/`](plugins/developer-workflow-experts/).
+
+#### developer-workflow-kotlin
+
+Kotlin, Android, and KMP specialization.
+
+**Skills (3):** `/code-migration`, `/kmp-migration`, `/migrate-to-compose`
+
+**Agents:** `kotlin-engineer`, `compose-developer`
+
+**Depends on:** `developer-workflow`, `developer-workflow-experts`
+
+See [`plugins/developer-workflow-kotlin/`](plugins/developer-workflow-kotlin/).
+
+#### developer-workflow-swift
+
+Swift, iOS, and macOS specialization.
+
+**Agents:** `swift-engineer`, `swiftui-developer`
+
+**References:** Swift concurrency, testing, SwiftUI patterns/state/performance.
+
+**Depends on:** `developer-workflow`, `developer-workflow-experts`
+
+See [`plugins/developer-workflow-swift/`](plugins/developer-workflow-swift/).
 
 ### extend
 
