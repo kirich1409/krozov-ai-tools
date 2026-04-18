@@ -241,6 +241,27 @@ check_hook_scripts() {
   done < <(jq -r '.plugins[] | [.name, .source] | @tsv' "$MARKETPLACE")
 }
 
+# ---------- L7: Skill/agent frontmatter ----------
+#
+# Delegated to scripts/check_frontmatter.py — parses YAML frontmatter,
+# enforces Anthropic rules (description ≤ 1024 chars, name matches dir/file,
+# no forbidden fields in agent frontmatter).
+
+check_frontmatter() {
+  echo "--- L7: Skill/agent frontmatter ---"
+  if ! output=$(python3 scripts/check_frontmatter.py "$MARKETPLACE" 2>&1); then
+    echo "$output"
+    # each non-OK line increments ERRORS
+    while IFS= read -r line; do
+      case "$line" in
+        ERROR:*) ERRORS=$((ERRORS + 1)) ;;
+      esac
+    done <<< "$output"
+  else
+    echo "$output"
+  fi
+}
+
 # ---------- Entry point ----------
 
 main() {
@@ -267,6 +288,7 @@ main() {
   check_skills_dirs
   check_agents_dirs
   check_hook_scripts
+  check_frontmatter
 
   if [ -n "$CHECK_TAG" ]; then
     check_tag_versions "$CHECK_TAG"
