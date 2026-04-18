@@ -30,12 +30,22 @@ flowchart TD
     needs_decompose -->|Yes| decompose[/decompose-feature/]
     decompose --> plan_review
 
-    needs_plan -->|No| impl
+    needs_plan -->|No| testplan_gate
     needs_plan -->|Yes| plan_review[/plan-review/]
 
-    plan_review -->|PASS| impl
-    plan_review -->|CONDITIONAL| impl
+    plan_review -->|PASS| testplan_gate
+    plan_review -->|CONDITIONAL| testplan_gate
     plan_review -->|FAIL| research
+
+    testplan_gate{Skip test plan?<br/>5 skip conditions<br/>or --skip-test-plan}
+    testplan_gate -->|Skip| impl
+    testplan_gate -->|Run| test_plan[/generate-test-plan/]
+
+    test_plan --> test_plan_review[/plan-review<br/>test-plan branch/]
+    test_plan_review -->|PASS| impl
+    test_plan_review -->|WARN| impl
+    test_plan_review -->|FAIL, cycles<3| test_plan
+    test_plan_review -->|FAIL, cycles>=3| escalate_tp([Escalate: user decides])
 
     subgraph loop ["For each task"]
         impl[/implement/] --> acceptance[/acceptance/]
@@ -43,6 +53,7 @@ flowchart TD
         acceptance -->|"FAILED (obvious)"| impl
         acceptance -->|"FAILED (unclear)"| debug_mid[/debug/]
         debug_mid --> impl
+        acceptance -->|"FAILED (new bugs, need Regression TC)"| test_plan
         acceptance -->|PARTIAL| user_decision{User: fix or ship?}
         user_decision -->|Fix| impl
         user_decision -->|Ship| pr_decision
@@ -61,6 +72,8 @@ flowchart TD
     style research fill:#e1f5fe
     style decompose fill:#e1f5fe
     style plan_review fill:#e1f5fe
+    style test_plan fill:#e1f5fe
+    style test_plan_review fill:#e1f5fe
     style impl fill:#e8f5e9
     style acceptance fill:#fff3e0
     style create_pr fill:#f3e5f5
@@ -68,6 +81,7 @@ flowchart TD
     style handoff fill:#ffcdd2
     style done fill:#c8e6c9
     style redirect_bug fill:#ffcdd2
+    style escalate_tp fill:#ffcdd2
 ```
 
 ### Stop points
@@ -76,6 +90,7 @@ flowchart TD
 |------|-------------|
 | Profile confirmation | Ask user to confirm feature profile |
 | PARTIAL acceptance | User decides: fix now or ship as-is |
+| TestPlanReview FAIL after 3 revise cycles | User picks: accept WARN manually, revise spec, or rerun with `--skip-test-plan` |
 | After `create-pr` | Orchestrator stops; user runs `triage-feedback` when review feedback arrives and decides whether to resume at `implement` |
 | Escalation | Scope explosion, 3× same failure, architectural decision needed |
 
@@ -84,7 +99,9 @@ flowchart TD
 | From → To | Max | After limit |
 |-----------|-----|-------------|
 | PlanReview → Research | 2 | Escalate |
+| TestPlanReview → TestPlan | 3 | Escalate |
 | Acceptance → Implement | 3 | Escalate |
+| Acceptance → TestPlan | 3 | Escalate |
 | Acceptance → Debug | 1 | Escalate |
 | PR → Implement | 2 | Escalate |
 

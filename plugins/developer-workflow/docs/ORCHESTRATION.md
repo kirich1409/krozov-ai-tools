@@ -63,16 +63,21 @@ Allowed transitions between stages. Forward is default; backward transitions are
 
 ```
 Research ──→ Plan
-Plan ──→ Implement
-Plan ──→ Research          (plan review reveals gaps or missing context)
+Plan ──→ TestPlan           (test-plan stage not skipped)
+Plan ──→ Implement          (test-plan stage skipped: 5 skip-detector conditions or --skip-test-plan)
+Plan ──→ Research           (plan review reveals gaps or missing context)
+TestPlan ──→ TestPlanReview
+TestPlanReview ──→ Implement  (PASS or WARN)
+TestPlanReview ──→ TestPlan   (FAIL — revise loop, max 3 cycles, then escalate)
 Implement ──→ Quality
-Implement ──→ Research     (scope is larger than expected — escalate)
+Implement ──→ Research      (scope is larger than expected — escalate)
 Quality ──→ Verify
-Quality ──→ Implement      (quality loop found issues to fix)
+Quality ──→ Implement       (quality loop found issues to fix)
 Verify ──→ PR
-Verify ──→ Implement       (verification fails — fix and re-verify)
+Verify ──→ Implement        (verification fails — fix and re-verify)
+Verify ──→ TestPlan         (new P0/P1 bugs require a `## Regression TC` section appended to the permanent test plan)
 PR ──→ Merge
-PR ──→ Implement           (review feedback requires code changes)
+PR ──→ Implement            (review feedback requires code changes)
 ```
 
 Backward transition requires a reason logged in the stage artifact. No silent rollbacks.
@@ -85,9 +90,11 @@ Each stage produces an artifact in `swarm-report/`. The next stage reads it befo
 |-------|----------|
 | Research | `<slug>-research.md` |
 | Plan | `<slug>-plan.md` |
+| TestPlan | `docs/testplans/<slug>-test-plan.md` (permanent, source of truth) + `<slug>-test-plan.md` (receipt: `status`, `permanent_path`, `source_spec`, `review_verdict`, `phase_coverage`). Created by `generate-test-plan` when invoked from the orchestrator with a slug; read by `plan-review` (test-plan branch) and `acceptance`. |
+| TestPlanReview | `<slug>-test-plan.md` receipt updated in place: `review_verdict` set to PASS / WARN / FAIL, `status` advances Draft → Ready on PASS/WARN. |
 | Implement | `<slug>-implement.md` (summary of changes, files touched) |
 | Quality | `<slug>-quality.md` (build/lint/test results, issues found/fixed) |
-| Verify | `<slug>-verify.md` (verification result: PASS/FAIL, evidence) |
+| Verify | `<slug>-verify.md` / `<slug>-acceptance.md` (verification result: VERIFIED/FAILED/PARTIAL, evidence, `test_plan_source: receipt / mounted / on-the-fly / absent` when the Acceptance stage consumed a test plan) |
 | PR | `<slug>-pr.md` (PR URL, description, reviewers) |
 
 If a stage artifact is missing — the previous stage did not complete. Do not skip ahead.

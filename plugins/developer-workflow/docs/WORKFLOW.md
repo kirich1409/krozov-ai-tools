@@ -39,6 +39,14 @@ IDEA / FEATURE REQUEST
 [plan-review] ---- PoLL review of the plan (optional)
   |                  Artifact: plan review verdict
   v
+[test-plan] ---- Generate test plan (default-on, skip on 5 conditions or --skip-test-plan)
+  |                Artifacts: docs/testplans/<slug>-test-plan.md (permanent)
+  |                           swarm-report/<slug>-test-plan.md (receipt)
+  v
+[test-plan-review] ---- plan-review with test-plan branch (PASS / WARN / FAIL)
+  |                      FAIL → revise loop back to [test-plan] (max 3 cycles)
+  |                      Artifact: receipt review_verdict updated
+  v
   |   ┌────────────── for each task ──────────────┐
   |   │                                            │
   |   v                                            │
@@ -92,7 +100,7 @@ PR CREATED ---- hand-off to user; triage-feedback triages review comments when t
 
 | Profile | Pipeline | Signals | Skips |
 |---------|----------|---------|-------|
-| **Feature** | Research -> Decompose -> Plan Review -> [Implement -> Acceptance] per task -> Create PR | "add", "implement", "build", "create" | Decompose optional for single-task features |
+| **Feature** | Research -> Decompose -> Plan Review -> Test Plan -> Test Plan Review -> [Implement -> Acceptance] per task -> Create PR | "add", "implement", "build", "create" | Decompose optional for single-task features; Test Plan skipped for 5 explicit conditions or `--skip-test-plan` override |
 | **Bug Fix** | Debug -> Implement -> Acceptance -> Create PR | "fix", "broken", "crash", "regression" | Research, Plan |
 | **Migration** | Research -> Snapshot -> Migrate -> Acceptance -> Create PR | "migrate", "replace", "switch to" | Plan (delegates to `code-migration`) |
 | **Research** | Research -> Report | "investigate", "compare", "evaluate" | Implement, Acceptance, PR |
@@ -232,17 +240,24 @@ least one web-sourced insight. Relying solely on the codebase and training data 
 ## 6. State Machine
 
 ```
-Research --> Decompose --> Plan Review --> Implement --> Acceptance --> PR --> Merge
-   ^            |              |              ^  ^           |          |
-   |            |              |              |  |           |          |
-   '-- gaps ----'              |              |  '-- FAILED -'          |
-   ^                           |              |                        |
-   '-- scope too large --------+--------------'                        |
-                               |              ^                        |
-                               '-- FAIL ------'                        |
-                                              ^                        |
-                                              '-- review feedback -----'
+Research --> Decompose --> Plan Review --> Test Plan --> Test Plan Review --> Implement --> Acceptance --> PR --> Merge
+   ^            |              |               ^              |                   ^  ^           |          |
+   |            |              |               |              |                   |  |           |          |
+   '-- gaps ----'              |               '- revise -----'                   |  '-- FAILED -'          |
+   ^                           |                 (max 3 cycles)                   |                         |
+   '-- scope too large --------+--------------------------------------------------'                         |
+                               |              ^                                                             |
+                               '-- FAIL ------'                                                             |
+                                                                                  ^                         |
+                                                                                  '-- review feedback ------'
+                                                          ^
+                                                          '-- Regression TC (Acceptance → Test Plan)
 ```
+
+Test Plan + Test Plan Review are **default-on**. They are skipped when one of the five
+skip-detector conditions holds (see `feature-flow` SKILL §TestPlan Stage Skip Detection)
+or when the user passes the `--skip-test-plan` override — in both cases the pipeline
+transitions directly from Plan Review to Implement.
 
 For Bug Fix pipeline, replace Research + Decompose with Debug:
 
@@ -259,7 +274,10 @@ Debug --> Implement --> Acceptance --> PR --> Merge
 | Research | Decompose | Research complete |
 | Debug | Implement | Root cause identified |
 | Decompose | Plan Review | Tasks defined |
-| Plan Review | Implement | Plan PASS or CONDITIONAL |
+| Plan Review | Test Plan | Plan PASS or CONDITIONAL; test-plan stage not skipped |
+| Plan Review | Implement | Plan PASS or CONDITIONAL; test-plan stage skipped (skip detector or `--skip-test-plan`) |
+| Test Plan | Test Plan Review | Test plan receipt produced (`status: Draft`, `review_verdict: pending`) |
+| Test Plan Review | Implement | Test plan verdict PASS or WARN |
 | Implement | Acceptance | `implement.md` + `quality.md` produced, all gates passed |
 | Acceptance | PR | VERIFIED |
 | PR | Merge | CI green, review approved |
@@ -269,8 +287,10 @@ Debug --> Implement --> Acceptance --> PR --> Merge
 | From | To | Trigger |
 |------|----|---------|
 | Plan Review | Research | Plan review FAIL — knowledge gaps |
+| Test Plan Review | Test Plan | Test plan verdict FAIL — revise loop (max 3 cycles, then escalate) |
 | Implement | Research | Scope significantly larger than expected |
 | Acceptance | Implement | FAILED — P0/P1 bugs found, fix needed |
+| Acceptance | Test Plan | FAILED — new bugs require `## Regression TC` appended to permanent test plan |
 | PR | Implement | Review feedback requires code changes |
 
 ### User Decision Points
@@ -297,8 +317,10 @@ starting work. No stage starts without the previous stage's receipt.
 | Research | `<slug>-research.md` | Plan / Implement (Feature) |
 | Debug | `<slug>-debug.md` | Implement (Bug Fix) |
 | Plan | `<slug>-plan.md` | Implement (when planning is done) |
+| Test Plan | `docs/testplans/<slug>-test-plan.md` (permanent) + `<slug>-test-plan.md` (receipt) | Test Plan Review (Feature) |
+| Test Plan Review | `<slug>-test-plan.md` receipt updated with `review_verdict` PASS / WARN | Implement (Feature) |
 | Implement | `<slug>-implement.md` + `<slug>-quality.md` | Acceptance |
-| Acceptance | `<slug>-acceptance.md` | PR |
+| Acceptance | `<slug>-acceptance.md` (with `test_plan_source` field when Test Plan ran) | PR |
 | PR | `<slug>-pr.md` | Merge |
 
 **Slug:** kebab-case from the task description, 2–4 words.
@@ -319,8 +341,10 @@ artifact required.
 | Debug | `debug` | Bug description (text, issue URL, error log) | `<slug>-debug.md`: symptom, reproduction steps, root cause, fix direction |
 | Decompose | `decompose-feature` | Feature idea/PRD + research artifact | `<slug>-decomposition.md`: tasks with dependencies, acceptance criteria, waves |
 | Plan review | `plan-review` | Plan or decomposition artifact | Verdict: PASS / CONDITIONAL / FAIL with blockers |
+| Test Plan | `generate-test-plan` | Feature slug + available artifacts (`research.md`, `decomposition.md`, `plan.md`, spec) | `docs/testplans/<slug>-test-plan.md` (permanent) + `<slug>-test-plan.md` (receipt: `status`, `permanent_path`, `review_verdict`, `phase_coverage`) |
+| Test Plan Review | `plan-review` (test-plan branch) | Permanent test plan file | Receipt updated with `review_verdict`: PASS / WARN / FAIL |
 | Implement | `implement` | Task + optional artifacts (`research.md`, `debug.md`, `plan.md`) | `<slug>-implement.md`: changes summary, files, decisions + `<slug>-quality.md`: gate results |
-| Acceptance | `acceptance` | Spec source (requirements / `debug.md` reproduction steps) + running app | `<slug>-acceptance.md`: VERIFIED / FAILED / PARTIAL with bug list |
+| Acceptance | `acceptance` | Spec source (requirements / `debug.md` reproduction steps) + test-plan receipt (when available) + running app | `<slug>-acceptance.md`: VERIFIED / FAILED / PARTIAL with bug list; includes `test_plan_source: receipt / mounted / on-the-fly / absent` |
 | PR | `create-pr` | Branch with commits | PR URL |
 | Triage | `triage-feedback` | PR comments / pasted text | `<slug>-triage.md`: categorized, prioritized, grouped action plan |
 
