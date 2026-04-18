@@ -17,6 +17,13 @@ logic — each stage is a separate skill invocation via subagents.
 **STRICT RULE:** The orchestrator DOES NOT write code, run tests, or perform analysis directly.
 It only manages transitions, passes context between stages, and reports summaries to the user.
 
+**Preconditions (caller's responsibility, NOT this skill's):**
+- A working branch suitable for the feature is already set up (via worktree or otherwise)
+  and the current working directory is where the work should happen.
+- The caller (main agent, wrapping agent, or user) has resolved this before invoking
+  the skill. The skill itself does not inspect, create, switch, or clean up branches
+  or worktrees.
+
 ---
 
 ## Strict State Machine
@@ -54,14 +61,7 @@ PR         -> Implement        (review feedback requires code changes)
 
 ## Phase 0: Setup
 
-### 0.1 Worktree
-
-Create an isolated worktree for the task:
-1. From the default branch, create a worktree in `.worktrees/<branch-name>`
-2. Branch naming: `feature/short-description` — kebab-case
-3. If already in a fitting worktree — stay
-
-### 0.2 Understand the task
+### 0.1 Understand the task
 
 Extract from the user's input:
 - **What** needs to change
@@ -72,7 +72,7 @@ Generate a slug: kebab-case, 2-4 words.
 
 Ask **one clarifying question** if ambiguous. Otherwise proceed.
 
-### 0.3 Profile confirmation
+### 0.2 Profile confirmation
 
 Auto-detect the profile from keywords and context. Then confirm:
 
@@ -204,7 +204,7 @@ Each backward transition:
 ## Stop Points
 
 The orchestrator **stops and waits for the user** at:
-- Profile confirmation (Phase 0.3)
+- Profile confirmation (Phase 0.2)
 - After `create-pr` — hand-off to user. User runs `triage-feedback` when review
   feedback arrives and decides whether to resume at `implement` with FIXABLE items;
   CI monitoring and merge execution are outside this pipeline.
