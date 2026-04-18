@@ -49,8 +49,9 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           # Claude Code resolves plugin dependencies through tags of the form
-          # {plugin-name}--v{version}. Point each at the same commit as the
-          # unified vX.Y.Z tag.
+          # {plugin-name}--v{version}. Create each tag locally, then push all
+          # new tags in a single network round-trip.
+          tags_to_push=()
           while IFS= read -r plugin; do
             per_plugin_tag="${plugin}--${TAG}"
             if git rev-parse -q --verify "refs/tags/${per_plugin_tag}" >/dev/null; then
@@ -58,9 +59,14 @@ jobs:
               continue
             fi
             git tag -a "${per_plugin_tag}" -m "Release ${plugin} ${VERSION} (unified release ${TAG})"
-            git push origin "${per_plugin_tag}"
-            echo "Pushed ${per_plugin_tag}"
+            tags_to_push+=("${per_plugin_tag}")
           done < <(jq -r '.plugins[].name' .claude-plugin/marketplace.json)
+          if [ ${#tags_to_push[@]} -gt 0 ]; then
+            git push origin "${tags_to_push[@]}"
+            printf 'Pushed %s\n' "${tags_to_push[@]}"
+          else
+            echo "No new per-plugin tags to push"
+          fi
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2

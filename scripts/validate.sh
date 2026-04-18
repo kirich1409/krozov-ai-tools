@@ -10,7 +10,7 @@ set -uo pipefail
 
 # Require jq
 if ! command -v jq &> /dev/null; then
-  echo "ERROR: jq is required but not installed" &>\set -uo pipefail2
+  echo "ERROR: jq is required but not installed" >&2
   exit 1
 fi
 
@@ -243,23 +243,16 @@ check_hook_scripts() {
 
 # ---------- L7: Skill/agent frontmatter ----------
 #
-# Delegated to scripts/check_frontmatter.py — parses YAML frontmatter,
-# enforces Anthropic rules (description ≤ 1024 chars, name matches dir/file,
-# no forbidden fields in agent frontmatter).
+# Delegated to scripts/check_frontmatter.py. The helper prints its own
+# ERROR:/OK:/WARN: lines and exits non-zero on failure. We trust the exit
+# code as the single source of truth for pass/fail.
 
 check_frontmatter() {
   echo "--- L7: Skill/agent frontmatter ---"
-  if ! output=$(python3 scripts/check_frontmatter.py "$MARKETPLACE" 2>&1); then
-    echo "$output"
-    # each non-OK line increments ERRORS
-    while IFS= read -r line; do
-      case "$line" in
-        ERROR:*) ERRORS=$((ERRORS + 1)) ;;
-      esac
-    done <<< "$output"
-  else
-    echo "$output"
+  if python3 scripts/check_frontmatter.py "$MARKETPLACE"; then
+    return 0
   fi
+  fail "frontmatter validation failed (see output above)"
 }
 
 # ---------- Entry point ----------
