@@ -763,7 +763,8 @@ When working on specific topics, read the relevant reference before writing code
 |-------|---------------|
 | async/await, actors, Sendable, Task, TaskGroup, AsyncSequence | `${CLAUDE_PLUGIN_ROOT}/agents/references/swift-concurrency.md` |
 | Swift Testing, XCTest, fakes, async tests | `${CLAUDE_PLUGIN_ROOT}/agents/references/swift-testing.md` |
-| Coroutines (KMP-mode, understanding Kotlin side) | `${CLAUDE_PLUGIN_ROOT}/agents/references/coroutines.md` |
+
+When working on a KMP project and needing to understand the Kotlin-side coroutines that the Swift code consumes, the `coroutines.md` reference ships with the `developer-workflow-kotlin` sibling plugin. Install that plugin and use its reference directly; it is not duplicated here.
 
 ---
 

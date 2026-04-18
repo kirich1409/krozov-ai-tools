@@ -1,0 +1,30 @@
+{
+  "name": "developer-workflow-kotlin",
+  "version": "0.9.0",
+  "description": "Kotlin, Android, and KMP specialist agents and migration skills — kotlin-engineer, compose-developer, code-migration, kmp-migration, migrate-to-compose. Extends developer-workflow for Kotlin/Android projects.",
+  "author": {
+    "name": "kirich1409"
+  },
+  "homepage": "https://github.com/kirich1409/krozov-ai-tools",
+  "category": "development",
+  "keywords": [
+    "kotlin",
+    "android",
+    "compose",
+    "kmp",
+    "migration",
+    "jetpack-compose"
+  ],
+  "dependencies": [
+    {
+      "name": "developer-workflow",
+      "version": "^0.9.0"
+    },
+    {
+      "name": "developer-workflow-experts",
+      "version": "^0.9.0"
+    }
+  ],
+  "skills": "../skills",
+  "agents": "../agents"
+}

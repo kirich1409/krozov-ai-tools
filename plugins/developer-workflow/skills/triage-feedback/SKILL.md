@@ -1,34 +1,6 @@
 ---
 name: triage-feedback
-description: >
-  Use when feedback needs to be analyzed, prioritized, categorized, and filtered
-  before acting on it — regardless of where the feedback came from. This skill
-  produces a structured action plan; it does NOT fix code, push commits, or
-  merge PRs. As an opt-in post-analysis step, it may post replies and resolve
-  threads for items with a terminal verdict (PRAISE, OUT_OF_SCOPE, NO_ACTION, or NIT whose actionability is NO_ACTION)
-  via an editable manifest file; actionable items (BLOCKING, IMPORTANT,
-  SUGGESTION, QUESTION, NEEDS_CLARIFICATION, DISCUSSION) are delegated —
-  this skill does not reply or resolve for them. Sources supported: an
-  existing PR/MR (review comments, review summaries, PR-level comments) and
-  user-provided text pasted in the chat (bug reports, stacktraces, CI logs,
-  free-form complaints, a list of items to triage). The skill auto-detects
-  the source from context and asks the user only when detection is
-  ambiguous. Trigger whenever the user says "triage feedback", "categorize
-  review comments", "разбери комментарии", "просмотри фидбэк", "разбери и
-  приоритизируй", "analyze reviewer feedback", "sort these comments by
-  priority", "filter and categorize", "triage this", "triage PR comments",
-  "triage these errors", "categorize these findings", "что из этого важно",
-  "что блокирующее", "help me prioritize", "triage and close noise",
-  "разбери и закрой нерелевантные", "triage and dismiss", "triage and
-  cleanup", or any other phrasing that asks to understand, sort, group, or
-  prioritize incoming feedback. Invoke proactively when the user pastes a
-  block of review comments, bug reports, CI logs, or any list of issues and
-  asks which to address first or how to split them up. Apply-execution mode
-  activates ONLY when the user writes a literal apply trigger (`apply`,
-  `apply manifest`, `run actions manifest`, `исполни actions`, `применить
-  манифест`) after the manifest has been generated and reviewed. Do NOT
-  use this skill when the user wants to fix the issues (use the appropriate
-  implementation skill) or merge a PR.
+description: "Analyze, prioritize, and categorize feedback from PR/MR review comments, pasted text (bug reports, stacktraces, CI logs), or any list of issues — produces a structured action plan. Does NOT fix code, push commits, or merge. Optional post-analysis: posts replies and resolves threads for terminal-verdict items (PRAISE, OUT_OF_SCOPE, NO_ACTION, NIT) via editable manifest. Auto-detects source from context. Use when: \"triage feedback\", \"categorize review comments\", \"разбери комментарии\", \"просмотри фидбэк\", \"analyze reviewer feedback\", \"sort by priority\", \"filter and categorize\", \"triage PR comments\", \"triage and dismiss\", \"что блокирующее\", \"help me prioritize\". Invoke proactively when user pastes review/bug/CI blocks and asks which to address first or how to split them up."
 ---
 
 # Triage Feedback

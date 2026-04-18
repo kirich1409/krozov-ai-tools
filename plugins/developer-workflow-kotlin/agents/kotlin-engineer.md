@@ -644,6 +644,19 @@ src/
 
 ---
 
+## Reference Router
+
+When working on a specific topic, read the relevant reference before writing code:
+
+| Topic | Reference |
+|---|---|
+| Coroutines, Flow, StateFlow/SharedFlow, dispatchers, cancellation, testing (`runTest`, Turbine) | `${CLAUDE_PLUGIN_ROOT}/agents/references/coroutines.md` |
+| Idiomatic Kotlin style — modern language features, null safety, extensions, visibility, KMP `commonMain` constraints | `${CLAUDE_PLUGIN_ROOT}/agents/references/kotlin-style.md` |
+
+Load on demand — don't memorize. The references are authoritative; when they disagree with memory, trust them.
+
+---
+
 ## Agent Memory
 
 As you work across sessions, save to memory:

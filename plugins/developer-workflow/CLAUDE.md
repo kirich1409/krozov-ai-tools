@@ -1,28 +1,43 @@
-# developer-workflow
+# developer-workflow (core)
 
 ## Structure
 
 ```
-skills/<name>/SKILL.md    # Each skill is a directory with YAML frontmatter
-agents/<name>.md          # Each agent is a single .md with YAML frontmatter
-agents/references/        # Shared reference material used by agents
+skills/<name>/SKILL.md    # 14 lifecycle skills, each a directory with YAML frontmatter
+agents/manual-tester.md   # only agent in core (QA executor)
 docs/WORKFLOW.md          # Full pipeline documentation with diagrams
+docs/ORCHESTRATORS.md     # feature-flow and bugfix-flow diagrams
 ```
+
+## Plugin family
+
+This plugin is part of a split family. Depending on the task, Claude Code will have access to agents from sibling plugins:
+
+| Plugin | Contributes |
+|---|---|
+| `developer-workflow` (this) | 14 lifecycle skills + `manual-tester` |
+| `developer-workflow-experts` | `code-reviewer`, `architecture-expert`, `security-expert`, `performance-expert`, `ux-expert`, `build-engineer`, `devops-expert`, `business-analyst`, `debugging-expert` — required, auto-installed as a dependency |
+| `developer-workflow-kotlin` | `kotlin-engineer`, `compose-developer`; skills `code-migration`, `kmp-migration`, `migrate-to-compose` — install for Kotlin/Android/KMP work |
+| `developer-workflow-swift` | `swift-engineer`, `swiftui-developer` — install for Swift/iOS/macOS work |
+
+Skills in this plugin delegate to engineer agents (kotlin-engineer / compose-developer / swift-engineer / swiftui-developer) by short name via the Task tool. Agent names are unique across the family, so short-name resolution works as long as the corresponding platform plugin is installed. If `implement` or `write-tests` is invoked and the referenced engineer is not installed, the Task call will fail with a clear message — install the matching platform plugin and retry.
 
 ## Conventions
 
-- 100% self-contained — no dependencies on external plugins. Own plugins from this monorepo (maven-mcp, sensitive-guard, extend) are allowed as they ship together.
-- **Dependency policy:** only built-in Claude Code features + own plugins from this repo (maven-mcp, sensitive-guard, extend). No third-party plugin skills/agents.
-- **MCP servers:** `mobile` MCP is explicitly allowed for testing. Other MCP servers (Perplexity, DeepWiki, Context7, etc.) are environment-level — use when available, but skills must NOT hardcode their tool names or break without them. Describe the task ("search the web for approaches"), not the tool (`perplexity_research`).
-- **External tools:** if a capability requires something the user may not have installed, describe what's needed and let the user decide — don't write it as a mandatory instruction.
-- Skills use YAML frontmatter: `name`, `description` (required), optionally `disable-model-invocation`
-- Agents use YAML frontmatter: `name`, `description`, `model`, `color`, `memory`, `tools`, optionally `maxTurns`, `disallowedTools`
-- `swift-engineer` and `swiftui-developer` agents mirror `kotlin-engineer` and `compose-developer` for iOS/macOS targets
-- `code-reviewer` agent is read-only — no Edit, Write, NotebookEdit, or Bash tools
-- Workspace directories (`*-workspace/`) are runtime artifacts, not skills
-- Pipeline orchestration rules live at `~/.claude/rules/dev-workflow-orchestration.md` (user-global, not in this repo)
-- Quality Loop gates are defined in orchestration rules, not in any skill
+- Self-contained core: lifecycle orchestration only. No platform-specific engineers live here.
+- **Dependency policy:** only built-in Claude Code features + sibling plugins from this family (via `dependencies` in plugin.json). No third-party plugins.
+- **MCP servers:** `mobile` MCP is explicitly allowed for testing (used by `manual-tester`, `acceptance`, `bug-hunt`). Other MCP servers (Perplexity, DeepWiki, Context7) are environment-level — skills must NOT hardcode tool names or break without them. Describe the task, not the tool.
+- **External tools:** if a capability requires something the user may not have installed, describe what's needed and let the user decide.
+- Skills use YAML frontmatter: `name`, `description` (≤ 1024 chars), optionally `disable-model-invocation`.
+- `code-reviewer` (in `developer-workflow-experts`) is read-only — no Edit, Write, NotebookEdit, or Bash tools.
+- Workspace directories (`*-workspace/`) are runtime artifacts, not skills. Gitignored.
+- Pipeline orchestration rules (task profiling, Research Consortium, Quality Loop gates, State Machine, receipt-based gating) ship with this plugin at [`docs/ORCHESTRATION.md`](docs/ORCHESTRATION.md) — skills and the core feature-flow/bugfix-flow orchestrators read from there.
+- Quality Loop gates are defined in `docs/ORCHESTRATION.md`, not in any individual skill.
 
-## Expert Agents
+## Skills roster (14)
 
-Seven expert agents (architecture, build, business-analyst, devops, performance, security, ux) are specialists invoked by skills during quality loop or research. They are not meant for direct user invocation.
+- Planning/research: `research`, `decompose-feature`, `write-spec`, `plan-review`
+- Implementation: `implement`, `write-tests`, `debug`
+- QA: `generate-test-plan`, `acceptance`, `bug-hunt`
+- PR: `create-pr`, `triage-feedback`
+- Orchestrators: `feature-flow`, `bugfix-flow`

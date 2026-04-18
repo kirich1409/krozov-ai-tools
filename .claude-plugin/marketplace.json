@@ -12,7 +12,7 @@
       "author": {
         "name": "kirich1409"
       },
-      "version": "0.8.0",
+      "version": "0.9.0",
       "category": "development",
       "homepage": "https://github.com/kirich1409/krozov-ai-tools",
       "source": "./plugins/maven-mcp/plugin"
@@ -23,21 +23,54 @@
       "author": {
         "name": "kirich1409"
       },
-      "version": "0.8.0",
+      "version": "0.9.0",
       "category": "security",
       "homepage": "https://github.com/kirich1409/krozov-ai-tools",
       "source": "./plugins/sensitive-guard"
     },
     {
       "name": "developer-workflow",
-      "description": "Developer workflow skills — safe code migration, PR preparation, full PR lifecycle through CI/CD and code review, with specialist agents for Kotlin, Compose, Swift, and SwiftUI",
+      "description": "Developer workflow pipeline — research, decomposition, specification, plan review, implementation, debugging, QA (test plans, acceptance, bug hunt, retroactive tests), PR creation and review-feedback triage, feature-flow and bugfix-flow orchestrators. Platform-neutral; platform-specific engineers live in developer-workflow-kotlin and developer-workflow-swift.",
       "author": {
         "name": "kirich1409"
       },
-      "version": "0.8.0",
+      "version": "0.9.0",
       "category": "development",
       "homepage": "https://github.com/kirich1409/krozov-ai-tools",
       "source": "./plugins/developer-workflow"
+    },
+    {
+      "name": "developer-workflow-experts",
+      "description": "Reusable expert agents for code review, architecture, security, performance, UX, build, DevOps, business analysis, and debugging. Safe to install standalone — no skills, no hooks, no MCP servers.",
+      "author": {
+        "name": "kirich1409"
+      },
+      "version": "0.9.0",
+      "category": "development",
+      "homepage": "https://github.com/kirich1409/krozov-ai-tools",
+      "source": "./plugins/developer-workflow-experts"
+    },
+    {
+      "name": "developer-workflow-kotlin",
+      "description": "Kotlin, Android, and KMP specialist agents and migration skills — kotlin-engineer, compose-developer, code-migration, kmp-migration, migrate-to-compose. Extends developer-workflow for Kotlin/Android projects.",
+      "author": {
+        "name": "kirich1409"
+      },
+      "version": "0.9.0",
+      "category": "development",
+      "homepage": "https://github.com/kirich1409/krozov-ai-tools",
+      "source": "./plugins/developer-workflow-kotlin"
+    },
+    {
+      "name": "developer-workflow-swift",
+      "description": "Swift, iOS, and macOS specialist agents — swift-engineer and swiftui-developer, with references covering Swift concurrency, testing, and SwiftUI patterns/state/performance. Extends developer-workflow for Apple platforms.",
+      "author": {
+        "name": "kirich1409"
+      },
+      "version": "0.9.0",
+      "category": "development",
+      "homepage": "https://github.com/kirich1409/krozov-ai-tools",
+      "source": "./plugins/developer-workflow-swift"
     },
     {
       "name": "extend",
@@ -45,7 +78,7 @@
       "author": {
         "name": "kirich1409"
       },
-      "version": "0.8.0",
+      "version": "0.9.0",
       "category": "development",
       "homepage": "https://github.com/kirich1409/krozov-ai-tools",
       "source": "./plugins/extend"

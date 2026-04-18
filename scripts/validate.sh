@@ -10,7 +10,7 @@ set -uo pipefail
 
 # Require jq
 if ! command -v jq &> /dev/null; then
-  echo "ERROR: jq is required but not installed" &>\set -uo pipefail2
+  echo "ERROR: jq is required but not installed" >&2
   exit 1
 fi
 
@@ -241,6 +241,20 @@ check_hook_scripts() {
   done < <(jq -r '.plugins[] | [.name, .source] | @tsv' "$MARKETPLACE")
 }
 
+# ---------- L7: Skill/agent frontmatter ----------
+#
+# Delegated to scripts/check_frontmatter.py. The helper prints its own
+# ERROR:/OK:/WARN: lines and exits non-zero on failure. We trust the exit
+# code as the single source of truth for pass/fail.
+
+check_frontmatter() {
+  echo "--- L7: Skill/agent frontmatter ---"
+  if python3 scripts/check_frontmatter.py "$MARKETPLACE"; then
+    return 0
+  fi
+  fail "frontmatter validation failed (see output above)"
+}
+
 # ---------- Entry point ----------
 
 main() {
@@ -267,6 +281,7 @@ main() {
   check_skills_dirs
   check_agents_dirs
   check_hook_scripts
+  check_frontmatter
 
   if [ -n "$CHECK_TAG" ]; then
     check_tag_versions "$CHECK_TAG"

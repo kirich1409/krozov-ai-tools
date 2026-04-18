@@ -39,6 +39,40 @@ jobs:
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
+      - name: Publish per-plugin tags for plugin dependency resolution
+        working-directory: .
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          VERSION="${TAG#v}"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          # actions/checkout fetches only the tag that triggered the workflow,
+          # so sibling per-plugin tags from previous releases won't be known
+          # locally. Fetch all tags before the idempotency check to avoid a
+          # local "not found" / remote "already exists" mismatch.
+          git fetch --tags --quiet origin
+          # Claude Code resolves plugin dependencies through tags of the form
+          # {plugin-name}--v{version}. Create each missing tag locally, then
+          # push all new tags in a single network round-trip.
+          tags_to_push=()
+          while IFS= read -r plugin; do
+            per_plugin_tag="${plugin}--${TAG}"
+            if git rev-parse -q --verify "refs/tags/${per_plugin_tag}" >/dev/null; then
+              echo "Tag ${per_plugin_tag} already exists, skipping"
+              continue
+            fi
+            git tag -a "${per_plugin_tag}" -m "Release ${plugin} ${VERSION} (unified release ${TAG})"
+            tags_to_push+=("${per_plugin_tag}")
+          done < <(jq -r '.plugins[].name' .claude-plugin/marketplace.json)
+          if [ ${#tags_to_push[@]} -gt 0 ]; then
+            git push origin "${tags_to_push[@]}"
+            printf 'Pushed %s\n' "${tags_to_push[@]}"
+          else
+            echo "No new per-plugin tags to push"
+          fi
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:

@@ -571,9 +571,10 @@ When working on a specific area, load the relevant reference for detailed DO/DON
 
 | Topic | Reference |
 |---|---|
-| State management, @State, @Binding, @Observable, @Environment, property wrappers | `agents/references/swiftui-state.md` |
-| View patterns, navigation, sheets, ForEach, .task, conditionals, previews | `agents/references/swiftui-patterns.md` |
-| Performance, body purity, @Observable granularity, images, animations | `agents/references/swiftui-performance.md` |
+| State management, @State, @Binding, @Observable, @Environment, property wrappers | `${CLAUDE_PLUGIN_ROOT}/agents/references/swiftui-state.md` |
+| View patterns, navigation, sheets, ForEach, .task, conditionals, previews | `${CLAUDE_PLUGIN_ROOT}/agents/references/swiftui-patterns.md` |
+| Performance, body purity, @Observable granularity, images, animations | `${CLAUDE_PLUGIN_ROOT}/agents/references/swiftui-performance.md` |
+| Design system — token taxonomy (spacing/radius/motion/text/color), hard bans on hardcoded values, accessibility checklist (9 points), theming, previews-as-first-class, Liquid Glass on macOS 26+, Dynamic Type, i18n | `${CLAUDE_PLUGIN_ROOT}/agents/references/swiftui-design-system.md` |
 
 Read the relevant reference before writing code in that area. Don't guess — the reference has the correct patterns.
 

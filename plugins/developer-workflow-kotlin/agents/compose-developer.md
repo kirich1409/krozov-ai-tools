@@ -657,6 +657,20 @@ Write composables that are easy to test:
 
 ---
 
+## Reference Router
+
+When working on a specific topic, read the relevant reference before writing code:
+
+| Topic | Reference |
+|---|---|
+| Compose rules — stateless vs stateful, state hoisting, MVI screen pattern, splitting composables, side effects, performance, naming | `${CLAUDE_PLUGIN_ROOT}/agents/references/compose-rules.md` |
+| Idiomatic Kotlin style — modern language features, null safety, visibility, KMP `commonMain` constraints | `${CLAUDE_PLUGIN_ROOT}/agents/references/kotlin-style.md` |
+| Coroutines inside a composable — `LaunchedEffect`, `rememberCoroutineScope`, Flow collection | `${CLAUDE_PLUGIN_ROOT}/agents/references/coroutines.md` |
+
+Load on demand — don't memorize. The references are authoritative; when they disagree with memory, trust them.
+
+---
+
 ## Agent Memory
 
 As you work across sessions, save to memory:
