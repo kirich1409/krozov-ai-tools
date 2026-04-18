@@ -252,7 +252,7 @@ the PR stage. `create-pr` references it for the PR description.
 **Date:** <date>
 **Type:** Feature / Bug fix
 **Spec source:** [what was used — requirements, debug.md reproduction steps, etc.]
-**Test plan:** [user-provided / generated from spec]
+**Test plan:** [resolved permanent path if sourced via receipt or mounted receipt | generated on-the-fly from spec | none]
 **test_plan_source:** receipt | mounted | on-the-fly | absent
 **Context artifacts:** [paths to research.md, debug.md, implement.md used as input]
 

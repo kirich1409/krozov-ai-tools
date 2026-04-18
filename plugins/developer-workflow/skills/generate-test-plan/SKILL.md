@@ -43,9 +43,10 @@ Slug resolution rules (apply in order):
    stable kebab-case convention used elsewhere in workflow docs: lowercase the
    name, replace runs of spaces or punctuation with `-`, trim leading/trailing `-`.
 
-Examples of derivation (rule 3): `"User authentication"` → `user-authentication-test-plan.md`,
-`"Cart & checkout"` → `cart-checkout-test-plan.md`, `"Token refresh (auth)"` →
-`token-refresh-auth-test-plan.md`.
+Examples of derivation (rule 3): `"User authentication"` → `user-authentication`,
+`"Cart & checkout"` → `cart-checkout`, `"Token refresh (auth)"` → `token-refresh-auth`.
+The resulting filename is then `docs/testplans/<slug>-test-plan.md` (for example,
+`docs/testplans/user-authentication-test-plan.md`).
 
 ### Receipt (when invoked from orchestrator with a slug)
 
