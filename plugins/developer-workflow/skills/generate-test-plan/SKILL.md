@@ -52,6 +52,8 @@ status: Draft | Ready | Approved | Mounted
 permanent_path: docs/testplans/<slug>-test-plan.md
 source_spec: <path to spec if any, or "inline spec">
 review_verdict: pending | PASS | WARN | FAIL | skipped
+review_warnings: []            # populated by plan-review on WARN — list of short strings
+review_blockers: []            # populated by plan-review on FAIL — list of short strings
 phase_coverage: [Phase 1, Phase 2, ...]
 created: YYYY-MM-DD
 updated: YYYY-MM-DD
@@ -63,13 +65,6 @@ updated: YYYY-MM-DD
 **Permanent artifact:** [`docs/testplans/<slug>-test-plan.md`](../docs/testplans/<slug>-test-plan.md)
 **Source spec:** <path or description>
 **Review verdict:** <verdict>
-
-## Phase Coverage
-- Phase 1 — TCs covered: TC-1..TC-N
-- Phase 2 — TCs covered: TC-N+1..TC-M
-
-## Review Findings
-(populated by plan-review stage; WARN items listed here)
 ```
 
 Field conventions:
@@ -78,6 +73,12 @@ Field conventions:
   file is adopted without regeneration (see `feature-flow/SKILL.md` §1.5 Pre-check).
 - `review_verdict`: `pending` at creation; updated by `plan-review` to
   `PASS | WARN | FAIL`; `skipped` on mount (no review occurs).
+- `review_warnings` / `review_blockers`: arrays of short strings populated by `plan-review`.
+  `review_warnings` is written on WARN verdicts (items d or e of the checklist violated —
+  non-blocking); `review_blockers` is written on FAIL (items a, b, or c violated —
+  blocks transition to Implement). Both remain empty arrays on PASS / pending / skipped.
+  Frontmatter is the single source of truth for review findings — the receipt body does
+  not re-list them, keeping downstream YAML parsers authoritative.
 - `phase_coverage`: list of phase labels present in the permanent file. Empty list if the
   feature has no phase segmentation.
 - `created` / `updated`: ISO dates (`YYYY-MM-DD`). `updated` must change whenever either the
@@ -181,6 +182,12 @@ Before writing test cases, identify:
 Every generated test plan must follow this exact structure:
 
 ```markdown
+---
+type: test-plan
+slug: <feature-slug>
+generated: YYYY-MM-DD
+---
+
 # Test Plan: [Feature Name]
 
 | Field | Value |
@@ -189,6 +196,10 @@ Every generated test plan must follow this exact structure:
 | **Generated** | [YYYY-MM-DD] |
 | **Scope** | [one-line summary of what is covered] |
 | **Status** | Draft / Ready for Review / Approved |
+
+The `type: test-plan` frontmatter lets `plan-review` and `acceptance` identify the
+artifact deterministically (Signal #1 of the classifier). `slug` matches the receipt and
+any decomposition artifact for the same feature.
 
 ---
 

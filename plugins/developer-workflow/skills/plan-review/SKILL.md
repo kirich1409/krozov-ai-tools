@@ -75,6 +75,7 @@ Review       → Synthesize
 Synthesize   → Verdict
 Verdict:PASS → Done
 Verdict:COND → Fix Plan
+Verdict:WARN → Done          (test-plan branch only — see Test-Plan Review Branch)
 Verdict:FAIL → Fix Plan
 Fix Plan     → Re-review (back to Parallel Review with same agents)
 Re-review    → Synthesize → Verdict (same cycle)
@@ -158,9 +159,10 @@ combined with OR — any one is enough:
    `type: test-plan` (the permanent artifact at `docs/testplans/<slug>-test-plan.md`) or
    `type: test-plan-receipt` (the receipt at `swarm-report/<slug>-test-plan.md`).
 2. **Structural signature** — the document contains a `## Test Cases` section AND discrete
-   TC blocks identifiable by TC-ID (e.g. `### TC-1`, `### TC-042`) AND explicit priority
-   labels from the set `P0` / `P1` / `P2` / `P3`. All three structural markers must be
-   present to count this signal.
+   TC blocks identifiable by TC-ID at any heading level (regex `^#{1,6}\s+TC-[\w-]+`, e.g.
+   `### TC-1`, `#### TC-042`, `## TC-auth-01`) AND explicit priority labels from the set
+   `P0` / `P1` / `P2` / `P3`. All three structural markers must be present to count this
+   signal.
 
 If either signal fires → the plan is a **test-plan**. Record `Review type: test-plan` in the
 state file and follow the [Test-Plan Review Branch](#test-plan-review-branch) instead of the

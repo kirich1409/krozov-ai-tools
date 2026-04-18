@@ -55,6 +55,10 @@ when invoked from the orchestrator).
 2. Read `review_verdict`:
    - `PASS` — proceed.
    - `WARN` — proceed; carry WARN findings forward into the verification report as context.
+   - `skipped` — proceed. The receipt was written as a mount (pre-orchestration permanent
+     file adopted without regeneration — see `feature-flow/SKILL.md` §1.5 Pre-check or
+     Branch 2 below). No review was performed; treat the plan as user-authored and
+     authoritative.
    - `FAIL` — do not execute. Stop and escalate back to `feature-flow`: the plan must be
      revised via `plan-review` before acceptance runs.
    - `pending` — treat as not-yet-reviewed; escalate to `feature-flow` to run plan-review

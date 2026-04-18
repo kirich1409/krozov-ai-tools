@@ -141,8 +141,10 @@ receipt does NOT exist — this is a user-authored plan. Do NOT regenerate. The
 orchestrator owns this write: emit a mount-receipt following the canonical format from
 `generate-test-plan/SKILL.md` §Receipt (field overrides: `status: Mounted`,
 `review_verdict: skipped`, `source_spec: existing (pre-orchestration)`). Skip both
-TestPlan and TestPlanReview; announce **Stage: PlanReview → Implement (test plan mounted
-from existing)**. To regenerate, the user must re-invoke with `--regenerate-test-plan`.
+TestPlan and TestPlanReview; announce **Stage: \<current\> → Implement (test plan mounted
+from existing)**, where `<current>` is whichever stage actually routed here (PlanReview,
+Decompose, or Research — any of these can feed Phase 1.5 when later stages were skipped).
+To regenerate, the user must re-invoke with `--regenerate-test-plan`.
 
 Otherwise, invoke `developer-workflow:generate-test-plan` with the feature slug and
 paths to the available artifacts (`research.md`, `decomposition.md`, `plan.md`, any spec
@@ -240,7 +242,9 @@ pipeline transitions:
   violated items — preserved for downstream review and acceptance context. No revise-loop.
 - **FAIL** — any of (a), (b), (c) violated. Run the revise-loop: **TestPlan ← TestPlanReview**
   up to 3 cycles. Each cycle patches the permanent test-plan file, re-reviews with the
-  same agents, and appends to the receipt's `Verdict History`. After 3 failed cycles →
+  same agents, and appends to the plan-review state file's `Verdict History` (see
+  `plan-review/SKILL.md` §Persistence — the receipt itself carries only the latest
+  `review_verdict`, not the per-cycle history). After 3 failed cycles →
   **escalate to the user** with three options: (a) accept WARN manually and proceed,
   (b) revise the spec and restart the pipeline, (c) use `--skip-test-plan` to bypass the
   stage for this run.
