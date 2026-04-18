@@ -1,0 +1,26 @@
+{
+  "skill_name": "triage-feedback",
+  "evals": [
+    {
+      "id": 1,
+      "name": "pr-mixed-review",
+      "prompt": "I have a PR with review comments that I need to triage. The PR details, diff, and comments are in the file `inputs/eval-1-pr-mixed.md` (treat this file as the source of truth — do not try to fetch anything via gh/glab). Produce a triage report per the triage-feedback skill and save it to `outputs/triage-report.md`.",
+      "expected_output": "Structured triage report that correctly categorizes each of the 8 review comments. Expected categorization: SQL injection (BLOCKING, pattern matches on both queries), null pointer on user.id (BLOCKING or IMPORTANT, correctness), token not invalidated (BLOCKING — compliance explicitly called out in the linked issue), email template extraction (SUGGESTION), trailing newline (NIT), UUID vs secure random (QUESTION), generic approval (PRAISE), migrate legacy password change (OUT_OF_SCOPE).",
+      "files": ["inputs/eval-1-pr-mixed.md"]
+    },
+    {
+      "id": 2,
+      "name": "ci-log-paste",
+      "prompt": "I just pasted the full output of a failed CI run. The content is in `inputs/eval-2-ci-log.md`. Triage this — I want to know what's blocking, what's important, what's noise. Save the report to `outputs/triage-report.md`.",
+      "expected_output": "Items extracted: 2 compile errors (BLOCKING — build is broken), 1 deprecated API lint warning (NIT or IMPORTANT), 2 unit test failures in CartTest (IMPORTANT — tests broken, compilation blocks them anyway). Recognises that without a diff, Phase 6 (suggestion verification) and Phase 7 (pattern detection) are skipped.",
+      "files": ["inputs/eval-2-ci-log.md"]
+    },
+    {
+      "id": 3,
+      "name": "qa-free-text",
+      "prompt": "Here is a list of QA notes I took while testing the checkout flow on staging. They're in `inputs/eval-3-qa-notes.md`. Please triage — I need to decide what to ship and what to defer. Save the report to `outputs/triage-report.md`.",
+      "expected_output": "Expected categorization: currency symbol breaks UK users (BLOCKING — data accuracy, revenue impact, 100% reproduction), button spinner (PRAISE), wrong card charged (BLOCKING — financial risk, 60% reproduction), uppercase-only promo (IMPORTANT or NIT — functional gap but low severity), address picker redesign (OUT_OF_SCOPE — explicit scope expansion), padding 12 vs 16px (NIT), review screen rationale (QUESTION).",
+      "files": ["inputs/eval-3-qa-notes.md"]
+    }
+  ]
+}
