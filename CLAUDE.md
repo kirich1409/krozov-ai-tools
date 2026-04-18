@@ -25,6 +25,16 @@ plugins/
 
 See each plugin's own `CLAUDE.md` for plugin-specific instructions.
 
+## Plugin Standards
+
+All plugins must comply with [`docs/PLUGIN-STANDARDS.md`](docs/PLUGIN-STANDARDS.md). Before every release:
+
+1. Run `bash validate.sh` — must be green
+2. Run `plugin-dev:plugin-validator` agent on each of the 4 plugins — must be PASS or only Minor findings
+3. Go through the pre-release checklist in `docs/PLUGIN-STANDARDS.md` section 10
+
+Any Critical or Major violations block the release — fix first, release later.
+
 ## PR Workflow
 
 Always work on changes in a separate branch using a worktree (`.worktrees/`). Create a **draft PR** early and push changes as you go. When implementation is complete: run checks locally (build, test, lint), fix any issues, then mark the PR as ready for review. After that, wait for CI checks to pass and review comments. Fix any failures or address reviewer feedback — do everything needed to get the PR merged. Ask the user if something is unclear or requires a decision.
