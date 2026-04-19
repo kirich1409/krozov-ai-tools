@@ -1,6 +1,17 @@
 ---
 name: write-tests
-description: "Write retroactive tests for existing code — classes, modules, or directories lacking test coverage. Discovers test infrastructure (framework, assertions, mocking, naming), plans test cases, delegates generation to kotlin-engineer or compose-developer for Compose UI, verifies tests compile and pass, reports findings. Use when: \"write tests for\", \"add tests to\", \"test this class\", \"increase coverage\", \"add unit tests\", \"this code has no tests\", \"cover with tests\", \"retroactive tests\". Do NOT use when: user wants a test plan document without code (use generate-test-plan), run tests on live app (use acceptance), exploratory QA (use bug-hunt), or tests are part of a new feature (kotlin-engineer handles within implement). Orchestrator — delegates actual test code to engineer agents. Consumes test plans from generate-test-plan when available."
+description: >-
+  This skill should be used when the user asks to "write tests for", "add tests to",
+  "test this class", "increase coverage", "add unit tests", "this code has no tests",
+  "cover with tests", or "retroactive tests" — generating tests for existing code
+  (classes, modules, or directories) that lacks coverage. Discovers test infrastructure
+  (framework, assertions, mocking, naming), plans test cases, delegates generation to
+  kotlin-engineer or compose-developer for Compose UI, verifies tests compile and pass,
+  and reports findings. Do NOT use when the user wants a test plan document without
+  code (use generate-test-plan), run tests on live app (use acceptance), exploratory
+  QA (use bug-hunt), or tests are part of a new feature (kotlin-engineer handles
+  within implement). Orchestrator — delegates actual test code to engineer agents.
+  Consumes test plans from generate-test-plan when available.
 ---
 
 # Write Tests
