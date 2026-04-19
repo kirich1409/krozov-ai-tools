@@ -330,5 +330,6 @@ Categories:
 - `FORBIDDEN_PROFILE_FIELD` — profile frontmatter contains forbidden field
 - `NO_REVIEWERS_AVAILABLE` — no agents remain after discovery/filtering, or panel required but single
 - `PROFILE_INVENTORY_MISMATCH` — README list vs. `profiles/*.md` presence disagree
+- `ROUTING_NOT_SUPPORTED` — engine reached Step 5 with a source the profile declared `N/A` in `source_routing`
 
 Consumers (`feature-flow`, `write-spec`, etc.) detect this prefix to distinguish engine errors from ordinary review FAIL verdicts.

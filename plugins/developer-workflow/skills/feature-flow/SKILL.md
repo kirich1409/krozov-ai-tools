@@ -147,7 +147,15 @@ Announce: **Stage: Plan → DesignOptions → PlanReview** (or **Plan → PlanRe
 ### 1.4 Plan review (optional)
 
 If `swarm-report/<slug>-plan.md` or `swarm-report/<slug>-decomposition.md` was produced:
-- Invoke `developer-workflow:multiexpert-review` with that artifact
+- Invoke `developer-workflow:multiexpert-review` with that artifact. Prepend an explicit
+  profile hint to the args so the engine does not fall through to `AskUserQuestion` when
+  the artifact has no frontmatter / path match:
+
+  ```
+  profile: implementation-plan
+  ---
+  <rest of args: artifact path + context>
+  ```
 - If FAIL → **Stage: PlanReview → Research.** Back to 1.1 with gaps identified
 - If CONDITIONAL → proceed with noted concerns
 - If PASS → proceed
@@ -183,8 +191,18 @@ the receipt at `swarm-report/<slug>-test-plan.md` (receipt `status: Draft`,
 Review the generated test plan via the test-plan profile of `multiexpert-review`.
 
 - Invoke `developer-workflow:multiexpert-review` with the permanent test-plan file
-  (`docs/testplans/<slug>-test-plan.md`) as input — its detector auto-classifies the input
-  as `type: test-plan` and runs the test-plan profile (PASS / WARN / FAIL verdicts).
+  (`docs/testplans/<slug>-test-plan.md`) as input. Prepend an explicit profile hint so the
+  engine routes deterministically even if the file's frontmatter or path-glob were ever
+  refactored:
+
+  ```
+  profile: test-plan
+  ---
+  <rest of args: permanent test-plan path + context>
+  ```
+
+  (Path-glob `docs/testplans/**` already matches, but the explicit hint is symmetric with
+  other callsites and removes detector-dependency from the orchestrator.)
 - Route by verdict — see [TestPlanReview Verdict Handling](#testplanreview-verdict-handling).
 - On completion (PASS or WARN) the receipt is updated with `review_verdict` and
   `status: Ready`; the pipeline transitions to Implement.

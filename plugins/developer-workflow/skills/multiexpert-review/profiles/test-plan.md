@@ -64,7 +64,19 @@ A single critical from any agent with medium-or-higher confidence is enough to t
 
 ## Prompt augmentation
 
-Every agent reviewing a test-plan receives the 5-item checklist above in their Step 3 prompt, and must explicitly report the status of each item (satisfied / violated, with rationale). The engine parses these into the severity mapping.
+Every agent reviewing a test-plan receives the following 5-item checklist verbatim in their Step 3 prompt (the engine substitutes this section into `{PROFILE_PROMPT_AUGMENTATION}` literally — not by reference to the Rubric section above). Each agent must explicitly report the status of each item (satisfied / violated, with rationale). The engine parses these into the severity mapping.
+
+---
+
+**Test-plan rubric — evaluate each item explicitly:**
+
+- **(a) AC coverage** — every Acceptance Criterion from the linked spec has ≥1 Test Case that verifies it. Missing or weak mapping is a violation.
+- **(b) Negative balance** — every happy-path (positive) TC has ≥2 unhappy/negative TCs covering the same flow (invalid input, error states, boundary violations, concurrent or race conditions). A plan that is mostly happy paths violates this item.
+- **(c) Edge cases present** — at least one TC is explicitly tagged as an edge case (boundary value, empty/null, maximum size, timezone/locale boundaries, concurrency, resource exhaustion, etc.). If the plan has no edge-case TC at all, this item is violated.
+- **(d) Non-functional scenarios where applicable** — if the linked spec mentions any of {SLA, latency budget, throughput, a11y, auth, encryption, PII, resource limits, rate limits}, there must be ≥1 non-functional TC covering that concern (performance, accessibility, security). Applicability is driven by spec content — if the spec mentions none of these triggers, this item is trivially satisfied.
+- **(e) Priority-risk alignment** — priorities (P0–P3) are consistent with risk assessment: any high-risk flow (data loss, auth, payment, destructive actions) is at P0–P1; any user-facing critical path is at P0–P1; trivial/informational cases are at P2–P3. Mismatch between stated risk and assigned priority violates this item.
+
+For every Issue you raise, use the item ID as the title stem — e.g. `(a) AC coverage: API X has no test case`. This keeps synthesizer aggregation greppable.
 
 ## Receipt integration
 

@@ -12,6 +12,8 @@ PROFILE_INVENTORY = [implementation-plan, test-plan, spec]
 
 This list is **authoritative**. The engine reads it on startup by parsing this file. Adding a profile requires: (1) create `profiles/<name>.md`, (2) add `<name>` to the list above in the same commit. Mismatch (file exists but not in list, or list entry with no file) → engine fails with `[multiexpert-review ERROR] PROFILE_INVENTORY_MISMATCH: <name> <direction>`.
 
+**Parser format (engine contract):** the engine matches the first line in this file that satisfies the regex `^PROFILE_INVENTORY\s*=\s*\[([^\]]+)\]\s*$`. The capture group is split on `,` and each element is trimmed of whitespace. The line MUST live inside a fenced code block (``` ```) so prose edits above do not accidentally match it. Editors of this file must preserve the exact variable name `PROFILE_INVENTORY`, the `=` token, and the single-line `[...]` form — no multi-line arrays, no quoted strings, no trailing commas.
+
 ## Profile schema (frontmatter)
 
 Each `profiles/<name>.md` starts with YAML frontmatter declaring:
@@ -82,6 +84,14 @@ Presence of any forbidden field → engine refuses to load the profile: `[multie
 
 The selected profile is recorded in the state file at cycle 1. For cycles ≥2, the engine reads the profile **only** from the state file. Any profile hint in re-invocation args is ignored with a warning entry in Verdict History: `Cycle <N> ignoring profile hint '<value>' — locked to '<locked>' since cycle 1`. This is not fail-loud — the engine continues on the locked profile.
 
+## Source routing — `N/A` semantics
+
+When a profile declares a source as `N/A` (e.g., `source_routing.plan_mode: N/A` on the test-plan profile), the profile asserts that source is not applicable for this artifact type. If the engine nevertheless encounters that source at Step 5 (e.g., a test-plan somehow arrives as a Plan Mode artifact), the engine fails loud with `[multiexpert-review ERROR] ROUTING_NOT_SUPPORTED: profile <name> does not support source <source>`. This category sits under the unified error prefix — consumers may detect it like any other engine error.
+
+## Severity mapping — item identifier convention
+
+Profiles whose rubric is a **labeled checklist** with short IDs (e.g. test-plan items `(a)`–`(e)`) SHOULD use the matching single-letter or short-ID strings in `severity_mapping.items` — `["a", "b", "c"]`. Profiles whose rubric is a **section-based** list of named concerns (e.g. spec's `acceptance_criteria`, `prerequisites`, `out_of_scope`, …) SHOULD use those named identifiers. Engine treats `items` values as opaque strings — both conventions are accepted. The convention is a matter of trace-readability: each agent's Issues output should include the ID in the title stem (`issue: (a) AC coverage violated …` or `issue: acceptance_criteria partial …`) so synthesizer aggregation and receipts stay greppable.
+
 ## Receipt section semantics
 
 - **Present** — after Step 4 synthesis, engine updates the file matching `receipt.path_template` (with `<slug>` substituted) by setting each field in `fields_to_update` to the appropriate value from the verdict.
@@ -95,3 +105,4 @@ All engine errors produce the exact prefix `[multiexpert-review ERROR] <CATEGORY
 - `FORBIDDEN_PROFILE_FIELD` — profile frontmatter violates negative-list
 - `NO_REVIEWERS_AVAILABLE` — all roster agents missing; `allow_single_reviewer: false` and only 1 left; or empty roster with no tech-match
 - `PROFILE_INVENTORY_MISMATCH` — README inventory vs. `profiles/` file presence disagree
+- `ROUTING_NOT_SUPPORTED` — engine reached Step 5 with a source the profile declared `N/A`
