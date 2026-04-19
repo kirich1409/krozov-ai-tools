@@ -410,6 +410,25 @@ Nothing can be left to inference. Every requirement is verifiable. Every decisio
 explicit with its rationale.
 
 ```markdown
+---
+type: spec
+slug: {slug}
+date: {YYYY-MM-DD}
+status: draft
+# Optional fields — leave blank when not applicable. Consumed by `acceptance`
+# (choreography) and by `generate-test-plan` (platform-aware coverage).
+platform: []                     # e.g. [android], [ios], [web], [backend-jvm], [cli], [library], [desktop]. May be multi-value for cross-platform features.
+surfaces: []                     # e.g. [ui], [api], [cli], [background-job]. Drives which acceptance checks run.
+risk_areas: []                   # e.g. [auth], [payment], [pii], [data-migration], [perf-critical]. Each entry triggers a conditional expert in acceptance.
+non_functional:                  # Optional block. Each present entry triggers an expert check.
+  sla:                           # e.g. p99 < 150ms. Triggers performance-expert.
+  a11y:                          # e.g. wcag-aa. Triggers ux-expert a11y mode.
+acceptance_criteria_ids: []      # e.g. [AC-1, AC-2, AC-3]. Each AC in the list MUST appear as a bullet in §Acceptance Criteria.
+design:                          # Optional.
+  figma:                         # e.g. https://www.figma.com/file/XXX. Triggers ux-expert design-review.
+  design_system:                 # Optional reference to a design system doc.
+---
+
 # Spec: {Feature Name}
 
 Date: {YYYY-MM-DD}
@@ -425,13 +444,15 @@ Write the "why" that will still make sense in 6 months.}
 
 ## Acceptance Criteria
 
-The feature is complete when ALL of the following are true:
+The feature is complete when ALL of the following are true. Each criterion is assigned a
+stable `AC-N` id that MUST appear in the frontmatter `acceptance_criteria_ids` list; this is
+what `acceptance` uses to drive AC-coverage checks via `business-analyst`.
 
-- [ ] {Concrete, observable behavior — not internal state}
-- [ ] {Another criterion}
-- [ ] {Error / edge case criterion}
-- [ ] {Performance criterion with specific numbers, if relevant}
-- [ ] {Compatibility criterion, if relevant}
+- [ ] **AC-1** — {Concrete, observable behavior — not internal state}
+- [ ] **AC-2** — {Another criterion}
+- [ ] **AC-3** — {Error / edge case criterion}
+- [ ] **AC-4** — {Performance criterion with specific numbers, if relevant}
+- [ ] **AC-5** — {Compatibility criterion, if relevant}
 
 **Authoritative definition of done.** The implementing agent validates against this
 list before marking any task complete.

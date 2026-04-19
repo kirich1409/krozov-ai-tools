@@ -72,6 +72,10 @@ review_verdict: pending | PASS | WARN | FAIL | skipped
 review_warnings: []            # populated by plan-review on WARN — list of short strings
 review_blockers: []            # populated by plan-review on FAIL — list of short strings
 phase_coverage: [Phase 1, Phase 2, ...]
+platform: []                   # optional; inherited from the source spec's `platform:` field when present.
+                               # Drives platform-aware TC generation and downstream acceptance checks (e.g.,
+                               # skip mobile-only TCs on a backend-only target). Leave empty when the spec
+                               # did not set it; acceptance falls back to its project-type heuristic.
 created: YYYY-MM-DD
 updated: YYYY-MM-DD
 ---

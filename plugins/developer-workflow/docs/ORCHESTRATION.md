@@ -121,6 +121,36 @@ Use the highest-priority match when multiple build files are present:
 
 Monorepo: if all changed files are under a single subdirectory with its own build file, use that subdirectory's build system.
 
+### Project type detection
+
+Orthogonal to build-system detection: build system answers "how to build/test",
+project type answers "what kind of product is this". Drives which acceptance checks are
+meaningful (e.g., manual UI QA only on UI surfaces). Consumed by `acceptance`, and may be
+consumed by `research`, `generate-test-plan`, `create-pr` as those skills evolve.
+
+Cheap heuristic over the repository root plus a few well-known paths (e.g. `app/`, `android/`,
+`ios/`) — no external tools required, no exhaustive tree walk:
+
+| Signal found at repo root or a well-known subdirectory | `project_type` | `has_ui_surface` | `ecosystem` |
+|---|---|---|---|
+| `AndroidManifest.xml` under `app/` / `android/`, or `build.gradle*` with `com.android.application` | `android` | true | `gradle` |
+| `*.xcodeproj` / `*.xcworkspace`, `Package.swift` iOS/macOS target, or `Podfile` iOS pods | `ios` | true | `xcode` |
+| `package.json` with a frontend framework (`react`, `vue`, `svelte`, `next`, `vite`, `astro`) or root `index.html` | `web` | true | `node` |
+| `package.json` with `electron`, or Compose Desktop / Swift AppKit entrypoint | `desktop` | true | `node` / `gradle` / `xcode` |
+| `build.gradle*` with Spring / Ktor / Micronaut / Quarkus / `application` plugin (not Android) | `backend-jvm` | false | `gradle` |
+| `package.json` with a Node server (`express`, `fastify`, `koa`, `nest`) and no frontend framework | `backend-node` | false | `node` |
+| `Cargo.toml`, `pyproject.toml`, `go.mod` without web/GUI frameworks; or `bin/` entrypoints | `cli` | false | `rust` / `python` / `go` |
+| `.claude-plugin/` directory (or `.claude-plugin/plugin.json`), Gradle/Maven library packaging without application plugin | `library` | false | `gradle` / `node` |
+| None of the above matches unambiguously | `generic` | ask user | ask user |
+
+**Override policy.** When `write-spec` records `platform:` in the spec frontmatter or the user
+explicitly corrects a detection, that value takes precedence over the heuristic and is recorded
+as `project_type_override` in the consuming skill's receipt.
+
+**Scope.** Root-level glance plus the listed subdirectories is enough. Do not recurse. If the
+detection is ambiguous (`generic`), ask the user once — do not guess and do not fall back to a
+default like `library`.
+
 ### Scope decision
 
 - **In current changes** (`git diff $BASE...HEAD`) — fix autonomously
