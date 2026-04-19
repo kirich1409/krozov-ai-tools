@@ -15,6 +15,7 @@ Shared reference material in `agents/references/`:
 - `swiftui-patterns.md` — view patterns, navigation, sheets, ForEach, `.task`, conditionals, previews
 - `swiftui-state.md` — `@State`, `@Binding`, `@Observable`, `@Environment`, property wrappers
 - `swiftui-performance.md` — body purity, `@Observable` granularity, images, animations
+- `swiftui-design-system.md` — tokens, typography, spacing, motion, theming for a consistent SwiftUI design system
 
 ## Dependencies
 

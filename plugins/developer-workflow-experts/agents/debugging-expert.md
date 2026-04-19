@@ -4,7 +4,7 @@ description: "Use this agent when investigating bugs, test failures, crashes, or
 model: sonnet
 tools: Read, Glob, Grep, Bash
 disallowedTools: Edit, Write, NotebookEdit
-color: gray
+color: blue
 memory: project
 maxTurns: 30
 ---
