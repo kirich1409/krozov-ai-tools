@@ -223,12 +223,17 @@ before fan-out.
 
 ---
 
-## Step 2.7: Persist Fan-out State
+## Step 2.6: Persist Fan-out State
 
-Before issuing the Step 3 fan-out, save the plan and compaction-resilient progress to
-`swarm-report/<slug>-acceptance-state.md`. Symmetric to `plan-review`'s state file. This file
-carries the acceptance run across context compaction — it is never a receipt, just operational
-state.
+Before issuing the Step 3 fan-out — but **after** the full check plan has been finalized
+(Step 3 intro resolves base + all conditional triggers) — save the plan and
+compaction-resilient progress to `swarm-report/<slug>-acceptance-state.md`. Symmetric to
+`plan-review`'s state file. This file carries the acceptance run across context compaction —
+it is never a receipt, just operational state.
+
+Step ordering: 2.5 dedup probe → Step 3 intro resolves conditional triggers → write the
+state file here (Step 2.6) with the complete `Planned Checks` list → Step 3 body dispatches
+the fan-out.
 
 ```markdown
 # Acceptance State: <slug>
@@ -260,7 +265,10 @@ Blockers: <copy from aggregated receipt>
 ```
 
 **Rules:**
-1. Create the file at the start of Step 2.7 (after Step 2.5 decided the fan-out composition).
+1. Create and populate the file only after the full check plan is finalized — base
+   fan-out plus all conditional triggers (spec-driven and diff-driven) — and before any
+   agent batch is spawned. The initial `Planned Checks` list must reflect that complete
+   plan.
 2. Before each major action (spawning an agent batch, aggregating, writing the final
    receipt) — **re-read** the state file via Read tool. Completed checks (`[x]`) are not
    re-spawned on resume after compaction.
@@ -309,9 +317,17 @@ either from spec frontmatter or directly from the diff.
 | diff touches any build file (`build.gradle*`, `settings.gradle*`, `pom.xml`, `package.json`, `Cargo.toml`, `go.mod`, `pyproject.toml`, `Makefile`) | `build-engineer` | Build config sanity — plugin versions, task wiring, dependency additions |
 | diff touches CI / release config (`.github/workflows/*`, `.gitlab-ci.yml`, `Dockerfile`, `docker-compose*`, `.circleci/config.yml`, `release.yml`) | `devops-expert` | Pipeline/release health, secret handling, rollout gates |
 
-**Diff-based trigger detection.** Before fan-out, compute the trigger set by running
-`git diff --name-only <base>...HEAD` once and matching each path against the rules above.
-Cache the result for the whole acceptance run; do not re-probe per agent.
+**Diff-based trigger detection.** Two cached passes over the same diff:
+
+1. **Path pass** — run `git diff --name-only <base>...HEAD` once and cache the path set.
+   Use the cached set for all path-only rules (build files, CI/release config, cross-module
+   span).
+2. **Content pass (on demand)** — when the `architecture-expert` rule needs to decide
+   "diff touches a public API symbol", read the diff body once via
+   `git diff --unified=0 <base>...HEAD -- <cached-paths>` and cache it for the whole run.
+   Evaluate public-API heuristics against those patch hunks.
+
+Both caches live for the duration of the acceptance run — do not re-probe per agent.
 
 **Public API detection heuristic** for `architecture-expert`:
 - **Kotlin/Java**: changes under `src/main/` that add/remove/rename a `public` / `open`
@@ -686,7 +702,11 @@ On fix-loop re-entry (after `FAILED` → `implement` fix → re-run acceptance):
    | `WARN` | match | Skip. Re-used verdict keeps the WARN; user had the option to ship with it. |
    | `WARN` | mismatch | Re-run. |
    | `FAIL` | any | **Always re-run.** A FAIL is the point of the loop; hash match means the fix didn't land in the diff yet — still must re-run to confirm. |
-   | `null` (`diff_hash` absent from previous artifact) | any | Re-run — cannot prove idempotency without a hash. |
+   | any prior verdict with previous `diff_hash` = `null`, absent, or unreadable | any | Re-run — cannot prove idempotency without a usable hash. |
+
+   An explicit `diff_hash: null` and a missing `diff_hash` field are treated the same way:
+   both mean the prior artifact does not carry enough information to prove idempotency, so
+   the check must be re-run.
 
 4. For checks that are re-run:
    - Overwrite the per-check artifact with fresh content and a new `diff_hash`.
@@ -700,6 +720,13 @@ On fix-loop re-entry (after `FAILED` → `implement` fix → re-run acceptance):
 under `spec_hash` / `test_plan_hash`), `business-analyst` and `manual-tester` are always
 re-run regardless of `diff_hash` — their input is the spec/TC list, not just the code diff.
 Other checks remain subject to the `diff_hash` policy.
+
+**Back-compat rule.** If the previous aggregated receipt does not contain `spec_hash`
+and/or `test_plan_hash` (e.g. a pre-iteration-3 receipt) — or either prior value is unknown
+or unreadable — treat that input as **changed** and re-run the affected checks to be safe:
+missing/unknown `spec_hash` forces `business-analyst`; missing/unknown `test_plan_hash`
+forces `manual-tester`. If both are missing/unknown, re-run both. Other checks remain
+subject to the `diff_hash` policy.
 
 This is the full idempotency pass that iteration 2 parked. Cost saving: on a single-file fix
 after a 5-agent FAIL, typically 2–3 passed checks are re-used instead of re-run.
