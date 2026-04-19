@@ -30,6 +30,7 @@ Installing this plugin automatically pulls `developer-workflow-experts`. Install
 | `/research` | Parallel expert investigation (up to 5 agents) — codebase, web, docs, dependencies, architecture |
 | `/decompose-feature` | Break an idea or PRD into a structured task list with dependencies, ACs, complexity |
 | `/write-spec` | Specification-Driven Development — multi-round interview producing an exhaustive spec |
+| `/design-options` | Generate 2-3 parallel architectural alternatives (Minimal / Clean / Pragmatic) for high-arch-risk tasks; user picks one before plan-review. Optional, default-skip. |
 | `/plan-review` | Panel of LLM evaluators (PoLL) review of an implementation plan |
 
 ### Implementation

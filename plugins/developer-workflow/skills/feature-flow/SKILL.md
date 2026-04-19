@@ -35,6 +35,9 @@ Setup          -> Research         (unknown APIs, libraries, or architectural de
 Setup          -> Implement        (trivial/simple task — skip research/planning)
 Research       -> Decompose        (large feature — split into tasks)
 Research       -> PlanReview       (complex single-task — needs plan review)
+Research       -> DesignOptions    (high-arch-risk single-task — explore alternatives first)
+DesignOptions  -> PlanReview       (user picked an option)
+DesignOptions  -> Research         (options exposed missing requirements — re-research)
 Research       -> TestPlan         (simple single-task, test-plan stage not skipped)
 Research       -> Implement        (simple single-task, test-plan stage skipped)
 Decompose      -> PlanReview       (complex decomposition — needs review)
@@ -118,6 +121,25 @@ If the task remains a single task after research but is complex enough to benefi
 
 Skip if decomposition already produced the execution plan, or if the task is simple enough
 to implement directly.
+
+### 1.3a Design options (optional, default-skip)
+
+Between creating a plan and reviewing it, optionally insert a `design-options` stage to generate and compare 2-3 alternative architectures. Useful when one of these fires:
+
+1. The task is marked **high architectural risk** (touches module boundaries, introduces new abstractions, replaces a core pattern).
+2. The plan at 1.3 describes the "what" clearly but leaves the "how" open (multiple plausible approaches).
+3. User explicitly asks for "alternatives", "variants", "options" before committing to one.
+
+If any trigger fires, invoke `developer-workflow:design-options` with:
+- Slug
+- Spec / plan artifact path — any of `docs/specs/<YYYY-MM-DD>-<slug>.md` (from `write-spec`), `swarm-report/<slug>-plan.md`, or `swarm-report/<slug>-decomposition.md`
+- Research artifact path (optional) — `swarm-report/<slug>-research.md`
+
+The skill launches 2–3 `architecture-expert` agents in parallel under distinct style constraints (Minimal / Clean / Pragmatic), presents the options as `swarm-report/<slug>-design-options.md`, and waits for the user's choice. The chosen option is persisted to `swarm-report/<slug>-design.md`. When this stage ran, pass that path to Plan Review as additional context alongside the plan/decomposition artifact.
+
+**Skip** for tasks where a single approach is obvious, bug fixes with a pre-determined fix direction, or single-file changes — overhead not justified.
+
+Announce: **Stage: Plan → DesignOptions → PlanReview** (or **Plan → PlanReview** when skipped).
 
 ### 1.4 Plan review (optional)
 

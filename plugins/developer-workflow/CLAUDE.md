@@ -40,7 +40,7 @@ Skills in this plugin delegate to engineer agents (kotlin-engineer / compose-dev
 
 ## Skills roster (15)
 
-- Planning/research: `research`, `decompose-feature`, `write-spec`, `plan-review`
+- Planning/research: `research`, `decompose-feature`, `write-spec`, `plan-review`, `design-options` (optional pre-plan-review stage — generates 2-3 architectural alternatives for high-arch-risk tasks)
 - Implementation: `implement`, `write-tests`, `debug`
 - Verification utility: `check` — reusable mechanical-check runner (build + lint + typecheck + tests), invoked by `implement` and any code-modifying skill
 - QA: `generate-test-plan`, `acceptance`, `bug-hunt`

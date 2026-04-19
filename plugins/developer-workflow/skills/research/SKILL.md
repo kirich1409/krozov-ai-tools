@@ -253,6 +253,9 @@ Experts consulted: {list of tracks that ran}
 {What was investigated and why — 2-3 sentences}
 
 ## Approaches Found
+
+Lay out 2–3 viable approaches in parallel before the recommendation. The point of this section is to make alternatives visible — a single approach with "the others were considered and rejected" is weaker than an explicit side-by-side. If only one approach is genuinely viable, state that explicitly with the reasons other candidates were ruled out.
+
 ### Approach 1: {name}
 - **Description:** {what it is}
 - **Trade-offs:** {pros and cons}
@@ -260,7 +263,24 @@ Experts consulted: {list of tracks that ran}
 - **Compatibility:** {works with current stack? KMP? versions?}
 
 ### Approach 2: {name}
+- **Description:** ...
+- **Trade-offs:** ...
+- **Evidence:** ...
+- **Compatibility:** ...
+
+### Approach 3: {name} (optional)
 ...
+
+### Side-by-side comparison
+
+| Dimension | Approach 1 | Approach 2 | Approach 3 |
+|---|---|---|---|
+| Effort | S/M/L | ... | ... |
+| Maintainability | + / − | ... | ... |
+| Compatibility | ... | ... | ... |
+| Risk | low/med/high | ... | ... |
+
+Use this table when the user will need to pick between approaches. Skip it if one approach dominates on every dimension.
 
 ## Library / Dependency Recommendations
 | Library | Version | KMP | Vulnerabilities | Notes |
