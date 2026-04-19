@@ -62,7 +62,9 @@ Authoritative grep (`git ls-files | xargs grep -l "plan-review\|plan review"`): 
 - [ ] **AC-D1 (precedence)** Step 1 детектор реализует цепочку: (1) explicit caller hint → (2) frontmatter `type:` → (3) path-glob → (4) structural signature → (5) fallback = **prompt user**. Verified на 5 fixture-артефактах, каждый активирует свой уровень precedence
 - [ ] **AC-D2 (hint typo fail-loud)** Если caller hint не из inventory (`implementation-plan | test-plan | spec`) — engine падает с `Unknown profile hint <value>`. Silent fallback к detection **запрещён**. Verified на fixture с `profile: sepc`
 - [ ] **AC-D3 (no silent implementation-plan fallback)** Если артефакт без frontmatter, не матчит path-glob, не матчит signature — engine prompts user (AskUserQuestion с выбором из inventory), **не** запускает review на default профиле. Verified на fixture `test-fixtures/unknown-artifact.md` (пустой markdown с одним заголовком)
-- [ ] **AC-D4 (cycle-locking)** Profile name фиксируется в state file при cycle 1 и **read-only** для cycles ≥2. Контракт engine: в cycle 2 и 3 engine игнорирует любые hint в args — профиль всегда читается из state file. Если какая-то invocation передаёт hint, отличающийся от зафиксированного в state file, engine выводит warning `Cycle <N> ignoring profile hint '<value>' — locked to '<locked>' since cycle 1` и продолжает на locked профиле. Это не fail-loud (engine продолжает работу), но audit trail фиксирует расхождение.
+- [ ] **AC-D4 (cycle-locking)** Profile name фиксируется в state file при cycle 1 и **read-only** для cycles ≥2. Контракт engine: в cycle 2 и 3 engine читает профиль только из state file. Если args на ре-инвокации содержит hint:
+  - hint **совпадает** с locked profile → no-op (нормальный revise-loop, callsite послал тот же hint)
+  - hint **отличается** от locked → warning `Cycle <N> ignoring profile hint '<value>' — locked to '<locked>' since cycle 1` в Verdict History, engine продолжает на locked профиле (не fail-loud, audit trail)
   - **Fixture:** тестовый revise-loop с принудительной сменой hint во 2-м cycle; assertion — warning присутствует в state file Verdict History cycle 2
 
 ### Source routing + state (AC-S)
@@ -416,7 +418,7 @@ Content-level identity (списки issues, их формулировки) **н
 | Engine invariants enforcement | Negative-list в profiles/README.md + fail-fast при загрузке | technical enforcement, не социальный контракт |
 | `allow_single_reviewer` visibility | verdict содержит маркер «single-perspective», receipt добавляет `review_mode: single` | audit trail, не silent compromise |
 | profile_hint format | Первая строка args: `profile: <name>\n---\n` + inventory validation | простой текстовый контракт; fail-loud на unknown name (AC-D2) |
-| Cycle-locking | Profile name в state file cycle 1; cycles ≥2 — только state file; mismatch с args → fail loud | закрывает multi-cycle profile locking risk |
+| Cycle-locking | Profile name в state file cycle 1; cycles ≥2 — только state file; если args hint совпадает с locked — no-op; если hint ≠ locked — warning в state file Verdict History, engine continues on locked profile (не fail-loud) | закрывает multi-cycle profile locking risk без false-positive warnings на нормальных повторных вызовах |
 | Missing agent policy | Skip missing; if 0 remaining → fail loud | graceful degradation без silent review на неполном roster |
 | Profile snapshot in state | Не сохраняется (live read each cycle) | simplicity; profile change mid-loop = human mistake |
 | PR structure | 1 PR, 3 commits (rename / engine / spec+drift), no squash | bisectability vs атомарности — компромисс через PR-атомарность, не коммит-атомарность |
