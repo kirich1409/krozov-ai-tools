@@ -1,18 +1,15 @@
 ---
 name: implement
 description: >-
-  Implementation stage — takes a task with optional context artifacts and produces working code.
-  Designed to be called by an orchestrator or directly by the user. Accepts any task source:
-  plain text description, GitHub/Jira/Linear issue URL, or a reference to an existing artifact
-  (research.md, debug.md, plan.md).
-
-  Pipeline: understand task → write code → quality loop (/check + intent check) → produce artifacts.
+  Implementation stage — produces working code from a task plus optional context artifacts.
+  Callable by an orchestrator or directly by the user. Accepts any task source: plain text,
+  a GitHub/Jira/Linear issue URL, or existing artifacts (research.md, debug.md, plan.md).
+  Pipeline: understand task → write code → quality loop (/check + intent check) → artifacts.
   Semantic review, simplification, expert review, and PR-level quality checks live in the
-  separate `finalize` stage. Does NOT create worktrees, PRs, or run live QA — those are
-  separate stages.
+  separate `finalize` stage. Does NOT create worktrees, PRs, or run live QA.
 
-  Use when: "implement", "write the code", "fix this", "сделай", "реализуй", "напиши код",
-  "пофикси", or when an orchestrator delegates the implementation stage.
+  Use when the user says: "implement", "write the code", "fix this", "сделай", "реализуй",
+  "напиши код", "пофикси", or when an orchestrator delegates the implementation stage.
   Do NOT use for: debugging/investigation (use debug), research (use research),
   PR creation (use create-pr), live QA (use acceptance).
 disable-model-invocation: true
@@ -101,16 +98,21 @@ stage (e.g., model, repository, UI layer). Stage specific files, never `git add 
 
 ## Phase 3: Quality Loop
 
-Run two quality gates sequentially. A failure triggers a fix cycle before advancing. Implement is strictly "write the code and verify it works per the plan" — everything beyond is the `finalize` stage (see `docs/ORCHESTRATION.md` § Finalize).
+Implement is strictly "write the code and verify it works per the plan" — everything beyond
+is the `finalize` stage (see `docs/ORCHESTRATION.md` § Finalize).
 
-After code is written, run the Quality Loop defined in [`docs/ORCHESTRATION.md`](../../docs/ORCHESTRATION.md#implement--quality-loop-2-gates) — that document is the single source of truth for gate definitions, verdict handling, and iteration limits.
+After code is written, run the Quality Loop defined in [`docs/ORCHESTRATION.md`](../../docs/ORCHESTRATION.md#implement--quality-loop-2-gates)
+— that document is the single source of truth for gate definitions, verdict handling, and
+iteration limits.
 
-Summary for this skill's callers:
-- Gate 1 invokes `/check` (mechanical: build + lint + typecheck + tests)
-- Gate 2 is the intent check — re-read task + plan, verify the diff addresses them; scope creep or drift → fix or flag
-- A gate failure triggers a fix cycle; total loop is capped per ORCHESTRATION.md
+Summary for callers:
+- Gate 1 invokes `/check` (mechanical: build + lint + typecheck + tests).
+- Gate 2 is the intent check — re-read task + plan, verify the diff addresses them;
+  scope creep or drift triggers a fix or an escalation flag.
+- A gate failure triggers a fix cycle; total loop is capped per ORCHESTRATION.md.
 
-Do not duplicate gate details here — read ORCHESTRATION.md before executing. If ORCHESTRATION.md is missing, escalate rather than guessing the current rules.
+Do not duplicate gate details here — read ORCHESTRATION.md before executing.
+If ORCHESTRATION.md is missing, escalate rather than guessing the current rules.
 
 ---
 
