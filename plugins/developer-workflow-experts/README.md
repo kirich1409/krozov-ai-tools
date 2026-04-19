@@ -26,6 +26,14 @@ This plugin has no skills and no hooks. It only publishes agents. Install it in 
 
 Then invoke an expert with the Task tool, e.g. `subagent_type: "code-reviewer"`.
 
+## Recommended complementary plugins
+
+Not installed as dependencies — install yourself if useful.
+
+| Tool | Kind | Complements | What it adds |
+|---|---|---|---|
+| `security-guidance` | Plugin (from `claude-plugins-official`) | `security-expert` agent | Runtime security hook layer — warns on dangerous bash patterns and file edits (rm -rf, command injection, XSS). Complements agent's design-time code review with live-prevention. |
+
 ## Part of developer-workflow family
 
 - [`developer-workflow`](../developer-workflow/) — lifecycle pipeline (depends on this plugin)

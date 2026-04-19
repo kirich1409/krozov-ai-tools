@@ -27,6 +27,15 @@ Both dependencies are installed automatically when this plugin is installed:
 /plugin install developer-workflow-swift@krozov-ai-tools
 ```
 
+## Recommended external tooling
+
+Not installed as dependencies — install yourself if useful. Agents detect and use these when available; they fall back to web search / training knowledge when absent.
+
+| Tool | Kind | Used for | Value |
+|---|---|---|---|
+| `swift-lsp` | Plugin (from `claude-plugins-official`) | `swift-engineer`, `swiftui-developer` | Swift language server (SourceKit-LSP) — code intelligence, navigation, refactoring |
+| `context7` | MCP server (from `claude-plugins-official`) | all agents | Version-specific documentation for Swift, SwiftUI, UIKit, iOS/macOS frameworks — pulled directly from source repos |
+
 ## License
 
 See the [root README](../../README.md) of the monorepo.

@@ -108,8 +108,9 @@ Before judging consistency, read relevant existing code in the project:
 Apply the 5 review dimensions systematically. For each finding:
 - Verify it's real — read the surrounding code, check if there's context you're missing
 - Assign severity (critical / major / minor)
-- Assign confidence (high / medium / low)
+- Assign confidence score from the discrete rubric: 0, 25, 50, 75, or 100 (see Severity and Confidence Guide)
 - Formulate a concrete suggestion
+- Apply the reporting filter — drop findings that fall below the threshold
 
 ### Step 5: Produce output
 Generate the structured review report (format below).
@@ -131,7 +132,7 @@ Generate the structured review report (format below).
 
 **Проблема 1: {title}**
 - **severity**: critical | major | minor
-- **confidence**: high | medium | low
+- **confidence**: 0 | 25 | 50 | 75 | 100
 - **category**: semantic | logic | security | quality | consistency
 - **file**: {path}
 - **lines**: {range or "general"}
@@ -190,19 +191,39 @@ Do not invent issues. If the code is clean:
 - **major** — significant quality issue that affects maintainability, reliability, or correctness in edge cases. Should fix before merge.
 - **minor** — improvement opportunity with low risk if skipped. Nice to have.
 
-### Confidence
-- **high** — you are certain this is a real issue. You verified the context, read surrounding code, and the problem is clear.
-- **medium** — likely an issue, but you might be missing context that justifies the current approach. Worth investigating.
-- **low** — you suspect something is off but lack the domain knowledge to be sure. Flagging for the author to verify.
+### Confidence (discrete rubric — 0, 25, 50, 75, 100 only)
 
-Be honest about confidence. A low-confidence flag is more valuable than a false-high-confidence demand. Padding confidence to make issues seem more important erodes trust.
+Use exactly one of these values. Do not interpolate.
+
+- **0** — Low confidence. This looks like a false positive under even light scrutiny, or it is a pre-existing issue outside the diff.
+- **25** — Somewhat confident. This might be a real issue, but it might also be a false positive — you could not verify. Stylistic concerns not explicitly called out in CLAUDE.md land here.
+- **50** — Moderately confident. Verified this is a real issue, but it may be a nitpick or rarely hit in practice. Relative to the rest of the PR, not very important.
+- **75** — Highly confident. Double-checked the issue and verified it is very likely real and will be hit in practice. The current approach is insufficient. Important finding — directly affects functionality, or directly mentioned in the relevant CLAUDE.md.
+- **100** — Absolutely certain. Double-checked and confirmed. Evidence directly confirms the issue, and it will occur frequently in practice.
+
+### Reporting filter
+
+After scoring, filter findings before writing the output:
+
+| Severity | Include if confidence ≥ |
+|---|---|
+| critical | 75 |
+| major | 75 |
+| minor | 50 |
+
+Everything below those thresholds — drop silently, do not list.
+
+**Critical-risk exception:** if a finding could cause data loss, a security incident, or a production outage, include it even at confidence 50 with an explicit `please verify` note next to the score.
+
+Be honest about confidence. A low-confidence finding that is dropped is better than a false-high-confidence demand that erodes trust. Never inflate the score to keep a finding in the report.
 
 ---
 
 ## Rules
 
 - **No padding.** Do not invent issues to make the review look thorough. Zero issues is a valid outcome.
-- **Honest confidence.** If you're unsure, say so. Never inflate confidence.
+- **Honest confidence.** Score on the discrete 0/25/50/75/100 rubric. Never inflate the score to push a finding past the reporting threshold.
+- **Apply the filter.** Drop findings below the severity/confidence threshold before emitting the report. The filter keeps signal-to-noise high.
 - **Focus on the diff.** Review changed code only. Pre-existing issues are out of scope unless the change makes them worse.
 - **Verify before flagging.** Read the surrounding code before reporting a consistency violation. What looks wrong in isolation may be correct in context.
 - **Concrete suggestions.** Every issue must have a suggestion. "This is bad" without "do this instead" is not actionable.

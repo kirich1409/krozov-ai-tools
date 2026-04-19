@@ -71,6 +71,17 @@ Agents from sibling plugins invoked by skills in this plugin:
 
 Skills invoke these by short name. If a platform plugin is not installed and you invoke a skill that needs its engineer (e.g., `/implement` on Kotlin code without `developer-workflow-kotlin`), the Task tool will error with a clear missing-agent message — install the matching platform plugin and retry.
 
+## Recommended external plugins / MCP servers
+
+These are not installed as dependencies — install them yourself if the capability is useful. Skills detect and use them when available; they work without them with reduced capability.
+
+| Tool | Kind | Used by | What it adds |
+|---|---|---|---|
+| `mobile` | MCP server | `manual-tester`, `acceptance`, `bug-hunt` | iOS/Android UI automation and store management for mobile QA (pre-approved — required if you want mobile QA) |
+| `playwright` | MCP server (from `claude-plugins-official`) | `manual-tester`, `acceptance`, `bug-hunt` | Browser automation for web E2E verification |
+| `/code-review` | Slash command (from `claude-plugins-official`) | optional post-PR review | Standalone GitHub PR review with confidence-based scoring — separate from in-pipeline `code-reviewer` gate |
+| `ralph-loop` | Plugin (from `claude-plugins-official`) | ad-hoc use outside pipeline | While-true iteration on a single prompt until completion marker — alternative to our structured orchestrators for exploratory work |
+
 ## Installation
 
 ```

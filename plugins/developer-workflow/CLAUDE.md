@@ -25,9 +25,12 @@ Skills in this plugin delegate to engineer agents (kotlin-engineer / compose-dev
 ## Conventions
 
 - Self-contained core: lifecycle orchestration only. No platform-specific engineers live here.
-- **Dependency policy:** only built-in Claude Code features + sibling plugins from this family (via `dependencies` in plugin.json). No third-party plugins.
-- **MCP servers:** `mobile` MCP is explicitly allowed for testing (used by `manual-tester`, `acceptance`, `bug-hunt`). Other MCP servers (Perplexity, DeepWiki, Context7) are environment-level — skills must NOT hardcode tool names or break without them. Describe the task, not the tool.
-- **External tools:** if a capability requires something the user may not have installed, describe what's needed and let the user decide.
+- **Dependency policy (three tiers):**
+  1. **Built-in Claude Code features** (`/simplify`, Agent tool, Plan Mode, Bash, skills framework) — always allowed, used freely.
+  2. **Sibling plugins in this family** (`developer-workflow-experts`, `-kotlin`, `-swift`) — declared normally via `dependencies` in plugin.json.
+  3. **External plugins and MCP servers** — default is **soft-reference**: mention in README as recommended, detect-and-use in agent prompts, skills must work without them. Escalation to **hard dependency** (plugin.json `dependencies`) or **MCP server declaration** (.mcp.json) requires **explicit user approval per change** — propose first, wait, then edit.
+- **MCP servers:** `mobile` MCP is pre-approved for testing (used by `manual-tester`, `acceptance`, `bug-hunt`). Other MCP servers (Perplexity, DeepWiki, Context7, Playwright) are environment-level — skills must NOT hardcode tool names or break without them. Describe the task, not the tool.
+- **External tools:** if a capability requires something the user may not have installed, describe what is needed (one short line in README's "Recommended" section) and let the user decide.
 - Skills use YAML frontmatter: `name`, `description` (≤ 1024 chars), optionally `disable-model-invocation`.
 - `code-reviewer` (in `developer-workflow-experts`) is read-only — no Edit, Write, NotebookEdit, or Bash tools.
 - Workspace directories (`*-workspace/`) are runtime artifacts, not skills. Gitignored.

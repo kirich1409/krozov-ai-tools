@@ -31,6 +31,16 @@ Both dependencies are installed automatically when this plugin is installed:
 /plugin install developer-workflow-kotlin@krozov-ai-tools
 ```
 
+## Recommended external tooling
+
+Not installed as dependencies — install yourself if useful. Agents detect and use these when available; they fall back to web search / training knowledge when absent.
+
+| Tool | Kind | Used for | Value |
+|---|---|---|---|
+| `kotlin-lsp` | Plugin (from `claude-plugins-official`) | `kotlin-engineer`, `compose-developer` | Kotlin language server (JetBrains LSP) — code intelligence, refactoring, analysis |
+| `context7` | MCP server (from `claude-plugins-official`) | all agents | Version-specific documentation for Kotlin, Android SDK, Compose, KMP libraries — pulled directly from source repos |
+| `ksrc` | CLI tool (env-level, external) | `kotlin-engineer`, `compose-developer` | Read source code of JVM/Kotlin dependencies directly — avoids guessing at library internals. Run `ksrc --help` for usage. |
+
 ## License
 
 See the [root README](../../README.md) of the monorepo.
