@@ -1,16 +1,16 @@
 ---
 name: design-options
 description: >
-  Generate 2-3 alternative architectural approaches for a single task before multiexpert-review.
-  Launches architecture-expert agents in parallel, each under a different style constraint
-  (minimal / clean / pragmatic), and presents the options side-by-side so the user can pick
-  one informed choice instead of committing to the first approach that came to mind.
-  Optional stage between write-spec (or decompose-feature for a single-task feature) and
-  multiexpert-review. Trigger when: task is high architectural risk, multiple plausible approaches
-  exist, or user explicitly requests it.
-  Invoke on: "explore design options", "show me alternatives", "предложи варианты архитектуры",
-  "разные подходы", "choose between approaches", or when feature-flow runs this as an
-  opt-in stage for high-arch-risk tasks.
+  This skill should be used when the user asks to "explore design options", "show me alternatives",
+  "choose between approaches", "предложи варианты архитектуры", "разные подходы", or when a task
+  has high architectural risk and multiple plausible approaches exist. Generates 2-3 alternative
+  architectural approaches for a single task by launching architecture-expert agents in parallel,
+  each under a different style constraint (minimal / clean / pragmatic), and presents the options
+  side-by-side so the user can pick one informed choice instead of committing to the first
+  approach that came to mind. Optional stage between write-spec (or decompose-feature for a
+  single-task feature) and multiexpert-review. Also used when feature-flow runs this as an
+  opt-in stage for high-arch-risk tasks. Do NOT use for straightforward tasks, bug fixes with
+  a clear fix direction, or single-file changes.
 ---
 
 # Design Options
