@@ -142,33 +142,19 @@ Locate the artifact. Check sources in order:
 
 Track the source (Plan Mode / file / conversation) — Step 5 needs this.
 
-### Detect profile (precedence)
+### Detect profile
 
-1. **Explicit caller hint** — if args begin with `profile: <name>\n---\n`, extract `<name>`. Validate against `PROFILE_INVENTORY` from `profiles/README.md`. Unknown name → fail loud `[multiexpert-review ERROR] UNKNOWN_PROFILE_HINT: <name>`.
-2. **Frontmatter** — parse artifact's YAML frontmatter `type:` field; first profile whose `detect.frontmatter_type` list contains that value wins.
-3. **Path glob** — if artifact is a file, first profile whose `detect.path_globs` match its path wins.
-4. **Structural signatures** — first profile whose ALL `detect.structural_signatures` regexes match the artifact content wins.
-5. **Fallback — ask user** — `AskUserQuestion` with profile choices from `PROFILE_INVENTORY`. Never silent fallback to a default profile.
+Follow the precedence chain defined in `profiles/README.md` §Detection precedence (canonical source). Engine enforces error semantics from that section — `UNKNOWN_PROFILE_HINT` on unknown caller hint, never silent fallback to a default profile.
 
-### Cycle-locking
-
-If a state file already exists for this slug and has `Profile:` set, the profile is **locked** — engine reads from state file, ignores any hint in current args. If args hint differs, log a warning to Verdict History: `Cycle <N> ignoring profile hint '<value>' — locked to '<locked>' since cycle 1`. Not fail-loud; continue on locked profile.
-
-### Load and validate profile
-
-Read `profiles/<name>.md`. Validate frontmatter against:
-- **Required fields** per schema in `profiles/README.md`
-- **Negative-list** — any forbidden field present → `[multiexpert-review ERROR] FORBIDDEN_PROFILE_FIELD: profile <name> declares forbidden field <field>`
-
-### Inventory mismatch
-
-Before loading, check: every name in `PROFILE_INVENTORY` has a `profiles/<name>.md` file; every `profiles/*.md` (excluding `README.md`) has a name in `PROFILE_INVENTORY`. Mismatch → `[multiexpert-review ERROR] PROFILE_INVENTORY_MISMATCH: <name> <direction>` where direction is `in README but no file` or `file exists but not in inventory`.
+Cycle-locking, profile validation (negative-list), and inventory-mismatch checks — see `profiles/README.md`. Engine applies these on every invocation before Step 2.
 
 ## Step 2 — Discover and select agents
 
 ### Discovery
 
 Find real agents via `Glob("**/agents/*.md")` + built-in subagents from system prompt. Read each agent's frontmatter to confirm. Never invent phantom agents.
+
+**Short-name collision tie-break:** if the same agent short-name resolves to multiple files (e.g., two plugins define `security-expert`), prefer first match in this order: (1) same-plugin as the caller skill, (2) sibling `developer-workflow-*` plugin, (3) any other source. If still ambiguous, fail loud: `[multiexpert-review ERROR] NO_REVIEWERS_AVAILABLE: ambiguous short-name <name> resolves to <paths>`. In practice the `developer-workflow-*` family guarantees unique short-names — this guard only triggers on non-family plugin conflicts.
 
 ### Selection per profile
 
