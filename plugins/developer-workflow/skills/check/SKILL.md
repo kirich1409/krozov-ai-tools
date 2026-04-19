@@ -28,7 +28,7 @@ Inspect the working tree for marker files to decide which check suite to run. A 
 
 | Marker files | Stack | Default check suite |
 |---|---|---|
-| `gradlew`, `build.gradle`, `build.gradle.kts`, `settings.gradle*` | Gradle | `./gradlew check` (bundles lint/test/etc as configured) |
+| `gradlew`, `build.gradle`, `build.gradle.kts`, `settings.gradle*` | Gradle | `./gradlew assemble check` — `check` alone does not compile production sources; AGP projects prefer variant-scoped commands (see §2.1) |
 | `package.json` | Node (npm/pnpm/yarn) | Derive from scripts — see §2.2 |
 | `Cargo.toml` | Rust / Cargo | `cargo fmt --check` + `cargo clippy --all-targets -- -D warnings` + `cargo test --all-features` (clippy already performs type-check; no separate `cargo check` needed) |
 | `Package.swift` | Swift SPM | `swift build` + `swift test` — add `swiftlint` or `swift-format lint` if a config file is present |
@@ -135,48 +135,25 @@ Always produce a structured report, even on single-command runs.
 
 ### Format
 
-```
-## Check report
+The report has two parts: a human-readable body and a mandatory machine-readable summary block at the end.
 
-**Stack detected:** Gradle  (+ Node if applicable, etc.)
-**Mode:** sequential fail-fast (default) | --all | --fast | --only X
-**Verdict:** PASS | FAIL | PARTIAL
+**Body (markdown)** — structured with headers, table of results, and per-failure details:
 
-### Results
-| # | Check | Command | Status | Notes |
-|---|---|---|---|---|
-| 1 | Build | `./gradlew assemble` | PASS | 23s |
-| 2 | Lint | `./gradlew check` | FAIL | 4 detekt violations |
-| 3 | Tests | (skipped — prior failure) | SKIP | — |
+- `## Check report` with `Stack detected`, `Mode`, `Verdict` lines
+- `### Results` — one row per check with Command / Status / Notes
+- `### Failures` (only if any) — per failure: command, exit code, stderr excerpt (~50 lines), suggested next step
+- `### Summary` — passed/failed/skipped counts + total wall time
 
-### Failures
-(only if any)
+**Machine-readable summary** — keep as the final fenced block of the output so callers can tail-parse reliably:
 
-**Lint failure:**
-- Command: `./gradlew check`
-- Exit: 1
-- Stderr excerpt:
-  ```
-  <last ~50 lines>
-  ```
-- Suggested next step: inspect detekt config or the 4 violations listed above.
-
-### Summary
-- Passed: 1
-- Failed: 1
-- Skipped: 1
-- Total wall time: <seconds>
-
-### Machine-readable summary
-```
+~~~
 verdict: FAIL
 passed: [build]
 failed: [lint]
 skipped: [tests]
-```
-```
+~~~
 
-The machine-readable block is mandatory — orchestrator/skills that loop on `/check` rely on it. Parse the `verdict:` line first; the arrays identify which categories are in each state. Keep the block as the last section of the report so callers can tail the output reliably.
+The machine-readable block is **mandatory** — orchestrator/skills that loop on `/check` rely on it. Parse the `verdict:` line first; the arrays identify which categories are in each state. `verdict` is one of `PASS`, `FAIL`, or `PARTIAL`.
 
 ### Verdict rules
 

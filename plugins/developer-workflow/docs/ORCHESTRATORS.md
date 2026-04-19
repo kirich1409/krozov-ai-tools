@@ -69,7 +69,7 @@ flowchart TD
     next_task -->|Yes| impl
     next_task -->|No| create_pr
 
-    create_pr[/create-pr/] --> handoff([Hand-off to user])
+    create_pr[/create-pr --promote/] --> handoff([Hand-off to user])
     handoff --> triage[/triage-feedback/]
     triage -->|FIXABLE items| impl
     triage -->|Nothing actionable| done([PR in user's hands])
@@ -153,7 +153,7 @@ flowchart TD
     user_decision -->|Fix| impl
     user_decision -->|Ship| create_pr
 
-    create_pr[/create-pr/] --> handoff([Hand-off to user])
+    create_pr[/create-pr --promote/] --> handoff([Hand-off to user])
     handoff --> triage[/triage-feedback/]
     triage -->|FIXABLE items| impl
     triage -->|Nothing actionable| done([PR in user's hands])

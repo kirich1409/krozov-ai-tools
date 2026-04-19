@@ -73,7 +73,7 @@ Implement ──→ Finalize
 Implement ──→ Research      (scope is larger than expected — escalate)
 Finalize ──→ Acceptance     (PASS — no BLOCK remains)
 Finalize ──→ Implement      (ESCALATE after 3 rounds; user routes back to fix root issues)
-Finalize ──→ escalate       (ESCALATE after 3 rounds; user picks non-implement path)
+Finalize ──→ Escalate       (ESCALATE after 3 rounds; user picks non-implement path — stop state, not a stage)
 Acceptance ──→ PR           (VERIFIED)
 Acceptance ──→ Implement    (FAILED — fix bugs, then Implement re-runs Finalize)
 Acceptance ──→ Debug        (FAILED — unclear root cause)
