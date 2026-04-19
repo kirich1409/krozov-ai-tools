@@ -1,80 +1,125 @@
 name: Release
 
 on:
-  push:
-    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      plugin:
+        description: Which plugin to release
+        required: true
+        type: choice
+        options:
+          - maven-mcp
+          - sensitive-guard
+          - developer-workflow
+          - developer-workflow-experts
+          - developer-workflow-kotlin
+          - developer-workflow-swift
+      bump:
+        description: Bump type
+        required: true
+        type: choice
+        default: patch
+        options: [patch, minor, major]
+      cascade:
+        description: Cascade patch-bump to dependents (developer-workflow* family only)
+        required: false
+        type: boolean
+        default: true
+
+permissions:
+  contents: write
 
 jobs:
-  publish:
+  release:
     runs-on: ubuntu-latest
     environment: NPM Publishing
-    defaults:
-      run:
-        working-directory: plugins/maven-mcp
-
-    permissions:
-      contents: write
-
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
+      - uses: actions/setup-node@v4
         with:
           node-version: 22
-          cache: npm
-          cache-dependency-path: plugins/maven-mcp/package-lock.json
           registry-url: https://registry.npmjs.org
 
-      - name: Verify all versions match tag
-        working-directory: .
-        run: bash scripts/validate.sh --check-tag "${GITHUB_REF_NAME#v}"
+      - name: Validate before release
+        run: bash scripts/validate.sh
 
-      - run: npm ci
-      - run: npm run lint
-      - run: npm test
-      - run: npm run build
-
-      - run: npm publish --access public
+      - name: Bump version(s) and write release JSON
+        id: bump
         env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          PLUGIN: ${{ inputs.plugin }}
+          BUMP: ${{ inputs.bump }}
+          CASCADE: ${{ inputs.cascade }}
+        run: |
+          OUTPUT=$(node scripts/release.mjs)
+          echo "$OUTPUT"
+          {
+            echo "result<<RELEASE_RESULT_EOF"
+            echo "$OUTPUT"
+            echo "RELEASE_RESULT_EOF"
+          } >> "$GITHUB_OUTPUT"
 
-      - name: Publish per-plugin tags for plugin dependency resolution
-        working-directory: .
+      - name: Validate after bump
+        run: bash scripts/validate.sh
+
+      - name: Build maven-mcp (if releasing it)
+        if: inputs.plugin == 'maven-mcp'
+        working-directory: plugins/maven-mcp
+        run: |
+          npm ci
+          npm run lint
+          npm test
+          npm run build
+
+      - name: Commit and tag
         env:
-          TAG: ${{ github.ref_name }}
+          RESULT: ${{ steps.bump.outputs.result }}
         run: |
           set -euo pipefail
-          VERSION="${TAG#v}"
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          # actions/checkout fetches only the tag that triggered the workflow,
-          # so sibling per-plugin tags from previous releases won't be known
-          # locally. Fetch all tags before the idempotency check to avoid a
-          # local "not found" / remote "already exists" mismatch.
-          git fetch --tags --quiet origin
-          # Claude Code resolves plugin dependencies through tags of the form
-          # {plugin-name}--v{version}. Create each missing tag locally, then
-          # push all new tags in a single network round-trip.
+          git add -A
+          PRIMARY_NAME=$(echo "$RESULT" | jq -r .primary.name)
+          PRIMARY_VER=$(echo "$RESULT" | jq -r .primary.version)
+          git commit -m "Release ${PRIMARY_NAME} ${PRIMARY_VER}"
+          # Per-plugin tag scheme {name}--v{version} drives Claude Code's
+          # marketplace dependency resolution. Create one tag for the primary
+          # release plus one per cascaded patch-bump.
           tags_to_push=()
-          while IFS= read -r plugin; do
-            per_plugin_tag="${plugin}--${TAG}"
-            if git rev-parse -q --verify "refs/tags/${per_plugin_tag}" >/dev/null; then
-              echo "Tag ${per_plugin_tag} already exists, skipping"
-              continue
-            fi
-            git tag -a "${per_plugin_tag}" -m "Release ${plugin} ${VERSION} (unified release ${TAG})"
-            tags_to_push+=("${per_plugin_tag}")
-          done < <(jq -r '.plugins[].name' .claude-plugin/marketplace.json)
-          if [ ${#tags_to_push[@]} -gt 0 ]; then
-            git push origin "${tags_to_push[@]}"
-            printf 'Pushed %s\n' "${tags_to_push[@]}"
-          else
-            echo "No new per-plugin tags to push"
-          fi
+          while IFS=$'\t' read -r name version; do
+            tag="${name}--v${version}"
+            git tag -a "$tag" -m "Release ${name} ${version}"
+            tags_to_push+=("$tag")
+          done < <(echo "$RESULT" | jq -r '[.primary] + .cascaded | .[] | [.name, .version] | @tsv')
+          git push origin HEAD "${tags_to_push[@]}"
+
+      - name: Publish to npm (if maven-mcp)
+        if: inputs.plugin == 'maven-mcp'
+        working-directory: plugins/maven-mcp
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: npm publish --access public
 
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
-        with:
-          generate_release_notes: true
-          make_latest: true
+        env:
+          RESULT: ${{ steps.bump.outputs.result }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          PRIMARY_NAME=$(echo "$RESULT" | jq -r .primary.name)
+          PRIMARY_VER=$(echo "$RESULT" | jq -r .primary.version)
+          PRIMARY_TAG="${PRIMARY_NAME}--v${PRIMARY_VER}"
+          BODY=$(echo "$RESULT" | jq -r '
+            "**Primary:** \(.primary.name) \(.primary.version)" +
+            (if (.cascaded | length) > 0
+              then "\n\n**Cascaded patch bumps:**\n" + (.cascaded | map("- \(.name) \(.version)") | join("\n"))
+              else ""
+            end)
+          ')
+          gh release create "$PRIMARY_TAG" \
+            --title "$PRIMARY_NAME $PRIMARY_VER" \
+            --notes "$BODY" \
+            --generate-notes
