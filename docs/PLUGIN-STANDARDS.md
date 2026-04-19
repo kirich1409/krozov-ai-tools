@@ -17,7 +17,7 @@
 Обязательное:
 
 - `name` — kebab-case, уникальный в пределах `marketplace.json`
-- `version` — валидный semver (`0.9.0`, `1.0.0`). В монорепо все плагины релизятся одной версией (unified versioning).
+- `version` — валидный semver (`0.9.0`, `1.0.0`). Каждый плагин версионируется независимо.
 
 Обязательно рекомендуется (для самодостаточности плагина без опоры на marketplace):
 
@@ -104,21 +104,22 @@ Frontmatter:
 - Semver ranges: `^`, `~`, exact (`=`), range (`>=1.4.0`)
 - Для resolution нужны **git-теги формата `{plugin-name}--v{version}`** в release workflow
 - Cross-marketplace deps требуют allowlist в корневом `marketplace.json`
-- При unified versioning в монорепо — рекомендуется `^X.Y.0` (совместимость в рамках одной major-minor серии)
+- В `developer-workflow*` family рекомендуется `^MAJOR.MINOR.0` (совместимость в рамках одной major-minor серии). Эти ranges автоматически переписываются `scripts/release.mjs` при cascade bump'е.
 
 ## 8. Marketplace (`marketplace.json`)
 
 - Один `marketplace.json` на репо (в `.claude-plugin/`)
 - Для каждого плагина entry: `name`, `source`, `description`, `version`, `author`, опционально `homepage`, `category`, `keywords`
-- `version` в marketplace entry **должна совпадать** с `version` в `plugin.json` (unified versioning)
+- `version` в marketplace entry **должна совпадать** с `version` в `plugin.json` плагина (для `maven-mcp` — ещё и с `plugins/maven-mcp/package.json`). Per-plugin three-way invariant, проверяется `scripts/validate.sh`.
 - `source: "./plugins/<name>"` — относительный path от корня репо
 
 ## 9. Versioning
 
-- **Unified versioning**: все плагины в репо релизятся одной версией при каждом релизе
+- **Per-plugin independent versioning**: каждый плагин бампится отдельно через GitHub Actions `Release` workflow (`workflow_dispatch`). См. `CLAUDE.md` §Publishing.
 - Bump правила: MAJOR — breaking, MINOR — features/additions, PATCH — fixes
-- Tag format: корневой `vX.Y.Z` + per-plugin `{plugin-name}--vX.Y.Z` (для semver resolution в `dependencies`)
-- `CHANGELOG.md` на уровне репо (если нужно — per-plugin)
+- Tag format: per-plugin `{plugin-name}--vX.Y.Z` (Claude Code использует для resolution `dependencies` semver-ranges). Глобальных `vX.Y.Z` тегов больше нет.
+- Cascade в `developer-workflow*` family — опционально включается при бампе (default on): зависимые плагины получают patch + обновление `dependencies` ranges на новый `^MAJOR.MINOR.0`.
+- `CHANGELOG.md` опционально per-plugin (auto-generated в GitHub Release notes из коммитов между тегами).
 
 ## 10. Pre-release checklist
 
