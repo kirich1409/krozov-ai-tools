@@ -1,6 +1,6 @@
 ---
 name: decompose-feature
-description: "Break a feature idea, PRD, or epic into a structured task list with dependencies, acceptance criteria, complexity estimates, and implementation order. Launches parallel expert agents to gather codebase context, architectural fit, scope analysis, then decomposes into waves of tasks sorted by dependency order. Use when: \"break this down\", \"decompose\", \"what tasks do I need\", \"plan the feature\", \"epic\", \"what's the scope\", \"I want to add\", \"here's a PRD\", \"split into tasks\", \"task breakdown\", \"scope this out\", \"work breakdown\", \"implementation steps\", \"feature planning\". Do NOT use for: bug fixes (use debug), code review (use code-reviewer agent), research-only questions (use research), trivial single tasks, or migrations (use code-migration / kmp-migration). Produces task lists feeding into implement. Output artifact can be reviewed via multiexpert-review before implementation."
+description: "This skill should be used when the user asks to break a feature idea, PRD, or epic into a structured task list with dependencies, acceptance criteria, complexity estimates, and implementation order. Launches parallel expert agents to gather codebase context, architectural fit, and scope analysis, then decomposes into waves of tasks sorted by dependency order. Trigger phrases: \"break this down\", \"decompose\", \"what tasks do I need\", \"plan the feature\", \"epic\", \"what's the scope\", \"I want to add\", \"here's a PRD\", \"split into tasks\", \"task breakdown\", \"scope this out\", \"work breakdown\", \"implementation steps\", \"feature planning\". Do NOT use for: bug fixes (use debug), code review (use code-reviewer agent), research-only questions (use research), trivial single tasks, or migrations (use code-migration / kmp-migration). Produces task lists feeding into implement; output artifact can be reviewed via multiexpert-review before implementation."
 ---
 
 # Decompose Feature
@@ -25,7 +25,7 @@ The input can be any of:
 - **File path** — a local document with requirements
 - **Inline PRD** — a structured requirements document pasted into the conversation
 
-From the input, extract:
+Extract from the input:
 - **Goal** — what the feature achieves for the user (one sentence)
 - **Constraints** — known boundaries (platform, deadline, dependencies, team skills)
 - **Success criteria** — how to know the feature is done (if stated)
@@ -59,107 +59,22 @@ works independently — never share one agent's findings with another.
 
 ### 2.1 Expert agents
 
-#### Codebase Expert (Explore subagent)
+Launch the following agents based on inclusion criteria below. Use the prompt templates in
+`references/expert-prompts.md` verbatim, substituting `{feature goal}` and related
+placeholders.
 
-**When to include:** Always — understanding existing code is essential for decomposition.
+| Agent | When to include | Role |
+|-------|-----------------|------|
+| **Codebase Expert** (Explore subagent) | Always | Map existing code, patterns, modules, and test infrastructure relevant to the feature |
+| **Architecture Expert** (architecture-expert) | Feature affects module boundaries, introduces new modules, or changes dependency direction | Evaluate architectural fit and structural changes needed |
+| **Business Analyst** (business-analyst) | User-facing impact, unclear scope, or PRD/epic input | Identify MVP boundaries, missing requirements, and scope creep risks |
 
-**What:** Analyze existing code, patterns, modules, and relevant infrastructure related to the
-feature.
-
-**Prompt template:**
-```
-Investigate the codebase for everything related to: {feature goal}
-
-Find and report:
-1. Existing code that relates to this feature (classes, interfaces, modules)
-2. Current patterns and approaches used for similar concerns
-3. Dependencies already in the project that are relevant
-4. Module boundaries and layers that would be affected
-5. Any existing TODO/FIXME comments related to this feature
-6. Test infrastructure available for the affected areas
-
-Use ast-index for all symbol searches. Use Grep only for string literals and comments.
-Be thorough — check build files, configuration, and test code too.
-
-Respond in the same language as the feature description.
-Structure: overview, then findings grouped by category.
-```
-
-#### Architecture Expert (architecture-expert agent)
-
-**When to include:** Feature affects module boundaries, introduces new modules, or changes
-dependency direction.
-
-**What:** Evaluate how the feature fits into the project's architecture and what structural
-changes are needed.
-
-**Prompt template:**
-```
-Evaluate the architectural implications of: {feature goal}
-
-Analyze:
-1. Which modules and layers would be affected?
-2. Does this feature align with the current architecture, or does it require structural changes?
-3. Dependency direction — would this introduce any problematic dependencies?
-4. API boundaries — what contracts need to change or be created?
-5. Where should new code live (which module, which layer)?
-6. Are there architectural patterns in the project that this feature should follow?
-
-Read the relevant module structure and build files before making judgments.
-Respond in the same language as the feature description.
-```
-
-#### Business Analyst (business-analyst agent)
-
-**When to include:** Feature has user-facing impact, unclear scope boundaries, or comes from
-a PRD/epic.
-
-**What:** Assess scope, identify MVP boundaries, flag missing requirements, and check for
-scope creep risks.
-
-**Prompt template:**
-```
-Analyze the scope and requirements of: {feature goal}
-
-Assess:
-1. Is the scope well-defined or are there ambiguous areas?
-2. What is the MVP — the smallest version that delivers value?
-3. What requirements are implicit but not stated?
-4. Are there edge cases or error scenarios not covered?
-5. What are the scope creep risks — where might this feature grow beyond intent?
-6. Are there dependencies on external systems, APIs, or teams?
-
-Respond in the same language as the feature description.
-Be concrete — list specific scenarios, not abstract concerns.
-```
+Full prompt templates: see `references/expert-prompts.md`.
 
 ### 2.2 State persistence
 
-Before launching agents, create the state file at `./swarm-report/decompose-<slug>-state.md`:
-
-```markdown
-# Decomposition State: {feature name}
-
-Slug: {slug}
-Status: gathering-context
-Started: {date}
-
-## Input
-- Goal: {goal}
-- Constraints: {constraints}
-- Source: {text | URL | file | PRD | Figma}
-
-## Expert Tracks
-- [ ] Codebase — launched
-- [ ] Architecture — {launched | skipped: reason}
-- [ ] Business Analyst — {launched | skipped: reason}
-
-## Context Findings
-(populated as agents report back)
-
-## Tasks
-(populated in Phase 3)
-```
+Before launching agents, create the state file at `./swarm-report/decompose-<slug>-state.md`.
+The template and final output format live in `references/output-format.md`.
 
 Update the state file as each agent completes. This ensures work survives context compaction.
 
@@ -174,11 +89,11 @@ decomposition based on dependencies, module boundaries, and implementation order
 ### 3.1 Decomposition principles
 
 - **One task = one logical unit of work** — a task should produce a working, testable increment
-- **Tasks follow module and layer boundaries** — don't mix data layer and UI in one task
+- **Tasks follow module and layer boundaries** — do not mix data layer and UI in one task
 - **Dependencies are explicit** — if task B needs task A's output, say so
 - **Each task is independently implementable** — given its dependencies are met, an agent can
   pick it up without additional context beyond the task description
-- **Complexity is honest** — don't underestimate; account for testing and edge cases
+- **Complexity is honest** — do not underestimate; account for testing and edge cases
 
 ### 3.2 Task structure
 
@@ -244,30 +159,9 @@ T-2 ──→ T-4 ──→ T-5
 
 ## Phase 5: Auto-Review
 
-Launch the `business-analyst` agent to review the decomposition. The reviewer checks for
-completeness, missing tasks, scope creep, and practical viability.
-
-**Prompt for business-analyst:**
-```
-Review this feature decomposition for completeness and practical viability.
-
-{full decomposition with tasks, waves, and dependency graph}
-
-Original feature goal: {goal}
-Original constraints: {constraints}
-
-Check:
-1. Do the tasks fully cover the feature goal? Any gaps?
-2. Are acceptance criteria concrete and verifiable?
-3. Is the complexity estimation realistic?
-4. Are there missing tasks (error handling, testing, documentation, migration)?
-5. Is there scope creep — tasks that go beyond the original goal?
-6. Is the dependency order correct — are there hidden dependencies or circular refs?
-7. Are the suggested agents appropriate for each task?
-
-If you find gaps or issues, list them with severity (critical / major / minor).
-Respond in the same language as the feature description.
-```
+Launch the `business-analyst` agent to review the decomposition for completeness, missing
+tasks, scope creep, and practical viability. Use the auto-review prompt template in
+`references/expert-prompts.md`.
 
 ### 5.1 Handle review findings
 
@@ -282,7 +176,7 @@ Respond in the same language as the feature description.
 ## Phase 6: Save Artifact
 
 Save the final decomposition to `./swarm-report/<slug>-decomposition.md` using the output
-format below.
+structure in `references/output-format.md`.
 
 Update the state file status to `done`.
 
@@ -294,89 +188,6 @@ Present the decomposition to the user with a brief summary of:
 
 ---
 
-## Output Format
-
-The decomposition artifact uses this structure:
-
-```markdown
-# Feature Decomposition: {name}
-
-Date: {date}
-Source: {text | URL | file | PRD | Figma}
-Experts consulted: {list of agents that ran}
-
-## Feature Summary
-
-{2-3 sentences: what the feature does, who benefits, key constraints}
-
-## Constraints
-
-- {constraint 1}
-- {constraint 2}
-
-## Tasks
-
-### Wave 1 (no dependencies)
-
-#### T-1: {title}
-
-- **Description:** {what needs to be done}
-- **Dependencies:** none
-- **Acceptance criteria:**
-  - {criterion 1}
-  - {criterion 2}
-- **Complexity:** S | M | L
-- **Suggested agent:** {agent name}
-- **Module / Layer:** {module} / {layer}
-- **research-recommended:** false
-
-#### T-2: {title}
-...
-
-### Wave 2 (depends on Wave 1)
-
-#### T-3: {title}
-
-- **Description:** {what needs to be done}
-- **Dependencies:** T-1, T-2
-- **Acceptance criteria:**
-  - {criterion 1}
-- **Complexity:** M
-- **Suggested agent:** {agent name}
-- **Module / Layer:** {module} / {layer}
-- **research-recommended:** false
-
-### Wave 3 (depends on Wave 2)
-...
-
-## Dependency Graph
-
-{text-based graph showing task relationships}
-
-## Scope Summary
-
-| Metric | Value |
-|--------|-------|
-| Total tasks | {N} |
-| Small (S) | {n} |
-| Medium (M) | {n} |
-| Large (L) | {n} |
-| Waves | {N} |
-| Research needed | {n tasks} |
-| Agents involved | {list} |
-
-## Open Questions
-
-- {Question that needs user decision}
-- {Ambiguity that could not be resolved}
-
-## Review Notes
-
-{Summary of auto-review findings and changes made}
-```
-
----
-
 ## Scope Decision Guide
 
 | Situation | Action |
@@ -384,7 +195,7 @@ Experts consulted: {list of agents that ran}
 | Feature is clear and specific | Proceed without asking |
 | Feature is broad but user gave enough context to infer scope | State assumed scope, proceed |
 | Feature is genuinely ambiguous (multiple valid interpretations) | Ask one clarifying question |
-| Feature requires domain knowledge you lack | Ask what aspect matters most |
+| Feature requires domain knowledge not available | Ask what aspect matters most |
 | User said "decompose everything about X" | Scope to the core feature, state what was excluded |
 | Input is a large PRD with multiple features | Decompose only the primary feature, list others as out of scope |
 
@@ -398,13 +209,13 @@ improving quality. If wrong, the auto-review step will catch major gaps.
 Stop and escalate to the user when:
 
 - **Not a feature** — the request is a bug fix, code review, or single concrete task that
-  doesn't need decomposition. Suggest the appropriate tool instead.
+  does not need decomposition. Suggest the appropriate tool instead.
 - **Scope explosion** — the feature is much larger than it appeared (e.g., "add payments"
   turns into a full payment platform). Report what was found, propose narrowing.
 - **Contradictory requirements** — constraints from the user conflict with each other.
   Present the conflict, ask which constraint takes priority.
-- **Missing critical context** — the feature depends on systems, APIs, or codebases you
-  cannot access. List what's needed.
+- **Missing critical context** — the feature depends on systems, APIs, or codebases that
+  cannot be accessed. List what is needed.
 - **Architectural incompatibility** — the architecture expert flags that the feature
   fundamentally conflicts with the current architecture. Present the conflict and options.
 
@@ -423,11 +234,11 @@ This skill operates as a pre-implementation planning tool:
   investigated via the `research` skill before implementation.
 
 The decomposition does not replace a detailed implementation plan for individual tasks —
-each task will get its own plan during the Implement stage.
+each task gets its own plan during the Implement stage.
 
 ---
 
-## Output Format and Location
+## Output Artifacts
 
 | Artifact | Path | Purpose |
 |----------|------|---------|
@@ -436,3 +247,14 @@ each task will get its own plan during the Implement stage.
 
 The decomposition is the primary deliverable. The state file is operational and can be
 deleted after the decomposition is complete.
+
+---
+
+## Additional Resources
+
+### Reference Files
+
+- **`references/expert-prompts.md`** — verbatim prompt templates for the Codebase, Architecture,
+  Business Analyst, and Auto-Review agent launches
+- **`references/output-format.md`** — full decomposition artifact structure and state file
+  template
