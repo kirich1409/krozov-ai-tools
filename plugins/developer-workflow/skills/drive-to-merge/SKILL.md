@@ -366,6 +366,7 @@ For PRAISE / OUT_OF_SCOPE / NO_ACTION / NIT+NO_ACTION:
 **Reply delivery — safety rules:**
 
 - Body always piped through `jq -n --arg b ... --argjson r ...` into `gh api --input -`. Never `-f body="$TEXT"`.
+- Rate-limit handling: on `403` / `429`, inspect `x-ratelimit-remaining`, `x-ratelimit-reset`, and `retry-after`. **Primary rate limit** (`x-ratelimit-remaining: 0`) — schedule a `ScheduleWakeup` at `x-ratelimit-reset` (UTC epoch) and exit the round. **Secondary rate limit / abuse detection** (`retry-after: N`) — sleep `N + 5` seconds locally and retry once; if it fails again, surface as a blocker. Never burn the round in a tight retry loop.
 - Sanitize slot: NFKC normalize → strip BiDi + format chars → strip HTML → strip shell metacharacters (`` ` ``, `$(`, `${`) → collapse newlines → neutralize `@mention` (remove `@`) and cross-refs (`#123` → `issue-123`) → clamp to 120 chars. Empty after sanitize → drop the slot, use template without it.
 - Cap total reply body at 280 chars.
 - Pre-POST thread-ownership verify: GraphQL node query → `pullRequest.number` matches + `repository.id` matches header `Repository id` from state file. Mismatch → skip this row, log `integrity_mismatch`, abort the round (do not continue POSTing other rows).
@@ -373,7 +374,7 @@ For PRAISE / OUT_OF_SCOPE / NO_ACTION / NIT+NO_ACTION:
 
 ### 3.5 Commit + push
 
-After code-change rows (edit + delegate): one commit per logical group of reviewer items. Commit message: `Address review: <short summary>`. Then `git push` (first push) or `git push --force-with-lease` (after a rebase, only).
+After code-change rows (edit + delegate): one commit per logical group of reviewer items. Commit message: `Address review: <short summary>`. Push: plain `git push` for fast-forward additions; `git push --force-with-lease` only when history was rewritten (rebase, amend, fixup squash). Plain `--force` is forbidden.
 
 ### 3.6 Re-request review after code changes
 
@@ -384,18 +385,33 @@ If any BLOCKING / IMPORTANT row actually changed code — re-request review from
 gh api "repos/$OWNER/$REPO_NAME/pulls/$PR_NUMBER/requested_reviewers" \
   -X POST -F "reviewers[]=<login>"
 
-# Copilot bot (separate endpoint in github — the login is "copilot-pull-request-reviewer[bot]")
-# In practice: use the web UI-equivalent GraphQL mutation `requestReviews`
-# with the Copilot user node id if it's available in the repo's review pool.
-gh api graphql -f query='
-  mutation($pr:ID!,$user:ID!){
-    requestReviews(input:{pullRequestId:$pr, userIds:[$user]}){
-      pullRequest { id }
+# Copilot bot — the login is "copilot-pull-request-reviewer[bot]".
+# Resolve its node id from the PR's suggestedReviewers / past reviewer pool:
+COPILOT_NODE_ID=$(gh api graphql -f query='
+  query($owner:String!,$repo:String!,$pr:Int!){
+    repository(owner:$owner,name:$repo){
+      pullRequest(number:$pr){
+        suggestedReviewers { reviewer { login ... on Bot { id } ... on User { id } } }
+        reviews(first:50) { nodes { author { login ... on Bot { id } ... on User { id } } } }
+      }
     }
-  }' -f pr="$PR_NODE_ID" -f user="$COPILOT_NODE_ID"
+  }' -F owner="$OWNER" -F repo="$REPO_NAME" -F pr="$PR_NUMBER" \
+  | jq -r '[.data.repository.pullRequest.suggestedReviewers[].reviewer,
+            .data.repository.pullRequest.reviews.nodes[].author]
+           | map(select(.login=="copilot-pull-request-reviewer"))[0].id // empty')
+
+# Best-effort. If empty — Copilot is not part of this repo's review pool, skip silently.
+if [ -n "$COPILOT_NODE_ID" ]; then
+  gh api graphql -f query='
+    mutation($pr:ID!,$user:ID!){
+      requestReviews(input:{pullRequestId:$pr, userIds:[$user]}){
+        pullRequest { id }
+      }
+    }' -f pr="$PR_NODE_ID" -f user="$COPILOT_NODE_ID"
+fi
 ```
 
-Resolve `$COPILOT_NODE_ID` once per PR (find the user node id via the repo's available reviewers; cache in the state file header once resolved). If the repo does not have Copilot as an available reviewer — skip silently.
+Cache `$COPILOT_NODE_ID` in the state file header once resolved (avoid re-querying every round). If the lookup returned empty — record `copilot_unavailable: true` in the header and stop trying.
 
 GitLab: `glab mr update $MR_IID --reviewer <user>` for humans; GitLab has no first-class bot equivalent of Copilot review — skip.
 
@@ -416,9 +432,11 @@ Pick `delaySeconds`:
 |---|---|
 | CI in progress, fast pipeline known (<5 min) | 270 (stay in cache window) |
 | CI in progress, slow pipeline (≥5 min) | 600–1200 |
-| Copilot bot review after re-request | 300–600 (Copilot typically responds in 1–3 min; check once at 5 min) |
+| Copilot bot review after re-request | 270 (stay in cache window for the first check); if still pending, 600 |
 | Human reviewer after re-request | 1800 (30 min) |
 | Approved but `mergeStateStatus == BLOCKED` on an unknown reason | 900 |
+
+Avoid the 280–550s range: past 270s the prompt cache TTL expires, but under ~600s the cache miss is not amortized. Pick either ≤270 (stay warm) or ≥600 (commit to a longer wait).
 
 After 6 consecutive polls with no state change — stop, record in state file `Blockers raised`, surface to the user.
 
@@ -459,7 +477,14 @@ Reply "merge" to execute, or supply a different method / message.
 
 Wait for explicit user confirmation. `--auto` does NOT skip this gate (per memory: PR merge always requires user approval).
 
-On confirmation:
+On confirmation, re-verify state one last time before invoking merge — between the gate and the API call, CI may have failed or approval may have been dismissed:
+
+```bash
+FINAL=$(gh pr view --json statusCheckRollup,reviewDecision,mergeable,mergeStateStatus)
+# Abort merge if anything regressed since the gate; loop back to Phase 2.1.
+```
+
+If the re-check is still green:
 
 ```bash
 gh pr merge "$PR_NUMBER" --<method> --subject "<subject>" --body "<body>" --delete-branch
