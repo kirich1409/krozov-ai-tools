@@ -101,9 +101,7 @@ stage (e.g., model, repository, UI layer). Stage specific files, never `git add 
 
 ## Phase 3: Quality Loop
 
-Run two quality gates sequentially. A failure triggers a fix cycle before advancing.
-
-Semantic review, simplification, expert review, and PR-level code-quality analysis live in the separate `finalize` stage, which the orchestrator runs after `implement`. `implement` is now strictly focused on *getting the code written and working according to the plan* — nothing more.
+Run two quality gates sequentially. A failure triggers a fix cycle before advancing. Implement is strictly "write the code and verify it works per the plan" — everything beyond is the `finalize` stage (see `docs/ORCHESTRATION.md` § Finalize).
 
 After code is written, run the Quality Loop defined in [`docs/ORCHESTRATION.md`](../../docs/ORCHESTRATION.md#implement--quality-loop-2-gates) — that document is the single source of truth for gate definitions, verdict handling, and iteration limits.
 
@@ -156,7 +154,7 @@ Save to `swarm-report/<slug>-quality.md`:
 | # | Gate | Result | Attempts |
 |---|------|--------|----------|
 | 1 | Mechanical checks (`/check`) | PASS/FAIL | N |
-| 2 | Intent check | PASS/DRIFT | — |
+| 2 | Intent check | PASS/DRIFT | — (single-pass; DRIFT triggers full loop re-entry, counted as an additional total iteration) |
 
 ## Issues Found and Fixed
 - <issue> — <fix applied>

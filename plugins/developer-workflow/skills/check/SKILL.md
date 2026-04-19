@@ -8,10 +8,12 @@ description: >-
   Auto-detects project tooling (Gradle, npm/pnpm/yarn, cargo, Swift SPM, Xcode, Python,
   Go, Makefile) and runs the appropriate commands. Does NOT modify code — it only verifies.
 
-  Use when: "check the project", "run tests", "verify build", "after I edited X run checks",
-  "проверь проект", "запусти проверки", or when a pipeline stage needs to confirm that
-  code modifications did not break anything. Do NOT use for code review (that is gate
-  4 of implement / Phase A of finalize) or acceptance testing (use acceptance).
+  Use when: "check the project", "run tests", "verify build", "does it build?", "smoke check",
+  "make sure nothing is broken", "validate the branch", "after I edited X run checks",
+  "проверь проект", "запусти проверки", "собери проект", "прогони тесты", "все ли чисто",
+  "ничего не сломал?", or when a pipeline stage needs to confirm that code modifications
+  did not break anything. Do NOT use for code review (that is finalize Phase A), functional
+  acceptance testing (use acceptance), or exploratory QA (use bug-hunt).
 ---
 
 # Check
@@ -35,7 +37,7 @@ Inspect the working tree for marker files to decide which check suite to run. A 
 | `*.xcodeproj`, `*.xcworkspace` | Xcode | Requires project-specific commands — see §2.3 |
 | `pyproject.toml`, `setup.py`, `setup.cfg` | Python | Derive from configured tools — see §2.4 |
 | `go.mod` | Go | `go vet ./...` + `go test ./...` + `go build ./...` |
-| `Makefile` with `check`/`test` targets | Generic | `make check` (or `make test` as fallback) |
+| `Makefile` with `check`/`test` targets | Generic | `make check` if the target exists (authoritative — includes what the maintainer decided to include); otherwise `make test` as fallback. Do not run both: `check` wins when both exist. |
 
 No marker found → report "no recognized project tooling detected" and ask the caller to provide commands explicitly.
 
@@ -70,6 +72,8 @@ Read `scripts` from `package.json` and run whichever of these exist, in this ord
 3. `test` (or `test:unit`)
 4. `build` (only if the project's CI runs it — check `.github/workflows/*.yml` for signal)
 
+**Node order deviates from the general Phase 3 sequence (Build → Lint → Typecheck → Tests).** JavaScript projects usually run tests without a compilation step, so lint and typecheck surface problems faster than trying to build first. `build` is last because it's the slowest and often not required for local verification. Callers that need the general order can use `--only build` first.
+
 Pick the package manager from lockfile:
 
 | Lockfile | Manager |
@@ -82,11 +86,11 @@ If no `lint`/`test` scripts exist — report "no check scripts configured" and a
 
 ### 2.3 Xcode
 
-Xcode projects require knowing the scheme and destination. If the caller did not provide commands, ask:
+Xcode projects require knowing the scheme and destination — the skill does not guess. Escalate to the caller with a clear ask:
 
-> "Xcode project detected but no check commands configured. Provide build and test commands (e.g., `xcodebuild -scheme MyApp test -destination 'platform=iOS Simulator,name=iPhone 16'`)."
+> "Xcode project detected but no check commands configured. Provide build and test commands (e.g., `xcodebuild -scheme MyApp test -destination 'platform=iOS Simulator,name=iPhone 16'`), or configure them in a project-specific override so subsequent `/check` invocations pick them up automatically."
 
-Do not guess — wrong destination/scheme wastes time and produces misleading errors.
+This is an escalation, not an interactive prompt — Phase 3 cannot proceed without the commands. Wrong destination/scheme wastes time and produces misleading errors.
 
 ### 2.4 Python
 
@@ -94,8 +98,12 @@ Inspect `pyproject.toml` / `setup.cfg` for configured tools. Run only the tools 
 
 - `[tool.ruff]` → `ruff check .`
 - `[tool.mypy]` → `mypy .` (with project path)
-- `[tool.pytest.ini_options]` or `tests/` present → `pytest`
+- `[tool.pyright]` or `[tool.pylint]` → corresponding tool (`pyright`, `pylint <package>`)
+- `[tool.flake8]` → `flake8 .`
+- `[tool.pytest.ini_options]` or `tests/` present → `pytest` (or `uv run pytest` if the project uses uv)
 - `[tool.black]` → `black --check .`
+
+If the project uses `uv` (presence of `uv.lock` or `[tool.uv]` section), prefer `uv run <tool>` over bare invocation — it respects the project's virtual environment.
 
 Do not install missing tools. If none are configured — report "no check tools configured" and ask the caller.
 
@@ -116,9 +124,11 @@ On the first failure — stop, report failure with stderr excerpt, let the calle
 
 - `--all` — run every check regardless of earlier failures. Useful for getting a full picture before a batch of fixes.
 - `--fast` — skip tests, only build + lint + typecheck. Useful during tight fix loops when the failing surface is known to be non-test.
-- `--only lint` / `--only tests` / `--only build` — single-category check.
+- `--only lint` / `--only tests` / `--only build` / `--only typecheck` — single-category check. Each value maps to one of the Phase 3 categories; pass only one at a time.
 
 If none specified → default sequential fail-fast.
+
+**Flag parsing.** Callers pass the mode as the first `--<flag>` token in the invocation prompt, or via a natural-language directive ("fast mode", "all checks", "only the tests"). The skill parses this early — if multiple mutually-exclusive flags are given (e.g., `--all --fast`), fail with a clear error rather than picking a silent default.
 
 ### Output capture
 
@@ -158,8 +168,8 @@ The machine-readable block is **mandatory** — orchestrator/skills that loop on
 ### Verdict rules
 
 - **PASS** — every executed check returned exit 0. Skipped checks are not failures.
-- **FAIL** — at least one executed check returned non-zero exit.
-- **PARTIAL** — used in `--all` mode when some checks passed and some failed. Signals "here's everything" rather than "stopped at first break".
+- **FAIL** — at least one executed check returned non-zero exit. This applies to default (fail-fast) mode: a failure followed by `SKIP` for remaining categories is still FAIL, not PARTIAL.
+- **PARTIAL** — reserved for `--all` mode when some checks passed and some failed. Signals "here's everything" rather than "stopped at first break". Never emit PARTIAL when any check was SKIP due to fail-fast.
 
 ---
 
