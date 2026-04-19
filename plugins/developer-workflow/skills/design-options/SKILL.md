@@ -21,16 +21,18 @@ Generate and present multiple architectural approaches for a single task before 
 
 ## When to run this stage
 
-Run `design-options` when at least one of:
+Run `design-options` when at least one of (same trigger list as `feature-flow` §1.3a):
 
-1. **High architectural risk** — the task touches module boundaries, introduces new abstractions, or replaces a core pattern; multiple viable approaches exist.
-2. **Explicit user request** — "show me a few options", "what are the alternatives", "I want to choose between approaches".
-3. **Uncertainty in the spec** — the spec acknowledges that the "how" is open while the "what" is settled.
+1. **High architectural risk** — the task touches module boundaries, introduces new abstractions, or replaces a core pattern.
+2. **The plan settles the "what" but leaves the "how" open** — multiple plausible approaches exist, and the plan itself does not commit to one.
+3. **User explicitly asks for alternatives** — "show me a few options", "what are the alternatives", "variants", "разные подходы".
 
 Skip for:
 - Straightforward tasks with a single obvious approach
 - Bug fixes where the debug artifact already names the fix direction
 - Single-file changes
+
+Do NOT trigger when the spec itself is underspecified (no clear constraints, no observable behavior). That is a write-spec problem, not a design-options problem — ask the user to re-invoke `write-spec` first (see Escalation).
 
 If invoked from an orchestrator when none of the triggers apply → orchestrator skips this stage without user prompt.
 
@@ -160,9 +162,11 @@ Present the comparison artifact to the user with a brief summary:
 
 > Generated <N> options (<labels — e.g., "A Minimal / B Clean / C Pragmatic">). Saved to `swarm-report/<slug>-design-options.md`.
 > Summary of trade-offs: <1-2 sentences highlighting the most consequential differences>.
-> Which option do you want to proceed with? You can also: (a) ask for a hybrid, (b) request a re-run with different constraints, (c) go back to write-spec if the options surfaced missing requirements.
+> Which option do you want to proceed with?
 
-Wait for the user's choice before proceeding.
+Accepted replies: `A` / `B` / `C` (pick one), `hybrid` (combine parts), `rerun` (regenerate with different constraints), `re-research` (options surfaced missing requirements — go back to `research` stage, matches feature-flow state machine `DesignOptions → Research` transition).
+
+Wait for the user's choice before proceeding — one question per round, alternatives listed in the line above but not broadcast as additional questions.
 
 ---
 

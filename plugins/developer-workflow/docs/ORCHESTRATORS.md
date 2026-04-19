@@ -48,7 +48,12 @@ flowchart TD
     test_plan_review -->|FAIL, cycles>=3| escalate_tp([Escalate: user decides])
 
     subgraph loop ["For each task"]
-        impl[/implement/] --> acceptance[/acceptance/]
+        impl[/implement/] --> draft_pr[/create-pr --draft/]
+        draft_pr --> finalize[/finalize/]
+        finalize -->|PASS| acceptance[/acceptance/]
+        finalize -->|"ESCALATE (3 rounds)"| finalize_decide{User: accept risks or fix?}
+        finalize_decide -->|Fix| impl
+        finalize_decide -->|Accept| acceptance
         acceptance -->|VERIFIED| pr_decision
         acceptance -->|"FAILED (obvious)"| impl
         acceptance -->|"FAILED (unclear)"| debug_mid[/debug/]
@@ -64,7 +69,7 @@ flowchart TD
     next_task -->|Yes| impl
     next_task -->|No| create_pr
 
-    create_pr[/create-pr/] --> handoff([Hand-off to user])
+    create_pr[/create-pr --promote/] --> handoff([Hand-off to user])
     handoff --> triage[/triage-feedback/]
     triage -->|FIXABLE items| impl
     triage -->|Nothing actionable| done([PR in user's hands])
@@ -75,6 +80,8 @@ flowchart TD
     style test_plan fill:#e1f5fe
     style test_plan_review fill:#e1f5fe
     style impl fill:#e8f5e9
+    style finalize fill:#fff9c4
+    style draft_pr fill:#f3e5f5
     style acceptance fill:#fff3e0
     style create_pr fill:#f3e5f5
     style triage fill:#f3e5f5
@@ -100,6 +107,7 @@ flowchart TD
 |-----------|-----|-------------|
 | PlanReview → Research | 2 | Escalate |
 | TestPlanReview → TestPlan | 3 | Escalate |
+| Finalize → Implement | 1 | Escalate |
 | Acceptance → Implement | 3 | Escalate |
 | Acceptance → TestPlan | 3 | Escalate |
 | Acceptance → Debug | 1 | Escalate |
@@ -126,7 +134,12 @@ flowchart TD
     plan -->|PASS| impl
     plan -->|FAIL| debug
 
-    impl[/implement/] --> acceptance[/acceptance/]
+    impl[/implement/] --> draft_pr[/create-pr --draft/]
+    draft_pr --> finalize[/finalize/]
+    finalize -->|PASS| acceptance[/acceptance/]
+    finalize -->|"ESCALATE (3 rounds)"| finalize_decide{User: accept risks or fix?}
+    finalize_decide -->|Fix| impl
+    finalize_decide -->|Accept| acceptance
 
     acceptance -->|"VERIFIED (bug gone)"| create_pr
     acceptance -->|"FAILED — same bug"| impl
@@ -140,7 +153,7 @@ flowchart TD
     user_decision -->|Fix| impl
     user_decision -->|Ship| create_pr
 
-    create_pr[/create-pr/] --> handoff([Hand-off to user])
+    create_pr[/create-pr --promote/] --> handoff([Hand-off to user])
     handoff --> triage[/triage-feedback/]
     triage -->|FIXABLE items| impl
     triage -->|Nothing actionable| done([PR in user's hands])
@@ -148,6 +161,8 @@ flowchart TD
     style debug fill:#e1f5fe
     style plan fill:#e1f5fe
     style impl fill:#e8f5e9
+    style finalize fill:#fff9c4
+    style draft_pr fill:#f3e5f5
     style acceptance fill:#fff3e0
     style create_pr fill:#f3e5f5
     style triage fill:#f3e5f5
@@ -172,6 +187,7 @@ flowchart TD
 
 | From → To | Max | After limit |
 |-----------|-----|-------------|
+| Finalize → Implement | 1 | Escalate |
 | Acceptance → Implement | 3 | Escalate |
 | Acceptance → Debug | 1 | Escalate |
 | PR → Implement | 2 | Escalate |
@@ -184,7 +200,8 @@ flowchart TD
 |-------|---------|
 | 🔵 Blue | Research / diagnosis |
 | 🟢 Green | Implementation |
-| 🟠 Orange | Verification |
+| 🟡 Yellow | Finalize (code-quality loop) |
+| 🟠 Orange | Acceptance |
 | 🟣 Purple | PR lifecycle |
 | 🔴 Red | Stop / wait for user |
 | ✅ Green border | Done |

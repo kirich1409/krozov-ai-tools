@@ -28,10 +28,10 @@ Inspect the working tree for marker files to decide which check suite to run. A 
 
 | Marker files | Stack | Default check suite |
 |---|---|---|
-| `gradlew`, `build.gradle`, `build.gradle.kts`, `settings.gradle*` | Gradle | `./gradlew check` (bundles lint/test/etc as configured) |
+| `gradlew`, `build.gradle`, `build.gradle.kts`, `settings.gradle*` | Gradle | `./gradlew assemble check` — `check` alone does not compile production sources; AGP projects prefer variant-scoped commands (see §2.1) |
 | `package.json` | Node (npm/pnpm/yarn) | Derive from scripts — see §2.2 |
-| `Cargo.toml` | Rust / Cargo | `cargo check --all-targets` + `cargo clippy --all-targets -- -D warnings` + `cargo test` |
-| `Package.swift` | Swift SPM | `swift build` + `swift test` |
+| `Cargo.toml` | Rust / Cargo | `cargo fmt --check` + `cargo clippy --all-targets -- -D warnings` + `cargo test --all-features` (clippy already performs type-check; no separate `cargo check` needed) |
+| `Package.swift` | Swift SPM | `swift build` + `swift test` — add `swiftlint` or `swift-format lint` if a config file is present |
 | `*.xcodeproj`, `*.xcworkspace` | Xcode | Requires project-specific commands — see §2.3 |
 | `pyproject.toml`, `setup.py`, `setup.cfg` | Python | Derive from configured tools — see §2.4 |
 | `go.mod` | Go | `go vet ./...` + `go test ./...` + `go build ./...` |
@@ -45,13 +45,21 @@ No marker found → report "no recognized project tooling detected" and ask the 
 
 ### 2.1 Gradle
 
-Prefer `./gradlew check` — it is the Gradle convention for "run all verification tasks". If the project has a separate build step needed for CI parity:
+`./gradlew check` by itself runs the *verification* suite (lint, static analysis, tests) but does **not** compile the project. Build failures in production sources are only surfaced by `assemble`. Always run them together:
 
 ```
 ./gradlew assemble check
 ```
 
-Honor the wrapper — never use system-installed `gradle`. If `gradlew` is not executable, invoke it non-mutatingly via `bash ./gradlew check` rather than changing tracked file mode with `chmod +x`. If the permission issue persists, escalate to the caller with a note to fix the wrapper permission themselves — `/check` does not modify the working tree.
+**Android (AGP) projects** — prefer explicit variant-scoped commands; plain `check` on AGP usually runs only unit tests, and `connectedCheck` requires a device and is out of scope for `/check`:
+
+```
+./gradlew assembleDebug lintDebug testDebug
+```
+
+Detect Android via `android { }` block in `build.gradle*` or `com.android.application` / `com.android.library` plugin.
+
+Honor the wrapper — never use system-installed `gradle`. If `gradlew` is not executable, invoke it non-mutatingly via `sh ./gradlew assemble check` rather than changing tracked file mode with `chmod +x` (the wrapper script is sh-compatible, not bash-specific). If the permission issue persists, escalate to the caller with a note to fix the wrapper permission themselves — `/check` does not modify the working tree.
 
 ### 2.2 Node (package.json)
 
@@ -127,38 +135,25 @@ Always produce a structured report, even on single-command runs.
 
 ### Format
 
-```
-## Check report
+The report has two parts: a human-readable body and a mandatory machine-readable summary block at the end.
 
-**Stack detected:** Gradle  (+ Node if applicable, etc.)
-**Mode:** sequential fail-fast (default) | --all | --fast | --only X
-**Verdict:** PASS | FAIL | PARTIAL
+**Body (markdown)** — structured with headers, table of results, and per-failure details:
 
-### Results
-| # | Check | Command | Status | Notes |
-|---|---|---|---|---|
-| 1 | Build | `./gradlew assemble` | PASS | 23s |
-| 2 | Lint | `./gradlew check` | FAIL | 4 detekt violations |
-| 3 | Tests | (skipped — prior failure) | SKIP | — |
+- `## Check report` with `Stack detected`, `Mode`, `Verdict` lines
+- `### Results` — one row per check with Command / Status / Notes
+- `### Failures` (only if any) — per failure: command, exit code, stderr excerpt (~50 lines), suggested next step
+- `### Summary` — passed/failed/skipped counts + total wall time
 
-### Failures
-(only if any)
+**Machine-readable summary** — keep as the final fenced block of the output so callers can tail-parse reliably:
 
-**Lint failure:**
-- Command: `./gradlew check`
-- Exit: 1
-- Stderr excerpt:
-  ```
-  <last ~50 lines>
-  ```
-- Suggested next step: inspect detekt config or the 4 violations listed above.
+~~~
+verdict: FAIL
+passed: [build]
+failed: [lint]
+skipped: [tests]
+~~~
 
-### Summary
-- Passed: 1
-- Failed: 1
-- Skipped: 1
-- Total wall time: <seconds>
-```
+The machine-readable block is **mandatory** — orchestrator/skills that loop on `/check` rely on it. Parse the `verdict:` line first; the arrays identify which categories are in each state. `verdict` is one of `PASS`, `FAIL`, or `PARTIAL`.
 
 ### Verdict rules
 

@@ -22,7 +22,7 @@ developer-workflow-kotlin          developer-workflow-swift
 
 Installing this plugin automatically pulls `developer-workflow-experts`. Installing `-kotlin` or `-swift` additionally pulls this plugin.
 
-## Skills (16)
+## Skills (17)
 
 ### Planning / research
 | Skill | Purpose |
@@ -91,17 +91,29 @@ For **most skills**, these integrations are optional enhancements: when present,
 
 ## Installation
 
+**Prerequisite — cross-marketplace dependency.** `developer-workflow` declares a hard dependency on `pr-review-toolkit` from Anthropic's official plugin marketplace. That marketplace's name is `claude-plugins-official` (see [`.claude-plugin/marketplace.json`](https://github.com/anthropics/claude-plugins-official/blob/main/.claude-plugin/marketplace.json)) and it is added by giving Claude Code the GitHub repo path `anthropics/claude-plugins-official`:
+
+```
+/plugin marketplace add anthropics/claude-plugins-official
+```
+
+After that, the marketplace is registered under its declared name `claude-plugins-official`, which matches the `marketplace` field in our `plugin.json` dependency entry.
+
+Then add our marketplace and install the plugin:
+
 ```
 /plugin marketplace add kirich1409/krozov-ai-tools
 /plugin install developer-workflow@krozov-ai-tools
 ```
 
-`developer-workflow-experts` installs automatically as a declared dependency. Add platform plugins as needed:
+`developer-workflow-experts` and `pr-review-toolkit` install automatically as declared dependencies. Add platform plugins as needed:
 
 ```
 /plugin install developer-workflow-kotlin@krozov-ai-tools
 /plugin install developer-workflow-swift@krozov-ai-tools
 ```
+
+If the cross-marketplace dep fails to resolve (e.g., `claude-plugins-official` marketplace not registered in the user's environment), `developer-workflow` installation will abort with a clear message. Add the marketplace and retry.
 
 ## Pipeline documentation
 

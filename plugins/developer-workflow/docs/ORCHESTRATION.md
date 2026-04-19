@@ -8,17 +8,17 @@ When receiving a task, classify it by **size and complexity**, then pick the app
 
 | Size | Criteria | Pipeline |
 |------|----------|----------|
-| Small | 1-3 files, clear change, no new APIs | Implement → Quality (build+test only) → done |
-| Medium | Multiple files, one module, known patterns | Plan → Implement → Quality → PR |
-| Large | Cross-module, new APIs, unfamiliar libraries | Research → Plan → Implement → Quality → Verify → PR |
-| Migration | Library/technology swap | Research → Snapshot → Migrate → Verify → PR |
+| Small | 1-3 files, clear change, no new APIs | Implement → done (mechanical + intent only; finalize/acceptance skipped for truly trivial changes) |
+| Medium | Multiple files, one module, known patterns | Plan → Implement → Finalize → Acceptance → PR |
+| Large | Cross-module, new APIs, unfamiliar libraries | Research → Plan → Implement → Finalize → Acceptance → PR |
+| Migration | Library/technology swap | Research → Snapshot → Migrate → Finalize → Acceptance → PR |
 | Research | Investigation only, no code changes | Research → Report |
 
 **Skip stages that add no value for the task at hand.** A one-line bug fix does not need Research or a formal Plan. A large feature with unfamiliar dependencies needs the full pipeline.
 
 Auto-detect from scope and context. If ambiguous — state the assumed profile and ask the user to confirm before proceeding.
 
-Migration tasks use the `code-migration` skill. Feature tasks with explicit `/developer-workflow:implement-task` use that skill's built-in pipeline instead of these rules.
+Migration tasks use the `code-migration` skill.
 
 ## Research Consortium
 
@@ -69,13 +69,15 @@ Plan ──→ Research           (plan review reveals gaps or missing context)
 TestPlan ──→ TestPlanReview
 TestPlanReview ──→ Implement  (PASS or WARN)
 TestPlanReview ──→ TestPlan   (FAIL — revise loop, max 3 cycles, then escalate)
-Implement ──→ Quality
+Implement ──→ Finalize
 Implement ──→ Research      (scope is larger than expected — escalate)
-Quality ──→ Verify
-Quality ──→ Implement       (quality loop found issues to fix)
-Verify ──→ PR
-Verify ──→ Implement        (verification fails — fix and re-verify)
-Verify ──→ TestPlan         (new P0/P1 bugs require a `## Regression TC` section appended to the permanent test plan)
+Finalize ──→ Acceptance     (PASS — no BLOCK remains)
+Finalize ──→ Implement      (ESCALATE after 3 rounds; user routes back to fix root issues)
+Finalize ──→ Escalate       (ESCALATE after 3 rounds; user picks non-implement path — stop state, not a stage)
+Acceptance ──→ PR           (VERIFIED)
+Acceptance ──→ Implement    (FAILED — fix bugs, then Implement re-runs Finalize)
+Acceptance ──→ Debug        (FAILED — unclear root cause)
+Acceptance ──→ TestPlan     (new P0/P1 bugs require a `## Regression TC` section appended to the permanent test plan)
 PR ──→ Merge
 PR ──→ Implement            (review feedback requires code changes)
 ```
@@ -92,9 +94,9 @@ Each stage produces an artifact in `swarm-report/`. The next stage reads it befo
 | Plan | `<slug>-plan.md` |
 | TestPlan | `docs/testplans/<slug>-test-plan.md` (permanent, source of truth) + `<slug>-test-plan.md` (receipt: `status`, `permanent_path`, `source_spec`, `review_verdict`, `phase_coverage`). Created by `generate-test-plan` when invoked from the orchestrator with a slug; read by `plan-review` (test-plan branch) and `acceptance`. |
 | TestPlanReview | `<slug>-test-plan.md` receipt updated in place: `review_verdict` set to PASS / WARN / FAIL, `status` advances Draft → Ready on PASS/WARN. |
-| Implement | `<slug>-implement.md` (summary of changes, files touched) |
-| Quality | `<slug>-quality.md` (build/lint/test results, issues found/fixed) |
-| Verify | `<slug>-verify.md` / `<slug>-acceptance.md` (verification result: VERIFIED/FAILED/PARTIAL, evidence, `test_plan_source: receipt / mounted / on-the-fly / absent` when the Acceptance stage consumed a test plan) |
+| Implement | `<slug>-implement.md` (summary of changes, files touched) + `<slug>-quality.md` (mechanical checks / intent check results, notes for finalize) |
+| Finalize | `<slug>-finalize.md` (round-by-round phase A-D findings, unresolved BLOCKs, acknowledged risks, commits added during finalize) |
+| Acceptance | `<slug>-acceptance.md` (verification result: VERIFIED/FAILED/PARTIAL, evidence, `test_plan_source: receipt / mounted / on-the-fly / absent` when the Acceptance stage consumed a test plan) |
 | PR | `<slug>-pr.md` (PR URL, description, reviewers) |
 
 If a stage artifact is missing — the previous stage did not complete. Do not skip ahead.
@@ -287,15 +289,18 @@ Route implementation to the right specialist:
 | View → Compose migration | `migrate-to-compose` skill |
 | Library / technology swap | `code-migration` skill |
 | Module → KMP | `kmp-migration` skill |
-| Full autonomous cycle | `implement-task` skill (explicit-only) |
-| Quality check before PR | Quality Loop gates (this section) |
-| PR creation | `create-pr` skill |
+| Full autonomous feature cycle | `feature-flow` skill |
+| Full autonomous bug-fix cycle | `bugfix-flow` skill |
+| Architectural variability | `design-options` skill (optional pre-plan-review stage) |
+| Mechanical verification (build/lint/typecheck/tests) | `check` skill |
+| Code-quality pass (review + /simplify + pr-review-toolkit + experts) | `finalize` skill |
+| PR creation and lifecycle management | `create-pr` skill (`--draft` / `--refresh` / `--promote`) |
 | Triage feedback (PR comments or pasted text) — categorize, prioritize, group; optionally post replies / resolve threads for items with terminal verdicts via an editable manifest; never edits code | `triage-feedback` skill |
 | Plan review (PoLL) | `plan-review` skill |
 | Test plan creation | `generate-test-plan` skill |
-| Feature verification on device | `test-feature` skill |
+| Feature verification on device | `acceptance` skill |
 | Retroactive test writing | `write-tests` skill |
-| Undirected QA / bug hunting | `exploratory-test` skill |
+| Undirected QA / bug hunting | `bug-hunt` skill |
 | Research findings review | `business-analyst` agent |
 
 ## Stage Boundary Protocol

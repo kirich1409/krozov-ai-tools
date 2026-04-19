@@ -116,7 +116,7 @@ Do not duplicate gate details here — read ORCHESTRATION.md before executing. I
 
 ---
 
-## Phase 5: Produce Artifacts
+## Phase 4: Produce Artifacts
 
 ### Implementation artifact
 

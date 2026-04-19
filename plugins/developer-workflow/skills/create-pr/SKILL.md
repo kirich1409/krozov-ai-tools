@@ -68,9 +68,9 @@ Capture:
 
 | Mode | Precondition | On failure |
 |---|---|---|
-| `--draft` | PR does not exist, or exists AND `isDraft: true` | If PR exists AND not draft: abort with "PR is already ready for review. Use `--refresh` to update body or `--promote` is a no-op." |
-| `--refresh` | PR exists | If no PR: abort with "No PR found for this branch. Use `--draft` or default to create one first." |
-| `--promote` | PR exists AND `isDraft: true` | If no PR: abort with "No PR to promote." If already ready: abort with "PR is already ready for review." |
+| `--draft` | PR does not exist, or exists AND `isDraft: true` | If PR exists AND not draft: abort with "PR is already ready for review; use `--refresh` to update the body." |
+| `--refresh` | PR exists (draft or ready — `--refresh` does not change status) | If no PR: abort with "No PR found for this branch. Use `--draft` or default to create one first." |
+| `--promote` | PR exists AND `isDraft: true` | If no PR: abort with "No PR to promote." If already ready: abort with "PR is already ready for review; use `--refresh` if you want to update the body." |
 | default | PR does not exist | If PR exists: print URL, abort. Suggest `--refresh` or `--promote`. |
 
 ---
@@ -312,7 +312,7 @@ Output differs by status (see "Output templates" below).
 
 **Draft (`--draft` or default → draft):**
 > Draft PR created: `<url>`
-> Next: complete implementation and local quality checks → `/acceptance` → `/create-pr --promote` to mark ready. (If the `finalize` skill is installed, the orchestrator will also run it between implement and acceptance.)
+> Next: complete implementation → `/finalize` → `/acceptance` → `/create-pr --promote` to mark ready.
 
 **Refreshed (`--refresh`):**
 > PR body refreshed: `<url>`
@@ -333,14 +333,12 @@ Orchestrators (`feature-flow`, `bugfix-flow`) invoke this skill at these milesto
 
 ```
 implement first pass → push → /create-pr --draft
-implement fix loop pushes → (optional) /create-pr --refresh on major fixes
-acceptance complete → /create-pr --refresh (adds acceptance results to body)
+finalize (runs after implement, before acceptance — multi-round code-quality loop)
+acceptance
 all local checks PASS → /create-pr --promote
-
-(When the `finalize` skill is installed, the orchestrator inserts a
-`/finalize` stage between implement and acceptance; it pushes commits
-between rounds and may call /create-pr --refresh at round boundaries.)
 ```
+
+Both orchestrators (`feature-flow`, `bugfix-flow`) call `/create-pr --draft` after `implement` and `/create-pr --promote` after `acceptance` passes. Mid-flow `--refresh` calls (e.g., after each finalize round, after fix loops) are not currently wired in — user or orchestrator can invoke `/create-pr --refresh` manually if the PR body should reflect intermediate progress.
 
 The orchestrator owns deciding *when* to invoke; this skill owns *how*.
 

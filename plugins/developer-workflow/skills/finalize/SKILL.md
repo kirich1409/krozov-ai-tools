@@ -108,7 +108,9 @@ Because `/simplify` is fix-oriented, do not pre-review its output — trust the 
 
 ### If `/check` fails after `/simplify`
 
-Revert the simplify commits (or the last commit if unambiguously from `/simplify`), log the failure, continue to Phase C. Do not re-invoke `/simplify` in the same round — if it broke something once, it's likely to repeat.
+Revert the simplify commits (or the last commit if unambiguously from `/simplify`), log the failure with `phase: B, reason: revert`, continue to Phase C. Do not re-invoke `/simplify` in the same round — if it broke something once, it's likely to repeat.
+
+**Round-budget semantic.** Phase B is a transformative step, not a finding-generator. A Phase B revert does NOT introduce an unresolved BLOCK and does NOT consume the round budget beyond the single Phase B attempt; the round continues normally through Phases C and D. This is distinct from `/check` failure after a Phase A/C/D fix (§Mechanical verification) — there the originating finding stays BLOCK and counts against the budget.
 
 ---
 
@@ -139,20 +141,17 @@ Fixes for test-quality findings (e.g., "this test doesn't cover the failure path
 
 Trigger experts only when the diff matches their domain. Launch the matching ones in **parallel**.
 
-| Expert | Trigger — files touch any of: |
-|---|---|
-| `security-expert` | Auth, encryption, token/secret storage, network requests, permissions, user data handling, crypto libraries |
-| `performance-expert` | RecyclerView / LazyColumn adapters, DB queries, image loading, coroutine dispatchers, hot loops, large collections, N+1 patterns |
-| `architecture-expert` | New modules created, dependency direction changed, public API modified, new abstractions introduced |
+Trigger matrix lives in [`docs/ORCHESTRATION.md` § Phase D expert-review triggers](../../docs/ORCHESTRATION.md#phase-d-expert-review-triggers) — that document is the single source of truth. Do not duplicate it here; read the matrix before executing.
 
 No trigger matched → skip Phase D entirely for this round.
 
 ### Handling expert findings
 
-Experts typically produce deeper, higher-risk findings. Apply the same severity × confidence gate, but with a lower bar for fix urgency:
+Experts produce deeper, higher-risk findings. Apply the same severity × confidence gate as Phase A:
 
-- security + critical: **always fix** before continuing, even at confidence 50 (security rarely benefits from optimism)
-- performance / architecture + critical at confidence ≥ 75: fix if local to the diff; escalate if requires broader rework
+- For security-critical findings that come in at confidence 50, rely on the code-reviewer's **Critical-risk exception** (see `developer-workflow-experts/agents/code-reviewer.md` § Critical-risk exception): the finding is included with a `[please verify]` marker prefixed to the `issue` field. Treat such findings as BLOCK and attempt a fix; if fix is out-of-scope, escalate.
+- performance / architecture + critical at confidence ≥ 75: fix if local to the diff; escalate if requires broader rework.
+- Do not introduce a parallel "always fix at 50" rule — the rubric is defined once in `code-reviewer.md` and inherited by Phase D experts.
 
 ---
 
@@ -193,7 +192,20 @@ Save `swarm-report/<slug>-finalize.md` on exit (PASS or ESCALATE):
 ### Round 2
 ...
 
+## Unresolved BLOCKs (on ESCALATE only)
+
+Findings that could not be fixed and were NOT downgraded. Populated only when the
+finalize stage exits ESCALATE — lists BLOCKs that remain after 3 rounds, or BLOCKs
+whose fix broke `/check` and was reverted (per §Mechanical verification). The user
+must decide: loop back to `implement`, accept as risk, or re-scope.
+
+| Severity | Confidence | Category | Finding | Phase | Round | File:Line |
+|---|---|---|---|---|---|---|
+| BLOCK (critical) | 75 | security | Token logged in clear | D | 3 | src/auth/Logger.kt:23 |
+
 ## Remaining findings (not auto-fixed)
+
+Non-BLOCK items surfaced for reviewer awareness — they do not block exit with PASS.
 
 | Severity | Confidence | Category | Finding | Phase | File:Line |
 |---|---|---|---|---|---|
@@ -202,8 +214,7 @@ Save `swarm-report/<slug>-finalize.md` on exit (PASS or ESCALATE):
 
 ## Acknowledged risks
 
-Findings that were not fixed because fix was non-trivial and they do not block merge.
-Reviewer should be aware of them.
+Findings that the user explicitly decided to accept (e.g., during escalation). Not auto-populated — the user marks items here when handing control back for the run to continue. Distinct from "Unresolved BLOCKs" (which the finalize stage could not close).
 
 ## Commits added during finalize
 
