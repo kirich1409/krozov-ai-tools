@@ -47,24 +47,15 @@ Always work on changes in a separate branch using a worktree (`.worktrees/`). Cr
 
 ## Publishing
 
-**Never run `npm publish` locally.** Publishing happens exclusively via GitHub Actions.
+**Never run `npm publish` locally.** Releases happen exclusively via GitHub Actions.
 
-All plugins use **unified versioning** — every release bumps all plugins to the same version.
+Each plugin versions independently. To release:
 
-To release a new version:
-1. Bump `version` in all of these files to the new version:
-   - `plugins/maven-mcp/package.json`
-   - `plugins/maven-mcp/plugin/.claude-plugin/plugin.json`
-   - `plugins/sensitive-guard/.claude-plugin/plugin.json`
-   - `plugins/developer-workflow/.claude-plugin/plugin.json`
-   - `plugins/developer-workflow-experts/.claude-plugin/plugin.json`
-   - `plugins/developer-workflow-kotlin/.claude-plugin/plugin.json`
-   - `plugins/developer-workflow-swift/.claude-plugin/plugin.json`
-   - `.claude-plugin/marketplace.json` (all 6 plugin entries)
-2. Inside the `developer-workflow-*` family, also bump the semver ranges in each `dependencies` array if the range needs to widen (usually `^MAJOR.MINOR.0` is stable).
-3. Merge to `main`.
-4. Push a git tag matching the version: `git tag v0.9.0 && git push origin v0.9.0`.
-5. GitHub Actions (`.github/workflows/release.yml`) triggers on `v*` tags: verifies all versions match, runs lint/tests/build, publishes to npm, **then creates one per-plugin tag `{plugin-name}--v{version}` for each plugin in `marketplace.json`**. These per-plugin tags are what Claude Code uses to resolve `dependencies` semver ranges.
+1. GitHub → **Actions** → **Release** workflow → **Run workflow**.
+2. Pick the plugin, bump type (patch/minor/major), and whether to cascade patch-bumps to family dependents (`developer-workflow*` family only — defaults on).
+3. The workflow bumps `plugin.json` + `marketplace.json` (+ `package.json` for `maven-mcp`), commits, creates per-plugin tag `{plugin-name}--v{version}`, publishes `@krozov/maven-central-mcp` to npm if releasing `maven-mcp`, and creates a GitHub Release.
+
+Pre-release checklist in [`docs/PLUGIN-STANDARDS.md`](docs/PLUGIN-STANDARDS.md) §10 stays manual (run `plugin-dev:plugin-validator` on each plugin before clicking Run).
 
 ## Worktrees
 
