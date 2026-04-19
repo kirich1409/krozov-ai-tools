@@ -8,6 +8,8 @@ Profiles parameterize `multiexpert-review` for specific artifact types (plan, te
 PROFILE_INVENTORY = [implementation-plan, test-plan, spec]
 ```
 
+(All three profiles exist as of this writing: `implementation-plan.md`, `test-plan.md`, `spec.md`.)
+
 This list is **authoritative**. The engine reads it on startup by parsing this file. Adding a profile requires: (1) create `profiles/<name>.md`, (2) add `<name>` to the list above in the same commit. Mismatch (file exists but not in list, or list entry with no file) → engine fails with `[multiexpert-review ERROR] PROFILE_INVENTORY_MISMATCH: <name> <direction>`.
 
 ## Profile schema (frontmatter)

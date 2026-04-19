@@ -558,21 +558,35 @@ While the user reviews, run a self-check:
 
 Fix any self-identified gaps.
 
-### 4.3 Run multiexpert-review
+### 4.3 Run multiexpert-review (spec profile)
 
-Run the `multiexpert-review` skill on the spec. Provide:
-- The full spec content
-- The original feature goal
+Run the `multiexpert-review` skill on the draft spec with an **explicit `spec` profile hint**.
+Prepend this prefix to the args (engine parses the first two lines as hint):
 
-The multiexpert-review checks completeness, internal consistency, implementation-readiness,
-and scope alignment. Address findings:
+```
+profile: spec
+---
+<rest of args: full spec content + original feature goal>
+```
+
+Why the hint: the draft spec at this point is in-memory content, not yet saved to
+`docs/specs/`, so the path-glob detector in multiexpert-review cannot classify it. Without
+the hint, the engine would fall through to the structural-signature / ask-user fallback —
+in practice, mis-classifying spec as implementation-plan and applying the wrong rubric
+(this was the historical drift this profile closes).
+
+The spec profile (panel: business-analyst + architecture-expert) checks falsifiability of
+Acceptance Criteria, prerequisite realism, explicit Out of Scope, decisions with rationale,
+affected modules completeness, open questions tagged blocking vs non-blocking, and
+technical approach detail. Address findings per the verdict:
 
 | Severity | Action |
 |----------|--------|
-| No issues | Proceed |
+| No issues (PASS) | Proceed |
 | Minor gaps | Fix inline, note changes |
-| Major gaps | Surface to user, discuss, resolve |
+| Major gaps (CONDITIONAL) | Surface to user, discuss, resolve |
 | Contradictions | Surface to user, resolve |
+| Critical (FAIL) | Engine drives revise-loop on the draft; Phase 4.3 iterates until PASS/CONDITIONAL or user escalation |
 
 ### 4.4 Discussion round after review
 
