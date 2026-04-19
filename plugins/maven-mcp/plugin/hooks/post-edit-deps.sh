@@ -1,5 +1,5 @@
 #!/bin/bash
-set -eu
+set -euo pipefail
 
 # Dependencies
 command -v jq >/dev/null 2>&1 || exit 0
