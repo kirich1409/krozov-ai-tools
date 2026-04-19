@@ -70,128 +70,20 @@ simultaneously). Each agent works independently — never share one agent's find
 
 ### 2.1 Expert agents
 
-#### Codebase Expert (Explore subagent)
+Full prompt templates for each expert are in **`references/expert-prompts.md`**. Load that
+file and substitute `{topic}` (and `{libraries/frameworks related to topic}` where applicable)
+before launching.
 
-**What:** Analyze existing code, patterns, dependencies, and relevant modules related to the
-research topic.
+| Expert | Delivery | Primary tools | When to launch |
+|--------|----------|---------------|----------------|
+| **Codebase Expert** | Explore subagent | `ast-index search/class/usages/deps/dependents/api`, `Read`, `Grep` | Topic touches existing code |
+| **Web Expert** | Available web-search tool (or training knowledge with limitation noted) | Whatever web-search tool is available in the environment | Always (mandatory) |
+| **Docs Expert** | Official library/framework documentation lookup | Whatever documentation tools are available (Context7, DeepWiki, WebFetch, etc.) | Topic involves specific libraries or frameworks |
+| **Dependencies Expert** | maven-mcp | `search_artifacts`, `get_latest_version`, `get_dependency_vulnerabilities`, `get_dependency_changes`, `compare_dependency_versions`, `check_multiple_dependencies` | Topic involves JVM/KMP dependencies |
+| **Architecture Expert** | `architecture-expert` agent | Agent's own toolset | Topic affects module boundaries, layer design, or API contracts |
 
-**How:** Launch an Explore subagent with instructions to use:
-- `ast-index search`, `ast-index class`, `ast-index usages` — find relevant code
-- `ast-index deps`, `ast-index dependents` — module relationships
-- `ast-index api` — public API surface of affected modules
-- `Read`, `Grep` — examine specific files and patterns
-
-**Prompt template:**
-```
-Investigate the codebase for everything related to: {topic}
-
-Find and report:
-1. Existing code that relates to this topic (classes, interfaces, modules)
-2. Current patterns and approaches used for similar concerns
-3. Dependencies already in the project that are relevant
-4. Module boundaries and layers that would be affected
-5. Any existing TODO/FIXME comments related to this topic
-
-Use ast-index for all symbol searches. Use Grep only for string literals and comments.
-Be thorough — check build files, configuration, and test code too.
-
-Respond in the same language as the research topic description. Structure: overview, then findings grouped by category.
-```
-
-#### Web Expert
-
-**What:** Search the web for approaches, best practices, common pitfalls, and real-world examples — if web search is available.
-
-**How:** If web search is available, look for approaches and best practices; find recent articles and community discussions. If web search is not available, note this as a limitation in the research report.
-
-**Prompt template:**
-```
-Research: {topic}
-
-If web search is available, investigate:
-1. Common approaches and best practices (with trade-offs for each)
-2. Known pitfalls and mistakes to avoid
-3. Real-world examples from open-source projects
-4. Recent developments or changes (last 12 months)
-5. Community consensus — what does the majority recommend and why?
-
-If web search is available, perform an in-depth investigation first,
-then follow up with targeted searches for specific details if needed.
-If web search is not available, note this as a limitation in the research report
-and rely on training knowledge where possible.
-
-Respond in the same language as the research topic description. Include source URLs for key claims.
-```
-
-#### Docs Expert
-
-**What:** Find official documentation for involved libraries and frameworks.
-
-**How:** Look up official documentation for the libraries involved; fetch API reference and usage examples.
-
-**Prompt template:**
-```
-Find official documentation for: {libraries/frameworks related to topic}
-
-For each library/framework:
-1. Look up official documentation for the library (API reference, guides, changelogs)
-2. Find documentation for: API surface, migration guides, compatibility notes,
-   configuration options, known limitations
-3. Check for version-specific documentation if version matters
-
-Respond in the same language as the research topic description. Quote relevant documentation sections. Note any gaps where
-documentation is missing or unclear.
-```
-
-#### Dependencies Expert (maven-mcp)
-
-**What:** Check compatibility, versions, vulnerabilities, and alternatives for JVM/KMP
-dependencies.
-
-**How:** Use maven-mcp tools:
-- `search_artifacts` — find candidate libraries
-- `get_latest_version` — current versions
-- `get_dependency_vulnerabilities` — security issues
-- `get_dependency_changes` — release notes, changelog entries between versions
-- `compare_dependency_versions` — semver delta comparison between versions
-- `check_multiple_dependencies` — batch version checks
-
-**Prompt template:**
-```
-Analyze dependencies related to: {topic}
-
-Investigate:
-1. Current versions of relevant libraries and their latest available versions
-2. Known vulnerabilities in current or candidate dependencies
-3. Compatibility matrix — what works with what (Kotlin version, KMP targets, AGP)
-4. Alternative libraries that serve the same purpose — compare by: maturity,
-   maintenance activity, KMP support, community size
-5. Breaking changes in recent versions
-
-Respond in the same language as the research topic description. Include specific version numbers and groupId:artifactId coordinates.
-```
-
-#### Architecture Expert (architecture-expert agent)
-
-**What:** Evaluate how the research topic fits into the project's architecture — module
-boundaries, dependency direction, API design implications.
-
-**How:** Launch the `architecture-expert` agent with context about the topic.
-
-**Prompt template:**
-```
-Evaluate the architectural implications of: {topic}
-
-Analyze:
-1. Which modules and layers would be affected?
-2. Does this align with the current architecture, or does it require structural changes?
-3. Dependency direction — would this introduce any problematic dependencies?
-4. API boundaries — what contracts need to change or be created?
-5. Integration points — where does this touch existing abstractions?
-
-Read the relevant module structure and build files before making judgments.
-Respond in the same language as the research topic description.
-```
+Each expert's prompt enforces: respond in the same language as the research topic description,
+and include sources (URLs, documentation quotes, codebase locations) for key claims.
 
 ### 2.2 State persistence
 
@@ -239,71 +131,24 @@ Look for:
 - **Gaps** — areas no expert covered, or questions that remain unanswered
 - **Dependencies** — findings from one expert that change the relevance of another's conclusions
 
-### 3.2 Draft research report
+### 3.2 Draft the research report
 
-Structure the report as:
+Use the full template in **`references/synthesis-templates.md`** ("Research Artifact Template").
+Required sections, in order:
 
-```markdown
-# Research: {topic}
+1. Title + metadata (date, experts consulted)
+2. Problem / Question Summary (2–3 sentences)
+3. Approaches Found — 2–3 viable approaches in parallel, each with Description, Trade-offs,
+   Evidence, Compatibility. Include a side-by-side comparison table when the user will pick
+   between approaches.
+4. Library / Dependency Recommendations (table)
+5. Risks and Concerns (with severity: critical/major/minor)
+6. Recommendation (the preferred approach, with reasoning tied to expert findings)
+7. Open Questions
+8. Sources
 
-Date: {date}
-Experts consulted: {list of tracks that ran}
-
-## Problem / Question Summary
-{What was investigated and why — 2-3 sentences}
-
-## Approaches Found
-
-Lay out 2–3 viable approaches in parallel before the recommendation. The point of this section is to make alternatives visible — a single approach with "the others were considered and rejected" is weaker than an explicit side-by-side. If only one approach is genuinely viable, state that explicitly with the reasons other candidates were ruled out.
-
-### Approach 1: {name}
-- **Description:** {what it is}
-- **Trade-offs:** {pros and cons}
-- **Evidence:** {which experts found this, with key details}
-- **Compatibility:** {works with current stack? KMP? versions?}
-
-### Approach 2: {name}
-- **Description:** ...
-- **Trade-offs:** ...
-- **Evidence:** ...
-- **Compatibility:** ...
-
-### Approach 3: {name} (optional)
-...
-
-### Side-by-side comparison
-
-| Dimension | Approach 1 | Approach 2 | Approach 3 |
-|---|---|---|---|
-| Effort | S/M/L | ... | ... |
-| Maintainability | + / − | ... | ... |
-| Compatibility | ... | ... | ... |
-| Risk | low/med/high | ... | ... |
-
-Use this table when the user will need to pick between approaches. Skip it if one approach dominates on every dimension.
-
-## Library / Dependency Recommendations
-| Library | Version | KMP | Vulnerabilities | Notes |
-|---------|---------|-----|-----------------|-------|
-| ... | ... | ... | ... | ... |
-
-## Risks and Concerns
-- {risk 1 — severity: critical/major/minor}
-- {risk 2}
-
-## Recommendation
-{The preferred approach with reasoning — why this one over the others.
-Reference specific findings from experts.}
-
-## Open Questions
-- {What still needs user decision}
-- {What could not be determined}
-
-## Sources
-- {URLs from web research}
-- {Documentation references}
-- {Codebase locations examined}
-```
+If only one approach is genuinely viable, state that explicitly and list the reasons other
+candidates were ruled out — do not fake alternatives.
 
 ---
 
@@ -313,30 +158,16 @@ Launch the `business-analyst` agent to review the synthesized report. The review
 different perspective than the researchers — they check for completeness, product sense,
 and practical viability.
 
-**Prompt for business-analyst:**
-```
-Review this research report for completeness and practical viability.
-
-{full research report}
-
-Check:
-1. Are all approaches properly evaluated with trade-offs?
-2. Are there obvious alternatives that were missed?
-3. Do the risks cover both technical and product concerns?
-4. Is the recommendation well-supported by the evidence?
-5. Are the open questions the right ones — nothing critical missing?
-6. Does the recommendation align with practical constraints (time, team skills, maintenance)?
-
-If you find gaps or issues, list them with severity (critical / major / minor).
-Respond in the same language as the research topic description.
-```
+The full review prompt is in **`references/synthesis-templates.md`** ("Business-Analyst Review
+Prompt"). It asks the reviewer to verify trade-offs, missed alternatives, risk coverage,
+recommendation support, open questions, and alignment with practical constraints.
 
 ### 4.1 Handle review findings
 
-- **No issues** — proceed to save artifact
-- **Minor issues** — incorporate feedback into the report, note what was added
+- **No issues** — proceed to save artifact.
+- **Minor issues** — incorporate feedback into the report, note what was added.
 - **Major/critical gaps** — if the gap can be filled by re-running a specific expert track,
-  do so. Otherwise, add the gap to "Open Questions" and flag it for the user
+  do so. Otherwise, add the gap to "Open Questions" and flag it for the user.
 
 ---
 
@@ -378,7 +209,7 @@ Frame the suggestion as an actionable proposal, not a question:
 | Topic is clear and specific | Proceed without asking |
 | Topic is broad but user gave enough context to infer scope | State assumed scope, proceed |
 | Topic is genuinely ambiguous (multiple valid interpretations) | Ask one clarifying question |
-| Topic requires domain knowledge you lack | Ask what aspect matters most |
+| Topic requires domain knowledge not available in training data or context | Ask what aspect matters most |
 | User said "research everything about X" | Scope to the 3 most impactful aspects, state what was excluded |
 
 **Default bias:** proceed rather than ask. Over-asking slows down research without
@@ -428,3 +259,12 @@ In all cases, the artifact location and format are the same — downstream stage
 
 The research report is the primary deliverable. The state file is operational and can be
 deleted after the research is complete.
+
+---
+
+## Additional Resources
+
+- **`references/expert-prompts.md`** — full prompt templates for all 5 expert agents (Codebase,
+  Web, Docs, Dependencies, Architecture).
+- **`references/synthesis-templates.md`** — the research artifact structure (Phase 3.2) and the
+  business-analyst review prompt (Phase 4).
