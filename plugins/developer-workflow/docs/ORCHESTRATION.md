@@ -131,16 +131,23 @@ consumed by `research`, `generate-test-plan`, `create-pr` as those skills evolve
 Cheap heuristic over the repository root plus a few well-known paths (e.g. `app/`, `android/`,
 `ios/`) — no external tools required, no exhaustive tree walk:
 
+Each row resolves to exactly one `ecosystem` value — downstream steps (e.g. acceptance build-smoke command selection) assume a single value. Split cases where the same `project_type` has multiple possible stacks into distinct rows.
+
 | Signal found at repo root or a well-known subdirectory | `project_type` | `has_ui_surface` | `ecosystem` |
 |---|---|---|---|
 | `AndroidManifest.xml` under `app/` / `android/`, or `build.gradle*` with `com.android.application` | `android` | true | `gradle` |
 | `*.xcodeproj` / `*.xcworkspace`, `Package.swift` iOS/macOS target, or `Podfile` iOS pods | `ios` | true | `xcode` |
 | `package.json` with a frontend framework (`react`, `vue`, `svelte`, `next`, `vite`, `astro`) or root `index.html` | `web` | true | `node` |
-| `package.json` with `electron`, or Compose Desktop / Swift AppKit entrypoint | `desktop` | true | `node` / `gradle` / `xcode` |
+| `package.json` with `electron` | `desktop` | true | `node` |
+| Compose Desktop entrypoint (Gradle with `org.jetbrains.compose` applied to a JVM target) | `desktop` | true | `gradle` |
+| Swift AppKit entrypoint (`NSApplication` main or `@main App` targeting macOS) | `desktop` | true | `xcode` |
 | `build.gradle*` with Spring / Ktor / Micronaut / Quarkus / `application` plugin (not Android) | `backend-jvm` | false | `gradle` |
 | `package.json` with a Node server (`express`, `fastify`, `koa`, `nest`) and no frontend framework | `backend-node` | false | `node` |
-| `Cargo.toml`, `pyproject.toml`, `go.mod` without web/GUI frameworks; or `bin/` entrypoints | `cli` | false | `rust` / `python` / `go` |
-| `.claude-plugin/` directory (or `.claude-plugin/plugin.json`), Gradle/Maven library packaging without application plugin | `library` | false | `gradle` / `node` |
+| `Cargo.toml` without web/GUI frameworks, or Rust `bin/` entrypoints | `cli` | false | `rust` |
+| `pyproject.toml` without web/GUI frameworks, or Python `bin/` entrypoints | `cli` | false | `python` |
+| `go.mod` without web/GUI frameworks, or Go `bin/` entrypoints | `cli` | false | `go` |
+| `.claude-plugin/` directory (or `.claude-plugin/plugin.json`) | `library` | false | `node` |
+| Gradle/Maven library packaging without application plugin | `library` | false | `gradle` |
 | None of the above matches unambiguously | `generic` | ask user | ask user |
 
 **Override policy.** When `write-spec` records `platform:` in the spec frontmatter or the user

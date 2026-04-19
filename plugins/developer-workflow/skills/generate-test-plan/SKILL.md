@@ -138,6 +138,13 @@ Read the document. Extract:
 - Acceptance criteria (explicit pass/fail conditions)
 - User roles and permissions mentioned
 
+**Spec frontmatter (when the source is a file with YAML frontmatter).** Read the frontmatter
+block first. If it contains a `platform:` list, copy that list verbatim into the receipt's
+`platform:` field (same canonical values as `write-spec` and ORCHESTRATION.md §Project type
+detection). When the orchestrator invokes this skill without a file-based spec, or the spec
+has no frontmatter, leave `platform:` empty in the receipt — `acceptance` will fall back to
+its project-type heuristic.
+
 ### 2. Figma mockup
 
 Use Figma MCP tools (`get_design_context`, `get_screenshot`) to retrieve the design.

@@ -417,7 +417,7 @@ date: {YYYY-MM-DD}
 status: draft
 # Optional fields — leave blank when not applicable. Consumed by `acceptance`
 # (choreography) and by `generate-test-plan` (platform-aware coverage).
-platform: []                     # e.g. [android], [ios], [web], [backend-jvm], [cli], [library], [desktop]. May be multi-value for cross-platform features.
+platform: []                     # Canonical values from ORCHESTRATION.md §Project type detection: [android], [ios], [web], [desktop], [backend-jvm], [backend-node], [cli], [library], [generic]. May be multi-value for cross-platform features.
 surfaces: []                     # e.g. [ui], [api], [cli], [background-job]. Drives which acceptance checks run.
 risk_areas: []                   # e.g. [auth], [payment], [pii], [data-migration], [perf-critical]. Each entry triggers a conditional expert in acceptance.
 non_functional:                  # Optional block. Each present entry triggers an expert check.
@@ -445,8 +445,10 @@ Write the "why" that will still make sense in 6 months.}
 ## Acceptance Criteria
 
 The feature is complete when ALL of the following are true. Each criterion is assigned a
-stable `AC-N` id that MUST appear in the frontmatter `acceptance_criteria_ids` list; this is
-what `acceptance` uses to drive AC-coverage checks via `business-analyst`.
+stable `AC-N` id. The frontmatter `acceptance_criteria_ids` list is **optional** for
+back-compat, but when it is provided, it MUST include every `AC-N` id listed here and nothing
+else; that is what `acceptance` uses to drive AC-coverage checks via `business-analyst`.
+Leaving `acceptance_criteria_ids` empty disables the business-analyst conditional.
 
 - [ ] **AC-1** — {Concrete, observable behavior — not internal state}
 - [ ] **AC-2** — {Another criterion}

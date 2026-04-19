@@ -50,9 +50,10 @@ Follow the canonical heuristic in `plugins/developer-workflow/docs/ORCHESTRATION
 type detection. Output: `project_type`, `has_ui_surface`, `ecosystem`.
 
 **Override policy.** If the spec frontmatter `platform:` list is non-empty, **spec wins** —
-take the first platform value as `project_type` (or mark multi-platform when the list has
-more than one), and record `project_type_override: spec` in the receipt. If the user corrects
-detection mid-run, record `project_type_override: user`.
+take the first platform value as the canonical `project_type`. If the list has more than one
+entry, record the full list separately as `platforms: [...]` in the receipt; do not invent a
+`multi-platform` `project_type`. Record `project_type_override: spec` in the receipt. If the
+user corrects detection mid-run, record `project_type_override: user`.
 
 Step 0 file reads and Step 1 file reads are disjoint. You MAY issue both sets in one batched
 Read call set to avoid serial round-trips.
@@ -70,9 +71,18 @@ description, GitHub/Linear issue. Read all provided sources.
 
 **Read the spec frontmatter.** If present, load `platform`, `surfaces`, `risk_areas`,
 `non_functional`, `acceptance_criteria_ids`, `design.figma`. These drive the conditional
-triggers in Step 3. If the spec has no frontmatter (pre-iteration-2 specs, external specs,
-or plain-text issues) — every conditional defaults to "not triggered"; only the base checks
-run. This preserves backward compatibility.
+triggers in Step 3 plus two invariant guards on the base plan:
+
+- `ui ∈ surfaces` forces `manual-tester` into the fan-out when a scenario source exists,
+  even if Step 0 detected a non-UI project (hybrid products with both UI and non-UI
+  surfaces).
+- `surfaces` set and does not contain `ui` on a UI-detected project means the spec
+  explicitly excludes UI — skip `manual-tester` even if `has_ui_surface` is true, and note
+  this in the Check Plan section of the receipt.
+
+If the spec has no frontmatter (pre-iteration-2 specs, external specs, or plain-text issues)
+— every conditional defaults to "not triggered" and `surfaces` is treated as unspecified;
+only the base checks keyed off `has_ui_surface` run. This preserves backward compatibility.
 
 ### 1.2 Probe available artifacts (parallel)
 
@@ -189,17 +199,22 @@ compaction; completed steps (`[x]`) are not repeated; resume from the first inco
 
 ## Step 2.5: Dedup Probe
 
-Read `swarm-report/<slug>-quality.md` (produced by `implement`'s Quality Loop). If its
-`Status:` is `PASS`, `code-reviewer` is skipped in Step 3. Field name matches `implement`'s
-receipt schema — this skill does **not** rely on any `diff_hash` or similar field, and will
-not skip on that basis alone.
+Read `swarm-report/<slug>-quality.md` (produced by `implement`'s Quality Loop). Three cases:
 
-When `code-reviewer` is skipped, write a stub artifact at
-`swarm-report/<slug>-acceptance-code.md` with the per-check schema, `verdict: SKIPPED`, and a
-one-line body. This preserves the one-file-per-check invariant the aggregation in Step 4
-depends on.
+- **`Status: PASS`, receipt is from the current branch head** — `code-reviewer` is skipped.
+  Freshness is inferred from the receipt's `Date:` field vs the branch commit window; if it
+  cannot be confirmed (e.g. receipt significantly older than the latest commit), do **not**
+  skip — run `code-reviewer` normally. On skip, write a stub artifact at
+  `swarm-report/<slug>-acceptance-code.md` with `verdict: SKIPPED`, `blocked_on: null`, and a
+  one-line body referencing `<slug>-quality.md`.
+- **`Status: FAIL`** — Quality Loop failed upstream; do not silently proceed. Run
+  `code-reviewer` anyway, and surface `blocked_on: quality-loop failed — see <slug>-quality.md`
+  in the Step 4 Summary. The aggregated Status is forced to `PARTIAL` at minimum (or
+  `FAILED` if `code-reviewer` itself returns `FAIL`).
+- **Receipt missing** — run `code-reviewer` normally. No skip.
 
-If `<slug>-quality.md` does not exist or `Status:` is `FAIL`, run `code-reviewer` normally.
+Field name matches `implement`'s receipt schema — this skill does **not** rely on any
+`diff_hash` or similar field; full diff-based idempotency is deferred.
 
 This probe is synchronous — it decides the Step 3 fan-out composition and emits the stub
 before fan-out.
@@ -246,15 +261,20 @@ Each sub-check writes `swarm-report/<slug>-acceptance-<check>.md` with this fron
 ```yaml
 ---
 type: acceptance-check
-check: manual | code | build | ac-coverage | design | security | performance | a11y
+check: manual | code | build | ac-coverage | design | a11y | security | performance
 agent: <agent-name or "bash">
 verdict: PASS | WARN | FAIL | SKIPPED
 severity: critical | major | minor | null
 confidence: high | medium | low | null
 domain_relevance: high | medium | low | null
-blocked_on: <optional — what the user must resolve>
+blocked_on: <optional — what the user must resolve; also used when a planned per-check artifact is missing>
 ---
 ```
+
+File naming is **one file per `check` value**: `swarm-report/<slug>-acceptance-<check>.md`
+(e.g. `-manual.md`, `-code.md`, `-design.md`, `-a11y.md`). When a single agent invocation
+covers multiple concerns (see `ux-expert` below), it writes separate files per concern to
+keep the one-file-per-check invariant intact.
 
 `severity`, `confidence`, `domain_relevance` are required when `verdict` is `WARN` or `FAIL`;
 null for `PASS` / `SKIPPED`. These drive the PoLL aggregation in Step 4.
@@ -313,7 +333,9 @@ Fires when `acceptance_criteria_ids` in spec frontmatter is a non-empty list.
 Prompt contents:
 1. **Spec** — the spec file path.
 2. **Diff / implement receipt** — evidence for each AC.
-3. **Test plan** (if any) — TC list mapped to AC by `AC-ref:` fields.
+3. **Test plan** (if any) — TC list mapped to AC via each test case's `Source:` field
+   (e.g. `Source: AC-1` or `Source: AC-2, AC-3`). This is the canonical mapping used by
+   `generate-test-plan`; do not invent a new `AC-ref:` field.
 4. **manual-tester output** (if running) — pointer to
    `swarm-report/<slug>-acceptance-manual.md`.
 5. **Output path** — `swarm-report/<slug>-acceptance-ac-coverage.md`.
@@ -324,18 +346,27 @@ missing AC is `critical`; weak coverage is `major`.
 
 ### 3.5 Spawn `ux-expert` (conditional — design-review or a11y)
 
-Fires when `design.figma` is set (design-review mode) **or** `non_functional.a11y` is set
-(a11y mode). Either mode runs in one agent invocation; combine prompts if both triggers fire.
+Fires when **`has_ui_surface == true`** AND (`design.figma` is set for design-review mode
+**or** `non_functional.a11y` is set for a11y mode). Non-UI projects never trigger this even
+if `non_functional.a11y` is present — a11y on backend/library/CLI has no surface to audit.
+
+Design-review and a11y can both fire in one invocation. When both trigger, spawn `ux-expert`
+once with mode `both`; the agent writes **two** artifacts (one per concern) so aggregation in
+Step 4 treats them as independent checks:
+
+- `swarm-report/<slug>-acceptance-design.md` with `check: design`
+- `swarm-report/<slug>-acceptance-a11y.md` with `check: a11y`
+
+When only one mode fires, only the corresponding artifact is written.
 
 Prompt contents:
 1. **Mode** — `design-review` / `a11y` / `both`.
 2. **Spec** — file path.
 3. **Design source** — `design.figma` URL (design-review mode).
 4. **a11y target** — value of `non_functional.a11y` (e.g. `wcag-aa`).
-5. **Running app pointer** (if `has_ui_surface`) — target hints; the agent reads running-app
-   state via MCP only when the environment is already prepared, otherwise works from
-   screenshots/code.
-6. **Output path** — `swarm-report/<slug>-acceptance-ux.md`.
+5. **Running app pointer** — target hints; the agent reads running-app state via MCP only
+   when the environment is already prepared, otherwise works from screenshots/code.
+6. **Output paths** — one or both of the filenames listed above, matching the mode.
 
 Verdict rules: `PASS` if design matches reference and a11y criteria met; `WARN` for minor
 spacing/color deviations or AA soft failures; `FAIL` for missing components, broken
@@ -377,7 +408,9 @@ severity + confidence + domain_relevance + blocked_on). Read the body only if
 **Missing per-check artifact.** Step 2.5 writes a stub for skipped `code-reviewer`; Step 3.3
 writes an artifact even on build-smoke failure. If a planned per-check artifact is
 nonetheless missing at aggregation time, treat the check as `verdict: FAIL` with
-`error: per-check artifact missing` — do not silently drop it.
+`blocked_on: per-check artifact missing` — do not silently drop it. `blocked_on` is the
+canonical field for surfacing unresolved conditions per the per-check schema; no separate
+`error:` field exists.
 
 ### Aggregation — PoLL rules
 
@@ -437,7 +470,8 @@ Save to `swarm-report/<slug>-acceptance.md`. Legacy fields preserved; new sectio
 | Manual QA | manual-tester | … | … | … | swarm-report/<slug>-acceptance-manual.md |
 | Code review | code-reviewer | … | … | … | swarm-report/<slug>-acceptance-code.md |
 | AC coverage | business-analyst | … | … | … | swarm-report/<slug>-acceptance-ac-coverage.md |
-| Design / a11y | ux-expert | … | … | … | swarm-report/<slug>-acceptance-ux.md |
+| Design | ux-expert | … | … | … | swarm-report/<slug>-acceptance-design.md |
+| A11y | ux-expert | … | … | … | swarm-report/<slug>-acceptance-a11y.md |
 | Security | security-expert | … | … | … | swarm-report/<slug>-acceptance-security.md |
 | Performance | performance-expert | … | … | … | swarm-report/<slug>-acceptance-performance.md |
 | Build smoke | bash | … | … | … | swarm-report/<slug>-acceptance-build.md |
