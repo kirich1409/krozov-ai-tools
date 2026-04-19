@@ -213,11 +213,77 @@ Read `swarm-report/<slug>-quality.md` (produced by `implement`'s Quality Loop). 
   `FAILED` if `code-reviewer` itself returns `FAIL`).
 - **Receipt missing** — run `code-reviewer` normally. No skip.
 
-Field name matches `implement`'s receipt schema — this skill does **not** rely on any
-`diff_hash` or similar field; full diff-based idempotency is deferred.
+Field name matches `implement`'s receipt schema. Note: `code-reviewer` skipping here is
+decoupled from the Re-verification Loop's `diff_hash` policy — the dedup here is about
+"implement already ran code-review on this diff", whereas `diff_hash` idempotency (§Re-verification
+Loop) is about "previous acceptance run covered this same diff".
 
 This probe is synchronous — it decides the Step 3 fan-out composition and emits the stub
 before fan-out.
+
+---
+
+## Step 2.6: Persist Fan-out State
+
+Before issuing the Step 3 fan-out — but **after** the full check plan has been finalized
+(Step 3 intro resolves base + all conditional triggers) — save the plan and
+compaction-resilient progress to `swarm-report/<slug>-acceptance-state.md`. Symmetric to
+`plan-review`'s state file. This file carries the acceptance run across context compaction —
+it is never a receipt, just operational state.
+
+Step ordering: 2.5 dedup probe → Step 3 intro resolves conditional triggers → write the
+state file here (Step 2.6) with the complete `Planned Checks` list → Step 3 body dispatches
+the fan-out.
+
+```markdown
+# Acceptance State: <slug>
+
+Status: planning | running | aggregating | done
+Cycle: <N> of 3              # incremented on Re-verification Loop re-entry
+Started: <ISO8601>
+Base: <base-branch>
+Diff hash: <sha256 of git diff <base>...HEAD>
+Spec hash: <sha256 of spec file, or null>
+Test-plan hash: <sha256 of permanent test plan, or null>
+
+## Planned Checks
+- [ ] manual (triggered by has_ui_surface + scenario)
+- [ ] code (triggered by dedup miss)
+- [ ] ac-coverage (triggered by spec.acceptance_criteria_ids)
+- [ ] security (triggered by spec.risk_areas: [auth])
+- ...
+
+## Completed Checks
+- [x] code — swarm-report/<slug>-acceptance-code.md — PASS
+- [x] build — swarm-report/<slug>-acceptance-build.md — PASS
+...
+
+## Aggregated Verdict History
+### Cycle 1
+Verdict: FAILED
+Blockers: <copy from aggregated receipt>
+```
+
+**Rules:**
+1. Create and populate the file only after the full check plan is finalized — base
+   fan-out plus all conditional triggers (spec-driven and diff-driven) — and before any
+   agent batch is spawned. The initial `Planned Checks` list must reflect that complete
+   plan.
+2. Before each major action (spawning an agent batch, aggregating, writing the final
+   receipt) — **re-read** the state file via Read tool. Completed checks (`[x]`) are not
+   re-spawned on resume after compaction.
+3. Mark each check `[x]` with the artifact path and verdict as soon as the per-check file
+   is written.
+4. On Re-verification Loop re-entry (§Re-verification Loop), increment `Cycle`, reset the
+   `Planned Checks` list using the new diff/spec/test-plan hashes, move checks to be skipped
+   to a **`## Re-used from previous cycle`** section (with artifact pointers), and append a
+   new entry under `Aggregated Verdict History` when the cycle completes.
+5. When `Status: done` is written, the state file becomes read-only operational history —
+   it is not deleted automatically.
+
+The state file and the e2e-scenario file (`<slug>-e2e-scenario.md`) are independent — the
+latter is `manual-tester`'s internal re-anchor, owned by the agent; the state file is
+acceptance's own fan-out cursor, owned by this skill.
 
 ---
 
@@ -234,25 +300,58 @@ not wait for any to return before dispatching the others.
 | `true` | `manual-tester` + `code-reviewer` (unless skipped by Step 2.5) |
 | `false` | `code-reviewer` (unless skipped by Step 2.5) + build smoke (Bash) |
 
-### Conditional triggers (iteration 2)
+### Conditional triggers
 
 Add to the fan-out only when the trigger fires. Each trigger maps to a specialist agent with a
-narrow prompt. When no trigger fires for an agent, the agent is not spawned.
+narrow prompt. When no trigger fires for an agent, the agent is not spawned. Triggers read
+either from spec frontmatter or directly from the diff.
 
-| Trigger (in spec frontmatter) | Agent | Role |
+| Trigger | Agent | Role |
 |---|---|---|
-| `acceptance_criteria_ids` is a non-empty list | `business-analyst` | AC coverage — every `AC-N` has evidence in the diff, TC list, or manual-tester report |
-| `design.figma` is set, `has_ui_surface == true` | `ux-expert` | Design-review mode — verify UI matches the referenced mockup + project design system |
-| `risk_areas` includes any of `auth`, `payment`, `pii`, `data-migration` | `security-expert` | Security review against diff and any persisted state changes |
-| `non_functional.sla` set, **or** `risk_areas` includes `perf-critical` | `performance-expert` | Bench/regress check against the declared SLA |
-| `non_functional.a11y` set, `has_ui_surface == true` | `ux-expert` in a11y focus | Accessibility audit against the declared WCAG level |
+| spec `acceptance_criteria_ids` non-empty | `business-analyst` | AC coverage — every `AC-N` has evidence in the diff, TC list, or manual-tester report |
+| spec `design.figma` set, `has_ui_surface == true` | `ux-expert` design-review | Verify UI matches the referenced mockup + project design system |
+| spec `non_functional.a11y` set, `has_ui_surface == true` | `ux-expert` a11y focus | Accessibility audit against the declared WCAG level |
+| spec `risk_areas` includes any of `auth`, `payment`, `pii`, `data-migration` | `security-expert` | Security review against diff and any persisted state changes |
+| spec `non_functional.sla` set, **or** `risk_areas` includes `perf-critical` | `performance-expert` | Bench/regress check against the declared SLA |
+| diff touches a public API symbol, **or** changes span ≥ 3 top-level modules | `architecture-expert` | Module boundaries, dependency direction, public API contract |
+| diff touches any build file (`build.gradle*`, `settings.gradle*`, `pom.xml`, `package.json`, `Cargo.toml`, `go.mod`, `pyproject.toml`, `Makefile`) | `build-engineer` | Build config sanity — plugin versions, task wiring, dependency additions |
+| diff touches CI / release config (`.github/workflows/*`, `.gitlab-ci.yml`, `Dockerfile`, `docker-compose*`, `.circleci/config.yml`, `release.yml`) | `devops-expert` | Pipeline/release health, secret handling, rollout gates |
+
+**Diff-based trigger detection.** Two cached passes over the same diff:
+
+1. **Path pass** — run `git diff --name-only <base>...HEAD` once and cache the path set.
+   Use the cached set for all path-only rules (build files, CI/release config, cross-module
+   span).
+2. **Content pass (on demand)** — when the `architecture-expert` rule needs to decide
+   "diff touches a public API symbol", read the diff body once via
+   `git diff --unified=0 <base>...HEAD -- <cached-paths>` and cache it for the whole run.
+   Evaluate public-API heuristics against those patch hunks.
+
+Both caches live for the duration of the acceptance run — do not re-probe per agent.
+
+**Public API detection heuristic** for `architecture-expert`:
+- **Kotlin/Java**: changes under `src/main/` that add/remove/rename a `public` / `open`
+  symbol, or touch module-level files (`settings.gradle*`, `Module.kt`, `Dependencies.kt`).
+- **TypeScript/JavaScript**: changes to `export` / re-export lines, `index.ts` public
+  entrypoints, or `package.json` `"exports"` field.
+- **Swift**: changes to `public` / `open` declarations or `Package.swift`
+  `products` / `targets`.
+- **HTTP/RPC surface**: changes to files matching `**/routes/**`, `**/controllers/**`,
+  `**/handlers/**`, `**/api/**`, `*.proto`, `*.graphql`, `openapi.yaml`.
+- **Cross-module threshold**: `git diff --name-only` spans ≥ 3 top-level module directories
+  discovered from `settings.gradle*` / `package.json` workspaces / `Cargo.toml`
+  `[workspace]` members.
+
+If the heuristic is ambiguous, default to **not** spawning `architecture-expert` — a false
+negative is safer than a false positive (the skill exists to catch high-risk changes, not
+every diff).
 
 When both design-review and a11y triggers fire, combine into one `ux-expert` invocation with
 mode `both`. When no trigger fires, acceptance runs the base plan only — preserving
 backward compatibility with specs written before iteration 2.
 
-**Future iterations** will add `architecture-expert` (API contract), `build-engineer` (when
-build files changed), `devops-expert` (when CI config changed).
+**Future iterations** will add `visual-check` as a separate sibling skill (not a fan-out
+member) for pixel-level regression.
 
 ### Per-check artifact schema (shared by all sub-checks)
 
@@ -261,15 +360,24 @@ Each sub-check writes `swarm-report/<slug>-acceptance-<check>.md` with this fron
 ```yaml
 ---
 type: acceptance-check
-check: manual | code | build | ac-coverage | design | a11y | security | performance
+check: manual | code | build | ac-coverage | design | a11y | security | performance | architecture | build-config | devops
 agent: <agent-name or "bash">
 verdict: PASS | WARN | FAIL | SKIPPED
 severity: critical | major | minor | null
 confidence: high | medium | low | null
 domain_relevance: high | medium | low | null
+diff_hash: <sha256 of `git diff <base>...HEAD` at the moment the check ran; null for checks that do not depend on the diff>
 blocked_on: <optional — what the user must resolve; also used when a planned per-check artifact is missing>
 ---
 ```
+
+**`diff_hash` semantics.** Computed once per acceptance run from
+`git diff <base>...HEAD | sha256sum`; every check written during that run records the same
+value. The Re-verification Loop uses it to decide which checks to re-run (see §Re-verification
+Loop). Bash-only checks (build smoke) record the same hash because their input is the same
+diff. Checks whose verdict does not depend on the diff at all (e.g. a spec-only sanity check
+with no code to review) may write `diff_hash: null` — the Re-verification Loop never skips
+such a check purely on hash match.
 
 File naming is **one file per `check` value**: `swarm-report/<slug>-acceptance-<check>.md`
 (e.g. `-manual.md`, `-code.md`, `-design.md`, `-a11y.md`). When a single agent invocation
@@ -397,6 +505,61 @@ Prompt contents:
 
 Verdict rules: `PASS` if no regression; `WARN` for borderline; `FAIL` for violations.
 
+### 3.8 Spawn `architecture-expert` (conditional — diff-triggered)
+
+Fires when the diff touches a public API symbol **or** spans ≥ 3 top-level modules (see the
+heuristic at §Conditional triggers).
+
+Prompt contents:
+1. **Trigger reason** — `public-api` / `cross-module` / `both` with the specific file list
+   that matched.
+2. **Diff** — full git diff (scoped to triggered files + their immediate neighbours).
+3. **Module map** — list of top-level modules touched, discovered from
+   `settings.gradle*` / `package.json` workspaces / `Cargo.toml` workspace members.
+4. **Output path** — `swarm-report/<slug>-acceptance-architecture.md` with `check: architecture`.
+
+Verdict rules: `PASS` if public contracts are preserved and module dependency direction is
+clean; `WARN` for style issues (e.g., missing deprecation annotation, avoidable coupling);
+`FAIL` for contract breakage, circular dependencies, or leaking internals into a public API.
+
+### 3.9 Spawn `build-engineer` (conditional — diff-triggered)
+
+Fires when the diff touches any build file listed in §Conditional triggers.
+
+Prompt contents:
+1. **Build files changed** — exact file list from the diff.
+2. **Diff** — scoped to those files plus any touched module manifests.
+3. **Ecosystem** — resolved `ecosystem` from Step 0 (drives which toolchain the agent should
+   evaluate against).
+4. **Output path** — `swarm-report/<slug>-acceptance-build-config.md` with
+   `check: build-config`.
+
+Note: `check: build` is already used by the non-UI build smoke (§3.3). The expert review of
+**config changes** uses a distinct check identifier `build-config` so aggregation can treat
+the two axes independently (a project can have a clean smoke and a broken config, or vice
+versa).
+
+Verdict rules: `PASS` if dependency additions are pinned/hash-verified, plugin versions are
+consistent, and task wiring is intact; `WARN` for unpinned version ranges, unused
+dependencies, or minor style issues; `FAIL` for breaking plugin mismatches, missing required
+configuration, or dependency choices that conflict with project policy.
+
+### 3.10 Spawn `devops-expert` (conditional — diff-triggered)
+
+Fires when the diff touches CI / release configuration (see §Conditional triggers).
+
+Prompt contents:
+1. **CI files changed** — exact file list.
+2. **Diff** — scoped to CI/release files.
+3. **Repo context** — `public` vs `private` (affects secret handling guidance),
+   and any related marketplace/deployment manifests if present.
+4. **Output path** — `swarm-report/<slug>-acceptance-devops.md` with `check: devops`.
+
+Verdict rules: `PASS` if pipeline health is preserved, secrets are handled correctly, and
+rollout gates remain sound; `WARN` for minor inefficiencies or missing
+`timeout-minutes` / `concurrency` guards; `FAIL` for leaked secrets, disabled safety gates,
+or breaking workflow syntax.
+
 ---
 
 ## Step 4: Aggregate and Write Receipt
@@ -458,6 +621,14 @@ Save to `swarm-report/<slug>-acceptance.md`. Legacy fields preserved; new sectio
 **test_plan_source:** receipt | mounted | on-the-fly | absent
 **Context artifacts:** [paths to research.md, debug.md, implement.md, quality.md used as input]
 
+## Idempotency Hashes
+- `diff_hash`: <sha256 of `git diff <base>...HEAD`>
+- `spec_hash`: <sha256 of the spec file bytes, or `null` if no file spec>
+- `test_plan_hash`: <sha256 of the permanent test plan, or `null`>
+
+These three hashes drive the Re-verification Loop decision table; downstream orchestrators
+don't need to read them.
+
 ## Check Plan
 - list of checks that ran, one per line, with their trigger
 - e.g. `business-analyst` (AC coverage) — triggered by spec.acceptance_criteria_ids
@@ -474,6 +645,9 @@ Save to `swarm-report/<slug>-acceptance.md`. Legacy fields preserved; new sectio
 | A11y | ux-expert | … | … | … | swarm-report/<slug>-acceptance-a11y.md |
 | Security | security-expert | … | … | … | swarm-report/<slug>-acceptance-security.md |
 | Performance | performance-expert | … | … | … | swarm-report/<slug>-acceptance-performance.md |
+| Architecture | architecture-expert | … | … | … | swarm-report/<slug>-acceptance-architecture.md |
+| Build config | build-engineer | … | … | … | swarm-report/<slug>-acceptance-build-config.md |
+| DevOps | devops-expert | … | … | … | swarm-report/<slug>-acceptance-devops.md |
 | Build smoke | bash | … | … | … | swarm-report/<slug>-acceptance-build.md |
 
 ## Convergence signals
@@ -515,18 +689,44 @@ reported it.]
 
 ## Re-verification Loop
 
-On fix-loop re-entry:
+On fix-loop re-entry (after `FAILED` → `implement` fix → re-run acceptance):
 
 1. Re-probe Step 0 and Step 1 (project type rarely changes; inputs may).
-2. Re-run checks with this policy:
-   - **Failed checks** — re-run in full.
-   - **Passed checks** — re-run only if the current diff touches files the check inspected
-     (`code-reviewer`, `security-expert`, `performance-expert`), or build inputs changed
-     (`build smoke`), or the spec changed (`business-analyst`, `ux-expert`).
-     `manual-tester` re-runs previously-failed TCs plus a Smoke tier by default.
-   - Record `re-used previous verdict` in the new per-check receipt for skipped re-runs.
-3. Aggregate into a fresh `swarm-report/<slug>-acceptance.md`, overwriting the previous one.
-4. Repeat until VERIFIED or the user decides to ship as-is.
+2. Compute `diff_hash_new` = `sha256(git diff <base>...HEAD)`.
+3. Decide per-check action using the previous per-check artifact and `diff_hash`:
 
-Full `diff_hash`-based idempotency will be added in a later iteration; the policy above is
-the cheap interim.
+   | Previous verdict | Previous `diff_hash` vs `diff_hash_new` | Action |
+   |---|---|---|
+   | `PASS` or `SKIPPED` | match | **Skip** — reuse the existing artifact as-is. Record `re-used previous verdict` in the aggregated receipt. |
+   | `PASS` or `SKIPPED` | mismatch | Re-run. |
+   | `WARN` | match | Skip. Re-used verdict keeps the WARN; user had the option to ship with it. |
+   | `WARN` | mismatch | Re-run. |
+   | `FAIL` | any | **Always re-run.** A FAIL is the point of the loop; hash match means the fix didn't land in the diff yet — still must re-run to confirm. |
+   | any prior verdict with previous `diff_hash` = `null`, absent, or unreadable | any | Re-run — cannot prove idempotency without a usable hash. |
+
+   An explicit `diff_hash: null` and a missing `diff_hash` field are treated the same way:
+   both mean the prior artifact does not carry enough information to prove idempotency, so
+   the check must be re-run.
+
+4. For checks that are re-run:
+   - Overwrite the per-check artifact with fresh content and a new `diff_hash`.
+   - `manual-tester` specifically re-runs previously-failed TCs plus a Smoke tier by default;
+     the full plan is re-run only on explicit request or when the spec changed.
+5. Aggregate into a fresh `swarm-report/<slug>-acceptance.md`, overwriting the previous one.
+6. Repeat until VERIFIED or the user decides to ship as-is.
+
+**Spec/test-plan change override.** If the spec file or test-plan file changed between runs
+(detected by comparing their `sha256` to values recorded in the previous aggregated receipt
+under `spec_hash` / `test_plan_hash`), `business-analyst` and `manual-tester` are always
+re-run regardless of `diff_hash` — their input is the spec/TC list, not just the code diff.
+Other checks remain subject to the `diff_hash` policy.
+
+**Back-compat rule.** If the previous aggregated receipt does not contain `spec_hash`
+and/or `test_plan_hash` (e.g. a pre-iteration-3 receipt) — or either prior value is unknown
+or unreadable — treat that input as **changed** and re-run the affected checks to be safe:
+missing/unknown `spec_hash` forces `business-analyst`; missing/unknown `test_plan_hash`
+forces `manual-tester`. If both are missing/unknown, re-run both. Other checks remain
+subject to the `diff_hash` policy.
+
+This is the full idempotency pass that iteration 2 parked. Cost saving: on a single-file fix
+after a 5-agent FAIL, typically 2–3 passed checks are re-used instead of re-run.
