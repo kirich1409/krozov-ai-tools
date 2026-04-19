@@ -575,6 +575,11 @@ the hint, the engine would fall through to the structural-signature / ask-user f
 in practice, mis-classifying spec as implementation-plan and applying the wrong rubric
 (this was the historical drift this profile closes).
 
+**Artifact source:** in-memory draft, so engine classifies source as `conversation` and
+uses the spec profile's `source_routing.conversation: inline-revise` action for FAIL fixes
+(not `file: edit-in-place` — the draft isn't saved to `docs/specs/` yet). Revise-loop
+iterations happen inline in the write-spec flow.
+
 The spec profile (panel: business-analyst + architecture-expert) checks falsifiability of
 Acceptance Criteria, prerequisite realism, explicit Out of Scope, decisions with rationale,
 affected modules completeness, open questions tagged blocking vs non-blocking, and
