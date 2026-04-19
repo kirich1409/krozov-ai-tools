@@ -16,9 +16,11 @@
 //     array args; never shell interpolation. The workflow handles git/tag/push.
 
 import { readFileSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
-const REPO_ROOT = process.cwd();
+// Anchor paths to the script's own location so invocation cwd doesn't matter.
+const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const MARKETPLACE_PATH = join(REPO_ROOT, '.claude-plugin', 'marketplace.json');
 
 // ----- helpers --------------------------------------------------------------
@@ -76,10 +78,20 @@ function findEntry(marketplace, name) {
   return e;
 }
 
+// Workspace package.json path for plugins that ship as npm packages.
+// Currently only maven-mcp does; its nested layout puts the manifest at
+// plugins/maven-mcp/plugin/.claude-plugin/plugin.json while the npm package
+// lives at plugins/maven-mcp/package.json. Returns null for plugins with no
+// workspace package.json.
+function packageJsonPath(name) {
+  if (name === 'maven-mcp') return join(REPO_ROOT, 'plugins', 'maven-mcp', 'package.json');
+  return null;
+}
+
 // Apply a version bump to all files owned by `name`:
 //   - the plugin manifest (plugin.json)
 //   - the marketplace.json entry (in-memory only — caller writes once at end)
-//   - for maven-mcp ONLY, the workspace package.json at plugins/maven-mcp/
+//   - workspace package.json, if the plugin ships as an npm package
 function applyVersionToPlugin(marketplace, name, newVersion) {
   const entry = findEntry(marketplace, name);
   entry.version = newVersion;
@@ -88,33 +100,37 @@ function applyVersionToPlugin(marketplace, name, newVersion) {
   manifest.version = newVersion;
   writeJson(manifestPath(entry.source), manifest);
 
-  // maven-mcp special case: nested layout. Workspace package.json lives at
-  // plugins/maven-mcp/package.json; manifest lives at
-  // plugins/maven-mcp/plugin/.claude-plugin/plugin.json (one level deeper).
-  if (name === 'maven-mcp') {
-    const pkgPath = join(REPO_ROOT, 'plugins', 'maven-mcp', 'package.json');
+  const pkgPath = packageJsonPath(name);
+  if (pkgPath) {
     const pkg = readJson(pkgPath);
     pkg.version = newVersion;
     writeJson(pkgPath, pkg);
   }
 }
 
-// Update the dependency range entry in `dependent`'s plugin.json that points
-// at `depName`, raising it to `^MAJ.MIN.0` of the new version. Returns true
-// if the dependency was found and updated.
-function updateDependencyRange(dependent, depName, newDepVersion) {
-  const m = /^(\d+)\.(\d+)\.\d+$/.exec(newDepVersion);
-  if (!m) die(`cascade target version is not semver: ${newDepVersion}`);
+// Bump a cascade dependent: patch-bump its own version AND rewrite its
+// `dependencies[primaryName].version` to `^MAJ.MIN.0` of the new primary
+// version, in a single manifest read-write. Returns the new dependent
+// version.
+function applyCascadeBump(marketplace, dependent, primaryName, primaryNewVersion) {
+  const m = /^(\d+)\.(\d+)\.\d+$/.exec(primaryNewVersion);
+  if (!m) die(`cascade target version is not semver: ${primaryNewVersion}`);
   const range = `^${m[1]}.${m[2]}.0`;
 
-  const path = manifestPath(dependent.source);
-  const manifest = readJson(path);
-  if (!Array.isArray(manifest.dependencies)) return false;
-  const dep = manifest.dependencies.find((d) => d && d.name === depName);
-  if (!dep) return false;
-  dep.version = range;
-  writeJson(path, manifest);
-  return true;
+  const newVersion = bumpVersion(dependent.version, 'patch');
+  const entry = findEntry(marketplace, dependent.name);
+  entry.version = newVersion;
+
+  const mPath = manifestPath(dependent.source);
+  const manifest = readJson(mPath);
+  manifest.version = newVersion;
+  if (Array.isArray(manifest.dependencies)) {
+    const dep = manifest.dependencies.find((d) => d && d.name === primaryName);
+    if (dep) dep.version = range;
+  }
+  writeJson(mPath, manifest);
+
+  return newVersion;
 }
 
 // One-level cascade across the developer-workflow* family. The family is
@@ -131,11 +147,7 @@ function cascade(marketplace, primaryName, primaryNewVersion) {
     const deps = Array.isArray(manifest.dependencies) ? manifest.dependencies : [];
     if (!deps.some((d) => d && d.name === primaryName)) continue;
 
-    // Patch-bump the dependent and rewrite its dependency range to the new
-    // primary version's ^MAJ.MIN.0 band.
-    const newVersion = bumpVersion(entry.version, 'patch');
-    applyVersionToPlugin(marketplace, entry.name, newVersion);
-    updateDependencyRange(entry, primaryName, primaryNewVersion);
+    const newVersion = applyCascadeBump(marketplace, entry, primaryName, primaryNewVersion);
     cascaded.push({ name: entry.name, version: newVersion });
   }
   return cascaded;
@@ -145,7 +157,9 @@ function cascade(marketplace, primaryName, primaryNewVersion) {
 
 const PLUGIN = process.env.PLUGIN;
 const BUMP = process.env.BUMP;
-const CASCADE = process.env.CASCADE;
+// workflow_dispatch boolean inputs arrive as the strings 'true'/'false'; be
+// defensive against whitespace and casing for local dry-runs.
+const CASCADE_ENABLED = String(process.env.CASCADE ?? '').trim().toLowerCase() === 'true';
 
 if (!PLUGIN) die('PLUGIN env var is required');
 if (!BUMP) die('BUMP env var is required');
@@ -164,7 +178,7 @@ applyVersionToPlugin(marketplace, PLUGIN, newVersion);
 // whose `dependencies` ranges no longer include the new version. The cascade
 // patch-bumps each dependent and widens its range to the new MAJ.MIN band.
 let cascaded = [];
-if (CASCADE === 'true' && PLUGIN.startsWith('developer-workflow')) {
+if (CASCADE_ENABLED && PLUGIN.startsWith('developer-workflow')) {
   cascaded = cascade(marketplace, PLUGIN, newVersion);
 }
 

@@ -117,9 +117,35 @@ check_name_consistency() {
 #
 # Plugins are versioned independently — no global cross-plugin equality. For
 # each plugin we require marketplace.json[name].version ==
-# plugin.json:version. For maven-mcp specifically (the only plugin that ships
-# an npm package), we additionally require plugins/maven-mcp/package.json
-# version to match the same value.
+# plugin.json:version. Plugins that also ship as npm packages have a workspace
+# package.json whose version must match too.
+#
+# Which plugins ship as npm packages is data-driven: presence of a
+# package.json one level above the plugin.json manifest (nested layout, e.g.
+# plugins/maven-mcp/package.json with manifest at plugins/maven-mcp/plugin/).
+# Add a new npm-publishing plugin by creating that layout; no script edits
+# needed. Same detection lives in scripts/release.mjs (packageJsonPath).
+
+# Path to the workspace package.json for a plugin whose manifest source is
+# $1. Echoes the path if the file exists and sits at the plugin's workspace
+# root (parent of manifest's source dir); echoes nothing otherwise.
+workspace_package_json() {
+  local source="$1"
+  # marketplace source entries are like "./plugins/maven-mcp/plugin" — strip
+  # the leading "./" for clean paths.
+  local clean="${source#./}"
+  local parent
+  parent=$(dirname "$clean")
+  # Only treat as a workspace package.json if it sits under plugins/<name>/
+  # (i.e. parent depth is at least plugins/something). For flat-layout plugins
+  # parent would be "plugins" which must NOT match.
+  case "$parent" in
+    plugins/*)
+      local candidate="${parent}/package.json"
+      [ -f "$candidate" ] && echo "$candidate"
+      ;;
+  esac
+}
 
 check_version_consistency() {
   echo "--- L4: Per-plugin version consistency ---"
@@ -136,21 +162,13 @@ check_version_consistency() {
       ok "'$name' version $version"
     fi
 
-    # maven-mcp is the only plugin with a workspace package.json. Its nested
-    # layout puts the manifest at plugins/maven-mcp/plugin/.claude-plugin/
-    # while the npm package lives at plugins/maven-mcp/package.json. Both
-    # files must carry the same version as marketplace.json.
-    if [ "$name" = "maven-mcp" ]; then
-      pkg_json="plugins/maven-mcp/package.json"
-      if [ ! -f "$pkg_json" ]; then
-        fail "'$name' workspace package.json missing at $pkg_json"
+    pkg_json=$(workspace_package_json "$source")
+    if [ -n "$pkg_json" ]; then
+      pkg_version=$(jq -r '.version' "$pkg_json")
+      if [ "$version" != "$pkg_version" ]; then
+        fail "'$name' version mismatch: marketplace.json=$version, $pkg_json=$pkg_version"
       else
-        pkg_version=$(jq -r '.version' "$pkg_json")
-        if [ "$version" != "$pkg_version" ]; then
-          fail "'$name' version mismatch: marketplace.json=$version, $pkg_json=$pkg_version"
-        else
-          ok "'$name' package.json version $pkg_version"
-        fi
+        ok "'$name' package.json version $pkg_version"
       fi
     fi
   done < <(jq -r '.plugins[] | [.name, .version, .source] | @tsv' "$MARKETPLACE")
