@@ -113,7 +113,7 @@ disk without a matching receipt.
 
 Acceptance owns the mount-receipt when invoked outside `feature-flow`. Emit a mount-receipt
 at `swarm-report/<slug>-test-plan.md` following the canonical format in
-`generate-test-plan/SKILL.md` §Receipt, applying the mount overrides: `status: Mounted`,
+`generate-test-plan/SKILL.md` §Receipt. Apply the mount overrides: `status: Mounted`,
 `review_verdict: skipped`, `source_spec: existing (pre-orchestration)`. Derive
 `phase_coverage` from the permanent file's phase headings; omit the field if coverage cannot
 be determined reliably. Pass the permanent file to `manual-tester`.
