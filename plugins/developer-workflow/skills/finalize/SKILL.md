@@ -1,14 +1,14 @@
 ---
 name: finalize
 description: >
-  Code-quality pass over the current branch changes. Multi-round review-and-fix loop:
-  code-reviewer (plan conformance, CLAUDE.md, bugs) → /simplify (reuse/quality/efficiency) →
-  pr-review-toolkit agents (test quality, silent failures, type design) → conditional expert
-  reviews (security, performance, architecture). `/check` between fixes. Exits PASS when no
-  BLOCK-level findings remain, or ESCALATE after 3 rounds. Invoke on: "finalize", "run code
-  quality pass", "clean up the code", "prepare for review", "полируй код", "финализация",
-  "доведи код", "почисти", or when an orchestrator (feature-flow, bugfix-flow) runs this
-  stage between implement and acceptance.
+  This skill should be used when the user asks to "finalize", "run code quality pass", "clean
+  up the code", "prepare for review", "полируй код", "финализация", "доведи код", "почисти",
+  or when an orchestrator (feature-flow, bugfix-flow) runs the code-quality stage between
+  implement and acceptance. Executes a multi-round review-and-fix loop over the current
+  branch: code-reviewer (plan conformance, CLAUDE.md, bugs) → /simplify (reuse, quality,
+  efficiency) → pr-review-toolkit agents (test quality, silent failures, type design) →
+  conditional expert reviews (security, performance, architecture), with `/check` between
+  fixes. Exits PASS when no BLOCK-level findings remain, or ESCALATE after 3 rounds.
 ---
 
 # Finalize
@@ -169,58 +169,9 @@ Do not let `/check` failures cascade — a broken build blocks further review an
 
 ---
 
-## Report
+## Exit artifact
 
-Save `swarm-report/<slug>-finalize.md` on exit (PASS or ESCALATE):
-
-```markdown
-# Finalize: <slug>
-
-**Date:** <date>
-**Rounds run:** N (of 3 max)
-**Exit:** PASS | ESCALATE
-**Escalation reason:** <only if ESCALATE>
-
-## Rounds
-
-### Round 1
-- Phase A (code-reviewer): verdict, N findings (K BLOCK, M WARN, L NIT). Fixes applied: X.
-- Phase B (/simplify): Y files changed, auto-fixed.
-- Phase C (pr-review-toolkit): breakdown per agent.
-- Phase D (experts): triggered: [security-expert, ...]; findings, fixes.
-- `/check` after round: PASS | FAIL (reason)
-
-### Round 2
-...
-
-## Unresolved BLOCKs (on ESCALATE only)
-
-Findings that could not be fixed and were NOT downgraded. Populated only when the
-finalize stage exits ESCALATE — lists BLOCKs that remain after 3 rounds, or BLOCKs
-whose fix broke `/check` and was reverted (per §Mechanical verification). The user
-must decide: loop back to `implement`, accept as risk, or re-scope.
-
-| Severity | Confidence | Category | Finding | Phase | Round | File:Line |
-|---|---|---|---|---|---|---|
-| BLOCK (critical) | 75 | security | Token logged in clear | D | 3 | src/auth/Logger.kt:23 |
-
-## Remaining findings (not auto-fixed)
-
-Non-BLOCK items surfaced for reviewer awareness — they do not block exit with PASS.
-
-| Severity | Confidence | Category | Finding | Phase | File:Line |
-|---|---|---|---|---|---|
-| WARN | 60 | quality | Inconsistent error logging | A | src/foo/Bar.kt:142 |
-| NIT  | 75 | consistency | Unused import of X in new file | B | ... |
-
-## Acknowledged risks
-
-Findings that the user explicitly decided to accept (e.g., during escalation). Not auto-populated — the user marks items here when handing control back for the run to continue. Distinct from "Unresolved BLOCKs" (which the finalize stage could not close).
-
-## Commits added during finalize
-
-- <hash> <message>
-```
+On exit (PASS or ESCALATE) save the finalize artifact to `swarm-report/<slug>-finalize.md` using the template in [`references/exit-artifact.md`](references/exit-artifact.md). The template covers: round-by-round log, unresolved BLOCKs (ESCALATE only), remaining non-BLOCK findings, acknowledged risks, and commits added during the run.
 
 ---
 
