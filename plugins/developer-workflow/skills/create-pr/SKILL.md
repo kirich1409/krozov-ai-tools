@@ -136,7 +136,7 @@ Only set labels/reviewers when **creating** (draft or default) or when **promoti
 
 Fetch available labels (GitHub: `gh label list --json name,description --limit 100`; GitLab: `glab api /projects/:fullpath/labels`). Select from existing only, based on changed file paths, commit types, and scope. Do not invent labels.
 
-**Add, don't replace.** On `--promote` (and on refreshes in default mode if labels were derived earlier), only **add** missing labels computed from the diff; never remove labels set manually by humans. This preserves reviewer / triage / release labels that a maintainer applied post-creation.
+**Add, don't replace.** When deriving labels during creation (`--draft` or default) or `--promote`, only **add** missing labels computed from the diff; never remove labels set manually by humans. This preserves reviewer / triage / release labels that a maintainer may have applied between draft creation and promote. `--refresh` skips Step 6 entirely (see header), so it never touches labels at all.
 
 ### 6.2 Reviewers
 

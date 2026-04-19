@@ -72,7 +72,7 @@ Read `scripts` from `package.json` and run whichever of these exist, in this ord
 3. `test` (or `test:unit`)
 4. `build` (only if the project's CI runs it — check `.github/workflows/*.yml` for signal)
 
-**Node order deviates from the general Phase 3 sequence (Build → Lint → Typecheck → Tests).** JavaScript projects usually run tests without a compilation step, so lint and typecheck surface problems faster than trying to build first. `build` is last because it's the slowest and often not required for local verification. Callers that need the general order can use `--only build` first.
+**For Node projects this stack-specific order is authoritative** and intentionally overrides the general Phase 3 sequence (Build → Lint → Typecheck → Tests). Rationale: JavaScript projects usually run tests without a compilation step, so lint and typecheck surface problems faster than building first; `build` is the slowest and often unnecessary for local verification, so it's opt-in and last. The Phase 3 description in §3 describes the *default* order for stacks that do not override it.
 
 Pick the package manager from lockfile:
 
@@ -98,7 +98,8 @@ Inspect `pyproject.toml` / `setup.cfg` for configured tools. Run only the tools 
 
 - `[tool.ruff]` → `ruff check .`
 - `[tool.mypy]` → `mypy .` (with project path)
-- `[tool.pyright]` or `[tool.pylint]` → corresponding tool (`pyright`, `pylint <package>`)
+- `[tool.pyright]` → `pyright`
+- `[tool.pylint]` → `pylint <package>`
 - `[tool.flake8]` → `flake8 .`
 - `[tool.pytest.ini_options]` or `tests/` present → `pytest` (or `uv run pytest` if the project uses uv)
 - `[tool.black]` → `black --check .`

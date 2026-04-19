@@ -6,7 +6,7 @@ description: >
   pr-review-toolkit agents (test quality, silent failures, type design) → conditional expert
   reviews (security, performance, architecture). `/check` between fixes. Exits PASS when no
   BLOCK-level findings remain, or ESCALATE after 3 rounds. Invoke on: "finalize", "run code
-  quality pass", "clean up the code", "prepare for review", "польшуй код", "финализация",
+  quality pass", "clean up the code", "prepare for review", "полируй код", "финализация",
   "доведи код", "почисти", or when an orchestrator (feature-flow, bugfix-flow) runs this
   stage between implement and acceptance.
 ---
@@ -35,7 +35,7 @@ The caller (orchestrator or user) provides:
 - **`slug`** — the task slug used for artifact naming
 - **Branch state** — finalize reads the current branch; it does not switch branches
 - **Context artifact path (optional)** — Phase A's `code-reviewer` anchor. Accepts either a feature plan (`swarm-report/<slug>-plan.md`) or, for bugfix-flow invocations, the debug artifact (`swarm-report/<slug>-debug.md`). Either works — `code-reviewer` treats whichever is provided as the "what was supposed to happen" document.
-- **Diff artifact path (derived)** — before invoking `code-reviewer`, materialize the diff to `swarm-report/<slug>-diff.txt` (`git diff $(git merge-base origin/main HEAD)..HEAD`) and pass that path to the agent. Matches the invocation template in `docs/ORCHESTRATION.md`.
+- **Diff artifact path (derived)** — before invoking `code-reviewer`, materialize the diff to `swarm-report/<slug>-diff.txt` and pass that path to the agent. Matches the invocation template in `docs/ORCHESTRATION.md`. Do **not** hardcode `origin/main`: derive the remote's default branch first (the same way `create-pr` does — `git remote show origin | grep "HEAD branch" | awk '{print $NF}'`, with `main` / `master` / `develop` as ordered fallbacks), then diff `$(git merge-base origin/<base> HEAD)..HEAD`. Works on any repository regardless of default-branch naming.
 - **Tolerance flags (optional):**
   - `--allow-warn` — stop after 1 round even if WARN findings remain (default: still exit PASS on WARN-only, but keep iterating BLOCKs until resolved or round budget runs out)
   - `--skip-experts` — omit Phase D (rarely useful; experts auto-skip if no triggers match)
@@ -65,7 +65,9 @@ Round N:
 
 ### Max round budget
 
-`max_rounds = 3`. Total budget (per round: 4 phases + fixes + `/check` after each fix) can take non-trivial wall time on large diffs. If a project regularly hits round 3, the BLOCK threshold may be too strict for the project's conventions — tune Phase A's `code-reviewer` confidence threshold (see `developer-workflow-experts/agents/code-reviewer.md`).
+Default `max_rounds = 3`, overridable to any integer ≥ 1 via the `--max-rounds N` flag (see §Inputs). The caller's flag wins when present; otherwise the default applies. ESCALATE semantics key off the effective value, not the constant — "after 3 rounds" in this document means "after the effective max_rounds".
+
+Total budget (per round: 4 phases + fixes + `/check` after each fix) can take non-trivial wall time on large diffs. If a project regularly hits the cap, the BLOCK threshold may be too strict for the project's conventions — tune Phase A's `code-reviewer` confidence threshold (see `developer-workflow-experts/agents/code-reviewer.md`) rather than silently raising `max_rounds`.
 
 ---
 
