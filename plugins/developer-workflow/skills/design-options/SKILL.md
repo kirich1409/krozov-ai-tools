@@ -69,7 +69,7 @@ Launch `architecture-expert` agents (from `developer-workflow-experts`) in paral
 |---|---|
 | A — Minimal | Smallest surface area. Reuse existing structure. Minimize new abstractions, new modules, new dependencies. Optimize for "do the thing without disturbing the rest of the codebase". |
 | B — Clean | Ideal architecture disregarding migration cost. Accept larger refactors, new modules, or dependency restructuring if it produces a cleaner long-term shape. |
-| C — Pragmatic | Balanced middle. Introduce abstractions only where they pay for themselves in the short term. Accept some compromise for long-term maintainability. |
+| C — Pragmatic | Follow the existing project patterns as-is; extend only the specific seam this task needs. Do not generalize, do not abstract ahead of use. When in doubt, mirror the nearest similar feature in the codebase. |
 
 For **Options count = 2**, drop C. Picking between Minimal and Clean is a common fast-path when the user only wants the two extremes.
 
@@ -174,10 +174,21 @@ Wait for the user's choice before proceeding — one question per round, alterna
 
 Once the user picks an option (or a hybrid is specified):
 
-1. Write `swarm-report/<slug>-design.md` containing **only** the chosen option's full text plus a short "Chosen because: <reason>" preamble. This is the downstream-friendly artifact — `plan-review` and later stages that care about the chosen architecture read this (not the multi-option file). `plan-review` does not yet ingest this file automatically; the orchestrator should pass the path as an additional input when this stage ran.
+1. Write `swarm-report/<slug>-design.md` containing **only** the chosen option's full text plus a short "Chosen because: <reason>" preamble. This is the downstream-friendly artifact for stages that care about the chosen architecture (not the multi-option file).
 2. Leave the `<slug>-design-options.md` artifact in place as context for later review.
 
-If the user requested a hybrid, compose the hybrid as a fresh text combining the chosen structural choices + rationale. State explicitly which parts came from which option.
+### Downstream consumption — current vs. future
+
+**Current:** `plan-review` does not auto-detect or consume `<slug>-design.md`. Workaround — the orchestrator (feature-flow §1.3a) passes this path to `plan-review` as an additional context input when the design-options stage ran.
+
+**Future (TODO):** extend `plan-review` to auto-detect `<slug>-design.md` and ingest it without orchestrator assistance. Tracked as a follow-up — not a blocker for this skill to be useful today.
+
+### If the user asks for a hybrid
+
+1. Ask the user to specify which parts from which option (one short sentence per part is fine).
+2. Re-invoke `architecture-expert` with a synthesis prompt: combine the specified parts from the chosen options, flag any coherency conflicts (e.g., "Minimal's reuse strategy clashes with Clean's new module boundary"), and produce a single option text.
+3. Persist to `swarm-report/<slug>-design.md` with preamble `Option: Hybrid (A+B)` — or whichever combination — and `Chosen because: <reason>`. The option label in the file makes the hybrid origin explicit for later review.
+4. If the synthesis surfaces incompatibilities the user did not resolve, report them in the preamble under "Known tensions" — the hybrid still persists, but downstream reviewers see the compromise.
 
 ---
 

@@ -1,17 +1,14 @@
 ---
 name: finalize
 description: >
-  Code-quality pass over the current branch changes. Runs multi-round review-and-fix loop:
-  code-reviewer (plan conformance, CLAUDE.md, bugs) → /simplify (reuse, quality, efficiency) →
+  Code-quality pass over the current branch changes. Multi-round review-and-fix loop:
+  code-reviewer (plan conformance, CLAUDE.md, bugs) → /simplify (reuse/quality/efficiency) →
   pr-review-toolkit agents (test quality, silent failures, type design) → conditional expert
-  reviews (security, performance, architecture). Between each fix and each phase the /check
-  skill verifies the code still builds, lints, and tests pass. Exits PASS when no BLOCK-level
-  findings remain (WARN and NIT items are surfaced in the report but do not block), or
-  ESCALATE after 3 rounds. Does NOT verify functional correctness — that's
-  acceptance. Does NOT verify plan conformance at a logic level — that's handled by
-  code-reviewer in Phase A. Invoke when the user says "finalize", "run code quality pass",
-  "clean up the code", "prepare for review", "доведи код", "почисти", or when an orchestrator
-  (feature-flow, bugfix-flow) runs this stage between implement and acceptance.
+  reviews (security, performance, architecture). `/check` between fixes. Exits PASS when no
+  BLOCK-level findings remain, or ESCALATE after 3 rounds. Invoke on: "finalize", "run code
+  quality pass", "clean up the code", "prepare for review", "полируй код", "финализация",
+  "доведи код", "почисти", or when an orchestrator (feature-flow, bugfix-flow) runs this
+  stage between implement and acceptance.
 ---
 
 # Finalize
@@ -38,9 +35,11 @@ The caller (orchestrator or user) provides:
 - **`slug`** — the task slug used for artifact naming
 - **Branch state** — finalize reads the current branch; it does not switch branches
 - **Context artifact path (optional)** — Phase A's `code-reviewer` anchor. Accepts either a feature plan (`swarm-report/<slug>-plan.md`) or, for bugfix-flow invocations, the debug artifact (`swarm-report/<slug>-debug.md`). Either works — `code-reviewer` treats whichever is provided as the "what was supposed to happen" document.
+- **Diff artifact path (derived)** — before invoking `code-reviewer`, materialize the diff to `swarm-report/<slug>-diff.txt` and pass that path to the agent. Matches the invocation template in `docs/ORCHESTRATION.md`. Do **not** hardcode `origin/main`: derive the remote's default branch first (the same way `create-pr` does — `git remote show origin | grep "HEAD branch" | awk '{print $NF}'`, with `main` / `master` / `develop` as ordered fallbacks), then diff `$(git merge-base origin/<base> HEAD)..HEAD`. Works on any repository regardless of default-branch naming.
 - **Tolerance flags (optional):**
   - `--allow-warn` — stop after 1 round even if WARN findings remain (default: still exit PASS on WARN-only, but keep iterating BLOCKs until resolved or round budget runs out)
   - `--skip-experts` — omit Phase D (rarely useful; experts auto-skip if no triggers match)
+  - `--max-rounds N` — override the default 3-round cap. Use when the user wants one more round after an ESCALATE, without restarting the whole stage. Must be ≥ 1.
 
 ---
 
@@ -66,7 +65,9 @@ Round N:
 
 ### Max round budget
 
-`max_rounds = 3`. Total budget (per round: 4 phases + fixes + `/check` after each fix) can take non-trivial wall time on large diffs. If a project regularly hits round 3, the BLOCK threshold may be too strict for the project's conventions — tune Phase A's `code-reviewer` confidence threshold (see `developer-workflow-experts/agents/code-reviewer.md`).
+Default `max_rounds = 3`, overridable to any integer ≥ 1 via the `--max-rounds N` flag (see §Inputs). The caller's flag wins when present; otherwise the default applies. ESCALATE semantics key off the effective value, not the constant — "after 3 rounds" in this document means "after the effective max_rounds".
+
+Total budget (per round: 4 phases + fixes + `/check` after each fix) can take non-trivial wall time on large diffs. If a project regularly hits the cap, the BLOCK threshold may be too strict for the project's conventions — tune Phase A's `code-reviewer` confidence threshold (see `developer-workflow-experts/agents/code-reviewer.md`) rather than silently raising `max_rounds`.
 
 ---
 
@@ -83,8 +84,8 @@ The agent returns a structured verdict: PASS / WARN / FAIL with findings scored 
 
 | Severity × confidence | Action |
 |---|---|
-| critical ≥ 75 | Fix immediately. After fix, re-run `/check`. If the fix does not converge, the finding stays BLOCK — the round ends without exiting PASS; counted against the 3-round budget. Do not silently downgrade a critical finding to "acknowledged risk". |
-| major ≥ 75 | Fix if tractable. If fix requires refactoring beyond the diff scope → escalate to caller. Remains BLOCK until resolved or escalated. |
+| critical ≥ 75 | Fix immediately. After fix, re-run `/check`. If `/check` PASSes and the finding is resolved → BLOCK cleared. If the fix does not converge, the finding stays BLOCK — the round ends without exiting PASS; counted against the 3-round budget. Do not silently downgrade a critical finding to "acknowledged risk". |
+| major ≥ 75 | Fix if tractable. On successful fix + `/check` PASS → BLOCK cleared. If fix requires refactoring beyond the diff scope → escalate to caller; the finding remains BLOCK until the caller resolves it or explicitly moves it to "acknowledged risks" at ESCALATE. |
 | minor ≥ 50 | Include in report as NIT. Don't fix automatically; caller/user decides. NIT never blocks PASS. |
 
 If `code-reviewer` returns FAIL verdict → this phase has BLOCKs that must be addressed before continuing.
@@ -97,7 +98,7 @@ Summary of this phase's findings goes into the round's log.
 
 ## Phase B — Built-in simplification (`/simplify`)
 
-Invoke the built-in Claude Code skill `/simplify`. It runs three parallel review agents (reuse, quality, efficiency) and **applies fixes directly** for the findings it considers real.
+Invoke the built-in Claude Code skill `/simplify`. It performs a parallel reuse / quality / efficiency pass and **applies fixes directly** for the findings it considers real. The exact implementation (number of sub-agents, internal structure) may evolve — finalize treats `/simplify` as a behavioural contract, not an implementation detail.
 
 `/simplify` focuses on:
 - **Reuse**: duplicated logic that should use an existing utility
@@ -160,7 +161,7 @@ Experts produce deeper, higher-risk findings. Apply the same severity × confide
 After **any** code modification within a round (Phase A fix, Phase B auto-fix, Phase C fix, Phase D fix), re-invoke `/check`. If `/check` returns FAIL:
 
 1. Log which phase's fix introduced the failure.
-2. Attempt a narrow repair (1 attempt max).
+2. Attempt a narrow repair — **1 attempt max** (stricter than implement's 3-per-gate, which is before the first clean build). At finalize stage the code already passed `/check` once, so a regression from a finalize fix signals that the fix itself was wrong; repeated retry usually compounds the problem rather than converging.
 3. If still failing → revert the fix and keep the originating finding **as BLOCK** on the round's list — the finding is not resolved, so it counts against the round budget. Continue with the remaining phases of the round (they may still find other issues), but do not mark the reverted finding as "acknowledged risk" — that label is reserved for items the user knowingly accepts at the end.
 4. If the round ends with any such unresolved BLOCK, go to the next round. If round 3 ends with unresolved BLOCKs, exit with ESCALATE.
 

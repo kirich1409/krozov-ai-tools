@@ -509,8 +509,8 @@ Each artifact includes:
 | **Perplexity** | Web research: approaches, best practices, pitfalls | Research (Web Expert) |
 | **DeepWiki** | AI-generated documentation for GitHub repositories | Research (Docs Expert) |
 | **Context7** | Library and framework documentation | Research (Docs Expert) |
-| **mobile MCP** | Testing on real devices and emulators | Verify (`manual-tester`, `acceptance`) |
-| **playwright MCP** | Web application testing in the browser | Verify (`manual-tester`) |
+| **mobile MCP** | Testing on real devices and emulators | Acceptance (`manual-tester`, `acceptance`) |
+| **playwright MCP** | Web application testing in the browser | Acceptance (`manual-tester`) |
 
 
 ## 11. Re-Anchoring Protocol

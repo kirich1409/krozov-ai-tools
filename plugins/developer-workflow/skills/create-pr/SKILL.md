@@ -78,9 +78,11 @@ Capture:
 ## Step 3: Push branch (all modes — if local has new commits)
 
 ```bash
-# Ensure upstream + push
+# Ensure upstream exists. First push uses -u to set upstream tracking.
 git rev-parse --abbrev-ref @{u} 2>/dev/null || git push -u origin "$BRANCH"
-# If upstream set but local is ahead
+# Then sync any local commits that aren't on the remote yet.
+# This is a no-op ("Everything up-to-date") if the branch is already in sync,
+# which is the common case for --refresh / --promote between commits.
 git push
 ```
 
@@ -120,7 +122,7 @@ Look for artifacts in `./swarm-report/` that match the current branch/task slug.
 
 Slug resolution:
 1. Prefer slug if orchestrator passed it as argument
-2. Fallback to branch name with `feature/` / `fix/` / `chore/` prefix stripped
+2. Fallback to branch name with common prefix stripped: `feature/`, `fix/`, `hotfix/`, `bug/`, `chore/`, `refactor/`, `docs/`
 
 Artifacts are gitignored (in `swarm-report/`), so they won't appear in diff — include them as *references* in the body (e.g., "See `swarm-report/my-slug-plan.md`"), not as inlined content. Reviewers working on the PR locally can read them; CI cannot, but the body remains readable without them.
 
@@ -133,6 +135,8 @@ Only set labels/reviewers when **creating** (draft or default) or when **promoti
 ### 6.1 Labels
 
 Fetch available labels (GitHub: `gh label list --json name,description --limit 100`; GitLab: `glab api /projects/:fullpath/labels`). Select from existing only, based on changed file paths, commit types, and scope. Do not invent labels.
+
+**Add, don't replace.** When deriving labels during creation (`--draft` or default) or `--promote`, only **add** missing labels computed from the diff; never remove labels set manually by humans. This preserves reviewer / triage / release labels that a maintainer may have applied between draft creation and promote. `--refresh` skips Step 6 entirely (see header), so it never touches labels at all.
 
 ### 6.2 Reviewers
 
@@ -218,6 +222,8 @@ When `--refresh` or `--promote` runs and `PR_BODY` is non-empty:
 3. Checklist items that are **checked** are preserved as checked — assume the user or reviewer ticked them
 
 Everything else is regenerated from artifacts + git state.
+
+**Edge case: empty or missing `PR_BODY`.** If `PR_BODY` is empty (e.g., freshly created draft with no body), skip the preserve-step entirely and generate the body from scratch. Do not fail — the preserve-step is an enhancement, not a precondition.
 
 ---
 
