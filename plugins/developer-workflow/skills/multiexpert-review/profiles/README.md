@@ -74,7 +74,7 @@ Presence of any forbidden field → engine refuses to load the profile: `[multie
 
 ## Detection precedence (Step 1 of engine)
 
-1. **Explicit caller hint** — args prefix `profile: <name>\n---\n`. Unknown `<name>` → fail loud `UNKNOWN_PROFILE_HINT`.
+1. **Explicit caller hint** — args prefix `profile: <name>\n---\n`. Both lines MUST start at **column 0** (no leading whitespace / indentation — the engine matches `^profile:\s+(\S+)\s*$` on line 1 and `^---\s*$` on line 2). Callsites embedding this block inside markdown lists or docs must unindent the example so contributors copy it verbatim without stray indentation. Unknown `<name>` → fail loud `UNKNOWN_PROFILE_HINT`.
 2. **Frontmatter type** — artifact's YAML frontmatter `type:` value; first profile whose `detect.frontmatter_type` list contains that value wins.
 3. **Path glob** — artifact file path; first profile with matching `detect.path_globs` wins.
 4. **Structural signatures** — all regexes in `detect.structural_signatures` must match artifact content. First profile whose signatures all match wins.
