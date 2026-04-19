@@ -10,7 +10,7 @@ Monorepo for Claude Code plugins by krozov. Contains six plugins:
 |--------|-----------|-------------|
 | maven-mcp | `plugins/maven-mcp/` | MCP server for Maven dependency intelligence |
 | sensitive-guard | `plugins/sensitive-guard/` | Scans files for secrets and PII before they reach AI servers |
-| developer-workflow | `plugins/developer-workflow/` | Lifecycle pipeline — research, decomposition, spec, plan review, test planning, implementation, debugging, QA, PR workflow |
+| developer-workflow | `plugins/developer-workflow/` | Lifecycle pipeline — research, decomposition, spec, multiexpert review, test planning, implementation, debugging, QA, PR workflow |
 | developer-workflow-experts | `plugins/developer-workflow-experts/` | 9 reusable review/consult agents (code-reviewer, architecture-expert, security-expert, …) — safe standalone |
 | developer-workflow-kotlin | `plugins/developer-workflow-kotlin/` | Kotlin/Android/KMP specialists and migration skills |
 | developer-workflow-swift | `plugins/developer-workflow-swift/` | Swift/iOS/macOS specialists and Swift/SwiftUI references |

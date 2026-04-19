@@ -102,9 +102,12 @@ selected branch as `test_plan_source` in the receipt.
 
 Read the receipt's YAML frontmatter and load `permanent_path`. Interpret `review_verdict` per
 the canonical definition in `generate-test-plan/SKILL.md` §Receipt: treat `PASS` / `WARN` /
-`skipped` as proceed; `FAIL` and `pending` as blockers that escalate back to the orchestrator.
-Pass the **permanent file** to `manual-tester` as the primary test-plan source. If the
-receipt has a `platform:` field, use it as an additional input to Step 0's override policy.
+`skipped` as proceed; `FAIL` and `pending` as blockers that escalate back to the invoking
+orchestrator or the user (acceptance is called from `feature-flow`, `bugfix-flow`, or
+standalone — it does not assume which), recommending revision via `multiexpert-review`
+before acceptance runs again. Pass the **permanent file** to `manual-tester` as the primary
+test-plan source. If the receipt has a `platform:` field, use it as an additional input to
+Step 0's override policy.
 
 #### Branch 2 — Permanent file exists without receipt (`test_plan_source: mounted`)
 
@@ -228,7 +231,7 @@ before fan-out.
 Before issuing the Step 3 fan-out — but **after** the full check plan has been finalized
 (Step 3 intro resolves base + all conditional triggers) — save the plan and
 compaction-resilient progress to `swarm-report/<slug>-acceptance-state.md`. Symmetric to
-`plan-review`'s state file. This file carries the acceptance run across context compaction —
+`multiexpert-review`'s state file. This file carries the acceptance run across context compaction —
 it is never a receipt, just operational state.
 
 Step ordering: 2.5 dedup probe → Step 3 intro resolves conditional triggers → write the
@@ -577,8 +580,9 @@ canonical field for surfacing unresolved conditions per the per-check schema; no
 
 ### Aggregation — PoLL rules
 
-Acceptance uses the same aggregation protocol as `plan-review` (see `plan-review/SKILL.md`
-§"Aggregation Rules"). Input shape is per-check (not per-reviewer), reduction logic identical:
+Acceptance uses the same aggregation protocol as `multiexpert-review` (see
+`multiexpert-review/SKILL.md` §"Step 4 — Synthesize verdict"). Input shape is per-check
+(not per-reviewer), reduction logic identical:
 
 | Signal | Action |
 |---|---|

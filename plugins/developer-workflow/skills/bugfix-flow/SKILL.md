@@ -37,7 +37,7 @@ Debug      -> Plan             (complex fix — needs planning)
 Debug      -> Implement        (simple fix — root cause diagnosed, fix is clear)
 Debug      -> Report           (not reproducible or escalated)
 Plan       -> Implement
-Plan       -> Debug            (plan review FAIL — need more diagnostic context)
+Plan       -> Debug            (multiexpert review FAIL — need more diagnostic context)
 Implement  -> Finalize
 Finalize   -> Acceptance       (PASS — no BLOCKs remain)
 Finalize   -> Implement        (ESCALATE after 3 rounds; user routes back)
@@ -105,7 +105,7 @@ When the debug artifact indicates a complex fix (touches multiple modules, needs
 decisions, or the recommended fix direction has alternatives):
 
 1. Create an implementation plan in Plan Mode based on the debug findings
-2. Invoke `developer-workflow:plan-review` to validate the plan
+2. Invoke `developer-workflow:multiexpert-review` to validate the plan
 3. If FAIL → back to Debug for more context
 4. If PASS/CONDITIONAL → proceed to Implement
 

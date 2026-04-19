@@ -1,7 +1,7 @@
 {
   "name": "developer-workflow",
   "version": "0.10.0",
-  "description": "Developer workflow pipeline \u2014 research, decomposition, specification, plan review, implementation, debugging, QA (test plans, acceptance, bug hunt, retroactive tests), PR creation and review-feedback triage, feature-flow and bugfix-flow orchestrators. Platform-neutral; platform-specific engineers live in developer-workflow-kotlin and developer-workflow-swift.",
+  "description": "Developer workflow pipeline \u2014 research, decomposition, specification, multiexpert review, implementation, debugging, QA (test plans, acceptance, bug hunt, retroactive tests), PR creation and review-feedback triage, feature-flow and bugfix-flow orchestrators. Platform-neutral; platform-specific engineers live in developer-workflow-kotlin and developer-workflow-swift.",
   "author": {
     "name": "kirich1409"
   },

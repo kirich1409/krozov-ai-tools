@@ -31,7 +31,7 @@ flowchart TD
     decompose --> plan_review
 
     needs_plan -->|No| testplan_gate
-    needs_plan -->|Yes| plan_review[/plan-review/]
+    needs_plan -->|Yes| plan_review[/multiexpert-review/]
 
     plan_review -->|PASS| testplan_gate
     plan_review -->|CONDITIONAL| testplan_gate
@@ -41,7 +41,7 @@ flowchart TD
     testplan_gate -->|Skip| impl
     testplan_gate -->|Run| test_plan[/generate-test-plan/]
 
-    test_plan --> test_plan_review[/plan-review<br/>test-plan branch/]
+    test_plan --> test_plan_review[/multiexpert-review<br/>test-plan profile/]
     test_plan_review -->|PASS| impl
     test_plan_review -->|WARN| impl
     test_plan_review -->|FAIL, cycles<3| test_plan
@@ -127,7 +127,7 @@ flowchart TD
 
     debug[/debug/] --> debug_result{Status?}
     debug_result -->|Diagnosed, simple| impl
-    debug_result -->|Diagnosed, complex| plan[Plan + /plan-review/]
+    debug_result -->|Diagnosed, complex| plan[Plan + /multiexpert-review/]
     debug_result -->|Not reproducible| stop_nr([Stop: need more info])
     debug_result -->|Escalated| stop_esc([Stop: user decision])
 

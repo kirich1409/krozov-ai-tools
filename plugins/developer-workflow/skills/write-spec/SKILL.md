@@ -1,6 +1,6 @@
 ---
 name: write-spec
-description: "Specification-Driven Development — transforms a feature idea into an exhaustive spec that enables autonomous implementation without user interruptions downstream. Researches codebase, interviews user with pre-filled suggestions, produces structured spec with acceptance criteria, affected modules, constraints, and decisions. Spec is auto-reviewed (self-review + plan-review), discussed with user, saved as permanent document. Use when: \"write a spec\", \"spec this out\", \"design doc\", \"spec-driven\", \"let's spec it before building\", \"write a specification for\", \"design the architecture for\", \"let's plan it properly\", \"I don't want to wing it\". Invoke proactively when a feature is complex enough that jumping straight to implementation would be risky. Do NOT use for: bug fixes (use debug + implement), research-only questions (use research skill), single-file changes, decomposition without design (use decompose-feature). Saved spec feeds into decompose-feature and implement."
+description: "Specification-Driven Development — transforms a feature idea into an exhaustive spec that enables autonomous implementation without user interruptions downstream. Researches codebase, interviews user with pre-filled suggestions, produces structured spec with acceptance criteria, affected modules, constraints, and decisions. Spec is auto-reviewed (self-review + multiexpert-review), discussed with user, saved as permanent document. Use when: \"write a spec\", \"spec this out\", \"design doc\", \"spec-driven\", \"let's spec it before building\", \"write a specification for\", \"design the architecture for\", \"let's plan it properly\", \"I don't want to wing it\". Invoke proactively when a feature is complex enough that jumping straight to implementation would be risky. Do NOT use for: bug fixes (use debug + implement), research-only questions (use research skill), single-file changes, decomposition without design (use decompose-feature). Saved spec feeds into decompose-feature and implement."
 ---
 
 # Write Spec
@@ -558,25 +558,53 @@ While the user reviews, run a self-check:
 
 Fix any self-identified gaps.
 
-### 4.3 Run plan-review
+### 4.3 Run multiexpert-review (spec profile)
 
-Run the `plan-review` skill on the spec. Provide:
-- The full spec content
-- The original feature goal
+Run the `multiexpert-review` skill on the draft spec with an **explicit `spec` profile hint**.
+Prepend this prefix to the args (engine parses the first two lines as hint):
 
-The plan-review checks completeness, internal consistency, implementation-readiness,
-and scope alignment. Address findings:
+```
+profile: spec
+---
+<rest of args: full spec content + original feature goal>
+```
+
+Why the hint (defense-in-depth, not a single-cause fix): the `spec` profile's detector
+declares `frontmatter_type: [spec]` and `path_globs: ["docs/specs/**"]`. Either path would
+normally classify a draft that carries `type: spec` frontmatter and lives under `docs/specs/`.
+The explicit hint exists because:
+
+1. **Invocation-path robustness** — in some callsites the draft is passed as inline args
+   without the frontmatter block; the engine sees only body prose and can't rely on
+   frontmatter detection.
+2. **Cheapest deterministic route** — Step 1 hint-match short-circuits detection before
+   any YAML parse or path-glob evaluation; cost is a single-line prefix.
+3. **Detector-independence** — removes the orchestrator's dependency on detector internals.
+   Future detector refactors (reordering, different fallback) cannot silently re-open the
+   historical spec → implementation-plan misclassification drift that this profile exists
+   to close.
+
+**Artifact source:** in-memory draft, so engine classifies source as `conversation` and
+uses the spec profile's `source_routing.conversation: inline-revise` action for FAIL fixes
+(not `file: edit-in-place` — the draft isn't saved to `docs/specs/` yet). Revise-loop
+iterations happen inline in the write-spec flow.
+
+The spec profile (panel: business-analyst + architecture-expert) checks falsifiability of
+Acceptance Criteria, prerequisite realism, explicit Out of Scope, decisions with rationale,
+affected modules completeness, open questions tagged blocking vs non-blocking, and
+technical approach detail. Address findings per the verdict:
 
 | Severity | Action |
 |----------|--------|
-| No issues | Proceed |
+| No issues (PASS) | Proceed |
 | Minor gaps | Fix inline, note changes |
-| Major gaps | Surface to user, discuss, resolve |
+| Major gaps (CONDITIONAL) | Surface to user, discuss, resolve |
 | Contradictions | Surface to user, resolve |
+| Critical (FAIL) | Engine drives revise-loop on the draft; Phase 4.3 iterates until PASS/CONDITIONAL or user escalation |
 
 ### 4.4 Discussion round after review
 
-After self-review and plan-review complete, if either surfaced issues or open questions:
+After self-review and multiexpert-review complete, if either surfaced issues or open questions:
 present them to the user for a final discussion round. This may loop back into Phase 2
 style Q&A to close remaining gaps.
 

@@ -41,16 +41,16 @@ IDEA / FEATURE REQUEST
 [decompose-feature] ---- Break into tasks with dependencies (optional)
   |                        Artifact: swarm-report/<slug>-decomposition.md
   v
-[plan-review] ---- PoLL review of the plan (optional)
-  |                  Artifact: plan review verdict
+[multiexpert-review] ---- PoLL review of the plan (optional)
+  |                  Artifact: multiexpert review verdict
   v
 [test-plan] ---- Generate test plan (default-on, skip per detector conditions or --skip-test-plan)
   |                Artifacts: docs/testplans/<slug>-test-plan.md (permanent)
   |                           swarm-report/<slug>-test-plan.md (receipt)
   v
-[test-plan-review] ---- plan-review with test-plan branch (PASS / WARN / FAIL)
-  |                      FAIL → revise loop back to [test-plan] (max 3 cycles)
-  |                      Artifact: receipt review_verdict updated
+[test-plan-review] ---- multiexpert-review with test-plan profile (PASS / WARN / FAIL)
+  |                 FAIL → revise loop back to [test-plan] (max 3 cycles)
+  |                 Artifact: receipt review_verdict updated
   v
   |   ┌────────────── for each task ──────────────┐
   |   │                                            │
@@ -368,9 +368,9 @@ artifact required.
 | Research | `research` | Research question + constraints | `<slug>-research.md`: approaches, recommendations, risks, open questions |
 | Debug | `debug` | Bug description (text, issue URL, error log) | `<slug>-debug.md`: symptom, reproduction steps, root cause, fix direction |
 | Decompose | `decompose-feature` | Feature idea/PRD + research artifact | `<slug>-decomposition.md`: tasks with dependencies, acceptance criteria, waves |
-| Plan review | `plan-review` | Plan or decomposition artifact | Verdict: PASS / CONDITIONAL / FAIL with blockers |
+| Plan review | `multiexpert-review` | Plan or decomposition artifact | Verdict: PASS / CONDITIONAL / FAIL with blockers |
 | Test Plan | `generate-test-plan` | Feature slug + available artifacts (`research.md`, `decomposition.md`, `plan.md`, spec) | `docs/testplans/<slug>-test-plan.md` (permanent) + `<slug>-test-plan.md` (receipt: `status`, `permanent_path`, `review_verdict`, `phase_coverage`) |
-| Test Plan Review | `plan-review` (test-plan branch) | Permanent test plan file | Receipt updated with `review_verdict`: PASS / WARN / FAIL |
+| Test Plan Review | `multiexpert-review` (test-plan profile) | Permanent test plan file | Receipt updated with `review_verdict`: PASS / WARN / FAIL |
 | Implement | `implement` | Task + optional artifacts (`research.md`, `debug.md`, `plan.md`) | `<slug>-implement.md`: changes summary, files, decisions + `<slug>-quality.md`: gate results |
 | Acceptance | `acceptance` | Spec source (requirements / `debug.md` reproduction steps) + test-plan receipt (when available) + running app | `<slug>-acceptance.md`: VERIFIED / FAILED / PARTIAL with bug list; includes `test_plan_source: receipt / mounted / on-the-fly / absent` |
 | PR | `create-pr` | Branch with commits | PR URL |
@@ -447,7 +447,7 @@ Each artifact includes:
 | **`bugfix-flow`** | **Orchestrator** | **Thin orchestrator: debug → implement → acceptance → create-pr** |
 | `research` | Research | Research Consortium — up to 5 parallel experts, synthesis, auto-review |
 | `debug` | Debug | Systematic root cause investigation — stops at diagnosis |
-| `plan-review` | Plan | PoLL review of the plan by multiple agents |
+| `multiexpert-review` | Plan | PoLL review of the plan by multiple agents |
 | `implement` | Implement -> Quality | Standalone implementation stage with quality loop |
 | `code-migration` | Implement (Migration) | Discover -> snapshot -> migrate -> verify -> cleanup |
 | `kmp-migration` | Implement (Migration) | Module migration to Kotlin Multiplatform |

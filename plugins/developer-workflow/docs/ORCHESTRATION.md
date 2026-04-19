@@ -65,7 +65,7 @@ Allowed transitions between stages. Forward is default; backward transitions are
 Research ──→ Plan
 Plan ──→ TestPlan           (test-plan stage not skipped)
 Plan ──→ Implement          (test-plan stage skipped: skip-detector conditions or --skip-test-plan)
-Plan ──→ Research           (plan review reveals gaps or missing context)
+Plan ──→ Research           (multiexpert review reveals gaps or missing context)
 TestPlan ──→ TestPlanReview
 TestPlanReview ──→ Implement  (PASS or WARN)
 TestPlanReview ──→ TestPlan   (FAIL — revise loop, max 3 cycles, then escalate)
@@ -92,7 +92,7 @@ Each stage produces an artifact in `swarm-report/`. The next stage reads it befo
 |-------|----------|
 | Research | `<slug>-research.md` |
 | Plan | `<slug>-plan.md` |
-| TestPlan | `docs/testplans/<slug>-test-plan.md` (permanent, source of truth) + `<slug>-test-plan.md` (receipt: `status`, `permanent_path`, `source_spec`, `review_verdict`, `phase_coverage`). Created by `generate-test-plan` when invoked from the orchestrator with a slug; read by `plan-review` (test-plan branch) and `acceptance`. |
+| TestPlan | `docs/testplans/<slug>-test-plan.md` (permanent, source of truth) + `<slug>-test-plan.md` (receipt: `status`, `permanent_path`, `source_spec`, `review_verdict`, `phase_coverage`). Created by `generate-test-plan` when invoked from the orchestrator with a slug; read by `multiexpert-review` (test-plan profile) and `acceptance`. |
 | TestPlanReview | `<slug>-test-plan.md` receipt updated in place: `review_verdict` set to PASS / WARN / FAIL, `status` advances Draft → Ready on PASS/WARN. |
 | Implement | `<slug>-implement.md` (summary of changes, files touched) + `<slug>-quality.md` (mechanical checks / intent check results, notes for finalize) |
 | Finalize | `<slug>-finalize.md` (round-by-round phase A-D findings, unresolved BLOCKs, acknowledged risks, commits added during finalize) |
@@ -274,7 +274,7 @@ The Plan stage MUST include these sections:
 - **Verification Approach** — how to verify on a live app or in a running environment; what commands to run; what to visually inspect
 - **Acceptance Criteria** — derived from research, task description, or user requirements; concrete and verifiable conditions for "done"
 
-A plan without these sections is incomplete. Use `plan-review` skill to validate before proceeding to implementation.
+A plan without these sections is incomplete. Use `multiexpert-review` skill to validate before proceeding to implementation.
 
 ## Skill and Agent Selection
 
@@ -291,12 +291,12 @@ Route implementation to the right specialist:
 | Module → KMP | `kmp-migration` skill |
 | Full autonomous feature cycle | `feature-flow` skill |
 | Full autonomous bug-fix cycle | `bugfix-flow` skill |
-| Architectural variability | `design-options` skill (optional pre-plan-review stage) |
+| Architectural variability | `design-options` skill (optional pre-multiexpert-review stage) |
 | Mechanical verification (build/lint/typecheck/tests) | `check` skill |
 | Code-quality pass (review + /simplify + pr-review-toolkit + experts) | `finalize` skill |
 | PR creation and lifecycle management | `create-pr` skill (`--draft` / `--refresh` / `--promote`) |
 | Triage feedback (PR comments or pasted text) — categorize, prioritize, group; optionally post replies / resolve threads for items with terminal verdicts via an editable manifest; never edits code | `triage-feedback` skill |
-| Plan review (PoLL) | `plan-review` skill |
+| Plan review (PoLL) | `multiexpert-review` skill |
 | Test plan creation | `generate-test-plan` skill |
 | Feature verification on device | `acceptance` skill |
 | Retroactive test writing | `write-tests` skill |

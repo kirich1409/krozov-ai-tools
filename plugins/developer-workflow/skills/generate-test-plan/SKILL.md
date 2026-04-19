@@ -53,7 +53,7 @@ The resulting filename is then `docs/testplans/<slug>-test-plan.md` (for example
 When this skill is invoked from the `feature-flow` orchestrator, a `slug` argument is passed
 explicitly. In that case, in addition to the permanent document above, produce a **receipt**
 at `swarm-report/<slug>-test-plan.md` that the orchestrator and downstream stages
-(`plan-review`, `acceptance`) can consume for receipt-based gating.
+(`multiexpert-review`, `acceptance`) can consume for receipt-based gating.
 
 The permanent file remains the source of truth. The receipt is metadata + pointer.
 
@@ -69,8 +69,8 @@ status: Draft | Ready | Approved | Mounted
 permanent_path: docs/testplans/<slug>-test-plan.md
 source_spec: <path to spec if any, or "inline spec">
 review_verdict: pending | PASS | WARN | FAIL | skipped
-review_warnings: []            # populated by plan-review on WARN — list of short strings
-review_blockers: []            # populated by plan-review on FAIL — list of short strings
+review_warnings: []            # populated by multiexpert-review on WARN — list of short strings
+review_blockers: []            # populated by multiexpert-review on FAIL — list of short strings
 phase_coverage: [Phase 1, Phase 2, ...]
 platform: []                   # optional; inherited from the source spec's `platform:` field when present.
                                # Drives platform-aware TC generation and downstream acceptance checks (e.g.,
@@ -89,12 +89,12 @@ updated: YYYY-MM-DD
 ```
 
 Field conventions:
-- `status`: `Draft` right after generation; `Ready` after plan-review returns PASS/WARN;
+- `status`: `Draft` right after generation; `Ready` after multiexpert-review returns PASS/WARN;
   `Approved` when the user explicitly signs off; `Mounted` when a user-authored permanent
   file is adopted without regeneration (see `feature-flow/SKILL.md` §1.5 Pre-check).
-- `review_verdict`: `pending` at creation; updated by `plan-review` to
+- `review_verdict`: `pending` at creation; updated by `multiexpert-review` to
   `PASS | WARN | FAIL`; `skipped` on mount (no review occurs).
-- `review_warnings` / `review_blockers`: arrays of short strings populated by `plan-review`.
+- `review_warnings` / `review_blockers`: arrays of short strings populated by `multiexpert-review`.
   `review_warnings` is written on WARN verdicts (items d or e of the checklist violated —
   non-blocking); `review_blockers` is written on FAIL (items a, b, or c violated —
   blocks transition to Implement). Both remain empty arrays on PASS / pending / skipped.
@@ -229,7 +229,7 @@ generated: YYYY-MM-DD
 | **Scope** | [one-line summary of what is covered] |
 | **Status** | Draft / Ready for Review / Approved |
 
-The `type: test-plan` frontmatter lets `plan-review` and `acceptance` identify the
+The `type: test-plan` frontmatter lets `multiexpert-review` and `acceptance` identify the
 artifact deterministically (Signal #1 of the classifier). `slug` matches the receipt and
 any decomposition artifact for the same feature.
 

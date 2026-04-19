@@ -34,7 +34,7 @@ It only manages transitions, passes context between stages, and reports summarie
 Setup          -> Research         (unknown APIs, libraries, or architectural decisions)
 Setup          -> Implement        (trivial/simple task — skip research/planning)
 Research       -> Decompose        (large feature — split into tasks)
-Research       -> PlanReview       (complex single-task — needs plan review)
+Research       -> PlanReview       (complex single-task — needs multiexpert review)
 Research       -> DesignOptions    (high-arch-risk single-task — explore alternatives first)
 DesignOptions  -> PlanReview       (user picked an option)
 DesignOptions  -> Research         (options exposed missing requirements — re-research)
@@ -146,8 +146,18 @@ Announce: **Stage: Plan → DesignOptions → PlanReview** (or **Plan → PlanRe
 
 ### 1.4 Plan review (optional)
 
-If `swarm-report/<slug>-plan.md` or `swarm-report/<slug>-decomposition.md` was produced:
-- Invoke `developer-workflow:plan-review` with that artifact
+If `swarm-report/<slug>-plan.md` or `swarm-report/<slug>-decomposition.md` was produced,
+invoke `developer-workflow:multiexpert-review` with that artifact. Prepend an explicit profile
+hint to the args so the engine does not fall through to `AskUserQuestion` when the artifact
+has no frontmatter / path match. Hint lines must start at **column 0** (no leading whitespace):
+
+```
+profile: implementation-plan
+---
+<rest of args: artifact path + context>
+```
+
+Route by verdict:
 - If FAIL → **Stage: PlanReview → Research.** Back to 1.1 with gaps identified
 - If CONDITIONAL → proceed with noted concerns
 - If PASS → proceed
@@ -180,11 +190,21 @@ the receipt at `swarm-report/<slug>-test-plan.md` (receipt `status: Draft`,
 
 ### 1.6 TestPlanReview (default-on)
 
-Review the generated test plan via the test-plan branch of `plan-review`.
+Review the generated test plan via the test-plan profile of `multiexpert-review`.
 
-- Invoke `developer-workflow:plan-review` with the permanent test-plan file
-  (`docs/testplans/<slug>-test-plan.md`) as input — its detector auto-classifies the input
-  as `type: test-plan` and runs the test-plan branch (PASS / WARN / FAIL verdicts).
+Invoke `developer-workflow:multiexpert-review` with the permanent test-plan file
+(`docs/testplans/<slug>-test-plan.md`) as input. Prepend an explicit profile hint so the
+engine routes deterministically even if the file's frontmatter or path-glob were ever
+refactored. Hint lines must start at **column 0** (no leading whitespace):
+
+```
+profile: test-plan
+---
+<rest of args: permanent test-plan path + context>
+```
+
+(Path-glob `docs/testplans/**` already matches, but the explicit hint is symmetric with
+other callsites and removes detector-dependency from the orchestrator.)
 - Route by verdict — see [TestPlanReview Verdict Handling](#testplanreview-verdict-handling).
 - On completion (PASS or WARN) the receipt is updated with `review_verdict` and
   `status: Ready`; the pipeline transitions to Implement.
@@ -256,8 +276,8 @@ initial TestPlan stage in two scenarios:
 
 ## TestPlanReview Verdict Handling
 
-The TestPlanReview stage maps `plan-review` verdicts (test-plan branch — see
-`plugins/developer-workflow/skills/plan-review/SKILL.md` §Test-Plan Review Branch) to
+The TestPlanReview stage maps `multiexpert-review` verdicts (test-plan profile — see
+`plugins/developer-workflow/skills/multiexpert-review/profiles/test-plan.md`) to
 pipeline transitions:
 
 - **PASS** — all five checklist items satisfied. Unconditional transition to Implement.
@@ -267,8 +287,8 @@ pipeline transitions:
   violated items — preserved for downstream review and acceptance context. No revise-loop.
 - **FAIL** — any of (a), (b), (c) violated. Run the revise-loop: **TestPlan ← TestPlanReview**
   up to 3 cycles. Each cycle patches the permanent test-plan file, re-reviews with the
-  same agents, and appends to the plan-review state file's `Verdict History` (see
-  `plan-review/SKILL.md` §Persistence — the receipt itself carries only the latest
+  same agents, and appends to the multiexpert-review state file's `Verdict History` (see
+  `multiexpert-review/SKILL.md` §Persistence — the receipt itself carries only the latest
   `review_verdict`, not the per-cycle history). After 3 failed cycles →
   **escalate to the user** with three options: (a) accept WARN manually and proceed,
   (b) revise the spec and restart the pipeline, (c) use `--skip-test-plan` to bypass the

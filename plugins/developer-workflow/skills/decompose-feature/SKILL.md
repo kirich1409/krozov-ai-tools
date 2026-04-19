@@ -1,6 +1,6 @@
 ---
 name: decompose-feature
-description: "Break a feature idea, PRD, or epic into a structured task list with dependencies, acceptance criteria, complexity estimates, and implementation order. Launches parallel expert agents to gather codebase context, architectural fit, scope analysis, then decomposes into waves of tasks sorted by dependency order. Use when: \"break this down\", \"decompose\", \"what tasks do I need\", \"plan the feature\", \"epic\", \"what's the scope\", \"I want to add\", \"here's a PRD\", \"split into tasks\", \"task breakdown\", \"scope this out\", \"work breakdown\", \"implementation steps\", \"feature planning\". Do NOT use for: bug fixes (use debug), code review (use code-reviewer agent), research-only questions (use research), trivial single tasks, or migrations (use code-migration / kmp-migration). Produces task lists feeding into implement. Output artifact can be reviewed via plan-review before implementation."
+description: "Break a feature idea, PRD, or epic into a structured task list with dependencies, acceptance criteria, complexity estimates, and implementation order. Launches parallel expert agents to gather codebase context, architectural fit, scope analysis, then decomposes into waves of tasks sorted by dependency order. Use when: \"break this down\", \"decompose\", \"what tasks do I need\", \"plan the feature\", \"epic\", \"what's the scope\", \"I want to add\", \"here's a PRD\", \"split into tasks\", \"task breakdown\", \"scope this out\", \"work breakdown\", \"implementation steps\", \"feature planning\". Do NOT use for: bug fixes (use debug), code review (use code-reviewer agent), research-only questions (use research), trivial single tasks, or migrations (use code-migration / kmp-migration). Produces task lists feeding into implement. Output artifact can be reviewed via multiexpert-review before implementation."
 ---
 
 # Decompose Feature
@@ -415,7 +415,7 @@ Stop and escalate to the user when:
 This skill operates as a pre-implementation planning tool:
 
 - **Standalone:** user has a feature idea, gets a structured task list. Can be reviewed via
-  `plan-review` before implementation begins.
+  `multiexpert-review` before implementation begins.
 - **Pipeline entry:** the decomposition artifact (`<slug>-decomposition.md`) provides the
   task list for `implement` to execute. Each task becomes an independent implementation
   unit.

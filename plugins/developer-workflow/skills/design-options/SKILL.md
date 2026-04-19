@@ -1,12 +1,12 @@
 ---
 name: design-options
 description: >
-  Generate 2-3 alternative architectural approaches for a single task before plan-review.
+  Generate 2-3 alternative architectural approaches for a single task before multiexpert-review.
   Launches architecture-expert agents in parallel, each under a different style constraint
   (minimal / clean / pragmatic), and presents the options side-by-side so the user can pick
   one informed choice instead of committing to the first approach that came to mind.
   Optional stage between write-spec (or decompose-feature for a single-task feature) and
-  plan-review. Trigger when: task is high architectural risk, multiple plausible approaches
+  multiexpert-review. Trigger when: task is high architectural risk, multiple plausible approaches
   exist, or user explicitly requests it.
   Invoke on: "explore design options", "show me alternatives", "предложи варианты архитектуры",
   "разные подходы", "choose between approaches", or when feature-flow runs this as an
@@ -97,7 +97,7 @@ A single coherent architecture option. Include:
 6. Effort estimate: relative to the other options you do NOT see. Express as S / M / L with one-sentence justification.
 7. Breaking changes: any public API, database schema, or user-observable behavior that shifts.
 
-Do NOT propose a full implementation plan — that is plan-review's job. Stay at the "architectural shape" level.
+Do NOT propose a full implementation plan — that is multiexpert-review's job. Stay at the "architectural shape" level.
 
 Respond in the language of the task description. Stay under 600 words — brevity is a feature.
 ```
@@ -179,9 +179,9 @@ Once the user picks an option (or a hybrid is specified):
 
 ### Downstream consumption — current vs. future
 
-**Current:** `plan-review` does not auto-detect or consume `<slug>-design.md`. Workaround — the orchestrator (feature-flow §1.3a) passes this path to `plan-review` as an additional context input when the design-options stage ran.
+**Current:** `multiexpert-review` does not auto-detect or consume `<slug>-design.md`. Workaround — the orchestrator (feature-flow §1.3a) passes this path to `multiexpert-review` as an additional context input when the design-options stage ran.
 
-**Future (TODO):** extend `plan-review` to auto-detect `<slug>-design.md` and ingest it without orchestrator assistance. Tracked as a follow-up — not a blocker for this skill to be useful today.
+**Future (TODO):** extend `multiexpert-review` to auto-detect `<slug>-design.md` and ingest it without orchestrator assistance. Tracked as a follow-up — not a blocker for this skill to be useful today.
 
 ### If the user asks for a hybrid
 
@@ -195,7 +195,7 @@ Once the user picks an option (or a hybrid is specified):
 ## Scope rules
 
 - **In scope:** generating and presenting architectural alternatives; helping the user pick.
-- **Out of scope:** writing the implementation plan (that is plan-review's input — we produce the *design*, not the steps); writing code; updating the spec.
+- **Out of scope:** writing the implementation plan (that is multiexpert-review's input — we produce the *design*, not the steps); writing code; updating the spec.
 - **Never** pick an option for the user silently. Always present, always wait.
 - **Never** generate just one option — if only one survives scoping, there is nothing to choose; skip this stage entirely.
 - **Never** generate more than 4 options — beyond 4, choice fatigue dominates.
@@ -214,7 +214,7 @@ Stop and report to the user when:
 
 ## Integration notes
 
-- **`feature-flow`** invokes this skill as an optional stage between `write-spec` (or `decompose-feature` for single-task features) and `plan-review`. Trigger detection described under "When to run this stage" — orchestrator uses that matrix.
+- **`feature-flow`** invokes this skill as an optional stage between `write-spec` (or `decompose-feature` for single-task features) and `multiexpert-review`. Trigger detection described under "When to run this stage" — orchestrator uses that matrix.
 - **`bugfix-flow`** rarely uses this — bugfixes almost always have a single fix direction from the debug artifact. But for bugs that reveal architectural issues (e.g., "this bug is a symptom of the wrong module owning state"), a user can invoke `design-options` manually before `implement`.
 - **Manual invocation** is common: `/design-options --slug foo` on an existing spec for a human decision-making session.
 - **Dependencies:** only `architecture-expert` from `developer-workflow-experts` (already a hard dep). No new deps needed.
