@@ -1,8 +1,8 @@
 ---
 name: bugfix-flow
 description: >-
-  Thin orchestrator for bug fix tasks — sequences modular skills: debug → implement → acceptance → PR.
-  Invoke when the user reports a bug and wants it fixed end-to-end.
+  This skill should be used when the user reports a bug and wants it fixed end-to-end through
+  a thin orchestrator that sequences modular skills: debug → implement → acceptance → PR.
   Trigger on: "/bugfix-flow", "bugfix flow", "fix this bug", "исправь баг", "почини", "это сломалось, почини",
   "fix and ship", "find and fix", "debug and fix".
   Do NOT use for: feature implementation (use feature-flow), investigation without fix (use debug),
