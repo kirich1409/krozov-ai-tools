@@ -100,7 +100,7 @@ flowchart TD
 | Profile confirmation | Ask user to confirm feature profile |
 | PARTIAL acceptance | User decides: fix now or ship as-is |
 | TestPlanReview FAIL after 3 revise cycles | User picks: accept WARN manually, revise spec, or rerun with `--skip-test-plan` |
-| `drive-to-merge` merge gate | Final merge always requires explicit user confirmation (per memory) |
+| `drive-to-merge` merge gate | Final merge always requires explicit user confirmation — by design, regardless of mode |
 | `drive-to-merge` blocker | True DISCUSSION on P0/P1, unresolvable rebase, 3× same-signature CI fail, integrity mismatch |
 | Escalation | Scope explosion, 3× same failure, architectural decision needed |
 
@@ -186,7 +186,7 @@ flowchart TD
 | Bug not reproducible | Stop, ask for more info |
 | Debug escalation | Architectural issue or needs user decision |
 | PARTIAL acceptance | User decides: fix now or ship as-is |
-| `drive-to-merge` merge gate | Final merge always requires explicit user confirmation (per memory) |
+| `drive-to-merge` merge gate | Final merge always requires explicit user confirmation — by design, regardless of mode |
 | `drive-to-merge` blocker | True DISCUSSION on P0/P1, unresolvable rebase, 3× same-signature CI fail, integrity mismatch |
 
 ### Backward transition limits

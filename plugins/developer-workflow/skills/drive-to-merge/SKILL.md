@@ -70,6 +70,12 @@ HEAD=$(jq -r .headRefName <<<"$PR_INFO")
 REPO=$(gh repo view --json nameWithOwner -q .nameWithOwner)
 OWNER=${REPO%/*}; REPO_NAME=${REPO#*/}
 
+# Node ids — needed later for thread-ownership re-verify and Copilot re-request.
+REPO_NODE_ID=$(gh api graphql -f query='query($o:String!,$n:String!){repository(owner:$o,name:$n){id}}' \
+  -F o="$OWNER" -F n="$REPO_NAME" --jq '.data.repository.id')
+PR_NODE_ID=$(gh api "repos/$OWNER/$REPO_NAME/pulls/$PR_NUMBER" --jq '.node_id')
+# COPILOT_NODE_ID is resolved lazily in Phase 3.6 and cached in the state file header.
+
 # GitLab
 MR_INFO=$(glab mr view --output json)
 MR_IID=$(jq -r .iid <<<"$MR_INFO")
@@ -85,14 +91,14 @@ If the PR/MR is already merged or closed — stop and report the final state.
 
 Abort with a clear message if any of these fail:
 
-- Current branch matches the PR head branch (warn + offer to checkout if not).
+- Current branch matches the PR head branch. If not — abort with `checkout <head> first; this skill does not auto-switch branches`.
 - Local branch is fetched and not behind the remote head (`git fetch origin && git status -sb`).
 - `gh auth status` / `glab auth status` — token valid.
 - The base branch still exists on the remote.
 
 ### 1.4 State file
 
-`swarm-report/<slug>-drive-state.md`. Slug = branch name with `feature/` / `fix/` / `chore/` stripped. Make sure `swarm-report/` is gitignored (warn and create the `.gitignore` entry if missing).
+`swarm-report/<slug>-drive-state.md`. Slug = branch name with `feature/` / `fix/` / `chore/` stripped. Verify `swarm-report/` is gitignored. If absent — abort with a clear message asking the user to add `swarm-report/` to `.gitignore` and rerun. Do not auto-modify `.gitignore`: that creates an unrelated diff inside a PR-driving loop and surprises the user.
 
 Schema (markdown, machine-parseable by the skill on resume):
 
@@ -103,7 +109,9 @@ URL: <PR URL>
 Platform: github | gitlab
 Mode: default | auto | dry-run
 Principal: <@actor>            # gh api user --jq .login
-Repository id: <graphql node id>
+Repository node id: <graphql node id of the repository>
+PR node id: <graphql node id of the pull request>
+Copilot node id: <graphql node id of copilot-pull-request-reviewer or `unavailable`>
 Started: <ISO8601>
 Status: running | waiting-for-user | merged | blocked
 
@@ -369,7 +377,7 @@ For PRAISE / OUT_OF_SCOPE / NO_ACTION / NIT+NO_ACTION:
 - Rate-limit handling: on `403` / `429`, inspect `x-ratelimit-remaining`, `x-ratelimit-reset`, and `retry-after`. **Primary rate limit** (`x-ratelimit-remaining: 0`) — schedule a `ScheduleWakeup` at `x-ratelimit-reset` (UTC epoch) and exit the round. **Secondary rate limit / abuse detection** (`retry-after: N`) — sleep `N + 5` seconds locally and retry once; if it fails again, surface as a blocker. Never burn the round in a tight retry loop.
 - Sanitize slot: NFKC normalize → strip BiDi + format chars → strip HTML → strip shell metacharacters (`` ` ``, `$(`, `${`) → collapse newlines → neutralize `@mention` (remove `@`) and cross-refs (`#123` → `issue-123`) → clamp to 120 chars. Empty after sanitize → drop the slot, use template without it.
 - Cap total reply body at 280 chars.
-- Pre-POST thread-ownership verify: GraphQL node query → `pullRequest.number` matches + `repository.id` matches header `Repository id` from state file. Mismatch → skip this row, log `integrity_mismatch`, abort the round (do not continue POSTing other rows).
+- Pre-POST thread-ownership verify: GraphQL node query → `pullRequest.number` matches + `repository.id` matches header `Repository node id` from state file. Mismatch → skip this row, log `integrity_mismatch`, abort the round (do not continue POSTing other rows).
 - Pre-POST race check: if the thread was resolved by someone else since Phase 2.3 fetch, skip (record `already_resolved`).
 
 ### 3.5 Commit + push
@@ -419,11 +427,18 @@ GitLab: `glab mr update $MR_IID --reviewer <user>` for humans; GitLab has no fir
 
 ## Phase 4: Poll (ScheduleWakeup)
 
-When the round ended with "wait" (CI running or review pending) — schedule the next round:
+When the round ended with "wait" (CI running or review pending) — schedule the next round. The wake-up prompt is built from the stored `Mode` in the state file (per "Mode precedence on resume" in Phase 1.4) — never hardcoded.
 
 ```
-ScheduleWakeup(delaySeconds: <picked>, reason: "drive-to-merge poll: <what we're waiting on>",
-  prompt: "/drive-to-merge --auto")  # or without --auto if the user started in default mode
+WAKEUP_PROMPT="/drive-to-merge"
+[ "$STATE_MODE" = "auto" ] && WAKEUP_PROMPT="/drive-to-merge --auto"
+# dry-run never reaches Phase 4 — it exits after the first decision table.
+
+ScheduleWakeup(
+  delaySeconds: <picked>,
+  reason:       "drive-to-merge poll: <what we're waiting on>",
+  prompt:       $WAKEUP_PROMPT
+)
 ```
 
 Pick `delaySeconds`:
@@ -475,7 +490,7 @@ Proposed commit message:
 Reply "merge" to execute, or supply a different method / message.
 ```
 
-Wait for explicit user confirmation. `--auto` does NOT skip this gate (per memory: PR merge always requires user approval).
+Wait for explicit user confirmation. `--auto` does NOT skip this gate — by design, final merge always requires explicit user approval.
 
 On confirmation, re-verify state one last time before invoking merge — between the gate and the API call, CI may have failed or approval may have been dismissed:
 
@@ -532,7 +547,7 @@ The skill decides these without asking, in any mode:
 
 **Autonomous by default.** The user should only see decisions that require judgement: true disagreements, unresolvable rebases, final merge. Everything mechanical happens without asking.
 
-**Approval gate ≠ merge gate.** `--auto` removes the round-level approval gate. It does not remove the merge gate — merge always asks per memory.
+**Approval gate ≠ merge gate.** `--auto` removes the round-level approval gate. It does not remove the merge gate — by design, final merge always requires explicit user confirmation.
 
 **Safe by construction.** Replies go through the sanitize pipeline; thread ownership is re-verified before every POST; POST bodies go through stdin, never shell args; force-push uses `--force-with-lease` only.
 
