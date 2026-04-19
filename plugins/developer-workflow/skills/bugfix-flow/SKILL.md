@@ -124,6 +124,16 @@ Invoke `developer-workflow:implement` with:
 
 Wait for `swarm-report/<slug>-implement.md` + `swarm-report/<slug>-quality.md`.
 
+### 2.1 Create draft PR (early)
+
+After `implement` returns a clean Quality Loop result and the branch has been pushed, invoke `developer-workflow:create-pr` with the `--draft` argument:
+
+> Stage: Implement → Acceptance (draft PR created)
+
+The draft PR body references the debug artifact (root cause + reproduction steps) and the fix summary. Acceptance runs against the pushed PR branch, keeping remote state in sync.
+
+If a draft PR already exists for this branch (re-entry on rollback), `--draft` is idempotent — it refreshes the body instead of failing.
+
 ---
 
 ## Phase 3: Acceptance
@@ -160,9 +170,15 @@ Wait for `swarm-report/<slug>-acceptance.md`.
 
 ## Phase 4: PR
 
-### 4.1 Create PR
+### 4.1 Promote to ready for review
 
-Invoke `developer-workflow:create-pr`.
+The draft PR already exists (created at 2.1) and has been updated via fix cycles and acceptance. Now mark it ready:
+
+Invoke `developer-workflow:create-pr` with the `--promote` argument.
+
+`--promote` refreshes the PR body with the final summary (root cause, fix, validation results, status table) and then marks the PR ready for review.
+
+> Stage: Acceptance → PR (promoted to ready)
 
 ### 4.2 Hand-off to user
 

@@ -270,6 +270,16 @@ Invoke `developer-workflow:implement` with:
 
 Wait for `swarm-report/<slug>-implement.md` + `swarm-report/<slug>-quality.md`.
 
+### 2.1a Create draft PR (early)
+
+After `implement` returns a clean Quality Loop result and the branch has been pushed, invoke `developer-workflow:create-pr` with the `--draft` argument:
+
+> Stage: Implement → Acceptance (draft PR created)
+
+Rationale: the remote branch + draft PR become the source of truth for the work in progress. Reviewers can inspect the code online, the description carries the plan and available artifacts, and later stages push refinements to the same PR rather than accumulating local-only changes.
+
+If a draft PR already exists for this branch (e.g., re-entry on rollback), `create-pr --draft` refreshes the body instead of creating a new PR — idempotent by design.
+
 ### 2.2 Acceptance
 
 Invoke `developer-workflow:acceptance` with:
@@ -301,13 +311,21 @@ Wait for `swarm-report/<slug>-acceptance.md`.
 
 ## Phase 3: PR
 
-### 3.1 Create PR
+### 3.1 Promote to ready for review
 
-Invoke `developer-workflow:create-pr`.
+The draft PR already exists (created at 2.1a) and has been pushed with fix cycles and acceptance updates. Now mark it ready:
+
+Invoke `developer-workflow:create-pr` with the `--promote` argument.
+
+`--promote` will:
+1. Refresh the PR body with the final summary (what changed, how to test, artifacts, status table showing all stages PASS).
+2. Mark the PR ready for review. The exact platform command (`gh pr ready`, version-specific `glab` flag, etc.) is `create-pr`'s responsibility — the orchestrator does not repeat it here.
+
+> Stage: Acceptance → PR (promoted to ready)
 
 **PR granularity** (when decomposed):
-- Independent tasks → one PR per task (invoke create-pr after each task's acceptance)
-- Tightly coupled tasks → bundled PR after all tasks pass acceptance
+- Independent tasks → one PR per task (create + promote per task's acceptance)
+- Tightly coupled tasks → single bundled PR; promote only after all tasks pass acceptance
 
 ### 3.2 Hand-off to user
 
