@@ -38,27 +38,29 @@ source_routing:
 
 ## Rubric
 
-Reviewers evaluate the spec against these criteria. Each item is observable — severity comes from `severity_mapping`.
+Reviewers evaluate the spec against these criteria. Each bullet carries the **item ID** (matches `severity_mapping.items`) in parentheses — use the ID verbatim in every Issue title stem so synthesizer aggregation and receipts stay greppable.
 
 ### Critical — spec is not implementable without these
 
-- **Acceptance Criteria are falsifiable** — every AC is a grep-check, diff-check, YAML-parse, fixture-run, or structural-equivalence assertion. «Feels right» or «should be fast» is not acceptable. An implementing agent must know unambiguously when each AC passes.
-- **Prerequisites realistic and complete** — every prerequisite has status (Done / Todo), owner (Human / Agent), and concrete exit criterion (how do we verify it's satisfied). No hand-waved «everything is ready».
+- **(acceptance_criteria) Acceptance Criteria are falsifiable** — every AC is a grep-check, diff-check, YAML-parse, fixture-run, or structural-equivalence assertion. «Feels right» or «should be fast» is not acceptable. An implementing agent must know unambiguously when each AC passes.
+- **(prerequisites) Prerequisites realistic and complete** — every prerequisite has status (Done / Todo), owner (Human / Agent), and concrete exit criterion (how do we verify it's satisfied). No hand-waved «everything is ready».
 
 ### Major — spec is implementable but risky without these
 
-- **Out of Scope is explicit** — there is an «Out of Scope» section that enumerates what will NOT be done. Sweeping things under the rug or leaving out-of-scope implied = violation.
-- **Decisions Made have rationale** — each locked decision has a «Rationale» column/line. «We chose X» without «because Y» = violation.
-- **Affected modules/files complete** — table listing every file touched with change type (New / Modified / Renamed / Deleted) and notes. Missing files → implementing agent re-plans mid-implementation.
+- **(out_of_scope) Out of Scope is explicit** — there is an «Out of Scope» section that enumerates what will NOT be done. Sweeping things under the rug or leaving out-of-scope implied = violation.
+- **(decisions_made) Decisions Made have rationale** — each locked decision has a «Rationale» column/line. «We chose X» without «because Y» = violation.
+- **(affected_modules) Affected modules/files complete** — table listing every file touched with change type (New / Modified / Renamed / Deleted) and notes. Missing files → implementing agent re-plans mid-implementation.
 
 ### Minor — spec is implementable but less clear
 
-- **Open questions tagged blocking vs non-blocking** — each OQ has explicit tag. Unmarked OQs leave ambiguity.
-- **Technical approach detail** — enough design detail that the implementing agent doesn't need further research. High-level «use pattern X» without concrete locations/contracts = minor issue.
+- **(open_questions_tagged) Open questions tagged blocking vs non-blocking** — each OQ has explicit tag. Unmarked OQs leave ambiguity.
+- **(technical_approach_detail) Technical approach detail** — enough design detail that the implementing agent doesn't need further research. High-level «use pattern X» without concrete locations/contracts = minor issue.
 
 ## Prompt augmentation
 
-Reviewers: evaluate the spec against the rubric above AND apply your general expertise (architecture-expert checks dependency direction / module boundaries; business-analyst checks scope / requirements consistency / user value). Explicitly report the status of each rubric item in your Issues output — use `issue: <rubric item> <violated | partial | satisfied>` as the issue title stem for traceability.
+Reviewers: evaluate the spec against the rubric above AND apply your general expertise (architecture-expert checks dependency direction / module boundaries; business-analyst checks scope / requirements consistency / user value).
+
+**Issue title stem format (mandatory):** `(<item_id>) <violated | partial | satisfied>: <one-line summary>`. Example: `(acceptance_criteria) violated: AC-R4 grep check unsatisfiable given AC-R6 whitelist`. This lets the engine map your issue to `severity_mapping` deterministically — unprefixed Issues fall back to reviewer-assigned severity, losing the profile's intended weighting.
 
 ## Verdict policy
 

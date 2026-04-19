@@ -104,5 +104,6 @@ All engine errors produce the exact prefix `[multiexpert-review ERROR] <CATEGORY
 - `UNKNOWN_PROFILE_HINT` — caller passed hint not in inventory
 - `FORBIDDEN_PROFILE_FIELD` — profile frontmatter violates negative-list
 - `NO_REVIEWERS_AVAILABLE` — all roster agents missing; `allow_single_reviewer: false` and only 1 left; or empty roster with no tech-match
+- `AMBIGUOUS_REVIEWER` — short-name resolves to multiple agent files after the family tie-break (see engine SKILL.md Step 2)
 - `PROFILE_INVENTORY_MISMATCH` — README inventory vs. `profiles/` file presence disagree
 - `ROUTING_NOT_SUPPORTED` — engine reached Step 5 with a source the profile declared `N/A`

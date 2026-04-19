@@ -154,7 +154,7 @@ Cycle-locking, profile validation (negative-list), and inventory-mismatch checks
 
 Find real agents via `Glob("**/agents/*.md")` + built-in subagents from system prompt. Read each agent's frontmatter to confirm. Never invent phantom agents.
 
-**Short-name collision tie-break:** if the same agent short-name resolves to multiple files (e.g., two plugins define `security-expert`), prefer first match in this order: (1) same-plugin as the caller skill, (2) sibling `developer-workflow-*` plugin, (3) any other source. If still ambiguous, fail loud: `[multiexpert-review ERROR] NO_REVIEWERS_AVAILABLE: ambiguous short-name <name> resolves to <paths>`. In practice the `developer-workflow-*` family guarantees unique short-names — this guard only triggers on non-family plugin conflicts.
+**Short-name collision tie-break:** if the same agent short-name resolves to multiple files (e.g., two plugins define `security-expert`), prefer first match in this order: (1) same-plugin as the caller skill, (2) sibling `developer-workflow-*` plugin, (3) any other source. If still ambiguous, fail loud with the dedicated category: `[multiexpert-review ERROR] AMBIGUOUS_REVIEWER: short-name <name> resolves to <paths>`. Distinct from `NO_REVIEWERS_AVAILABLE` (which covers the "agents missing entirely" path) so consumers can branch on intent. In practice the `developer-workflow-*` family guarantees unique short-names — this guard only triggers on non-family plugin conflicts.
 
 ### Selection per profile
 
@@ -329,6 +329,7 @@ Categories:
 - `UNKNOWN_PROFILE_HINT` — caller hint not in inventory
 - `FORBIDDEN_PROFILE_FIELD` — profile frontmatter contains forbidden field
 - `NO_REVIEWERS_AVAILABLE` — no agents remain after discovery/filtering, or panel required but single
+- `AMBIGUOUS_REVIEWER` — short-name resolves to multiple agent files after the family tie-break
 - `PROFILE_INVENTORY_MISMATCH` — README list vs. `profiles/*.md` presence disagree
 - `ROUTING_NOT_SUPPORTED` — engine reached Step 5 with a source the profile declared `N/A` in `source_routing`
 

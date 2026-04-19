@@ -31,7 +31,7 @@ Installing this plugin automatically pulls `developer-workflow-experts`. Install
 | `/decompose-feature` | Break an idea or PRD into a structured task list with dependencies, ACs, complexity |
 | `/write-spec` | Specification-Driven Development — multi-round interview producing an exhaustive spec |
 | `/design-options` | Generate 2-3 parallel architectural alternatives (Minimal / Clean / Pragmatic) for high-arch-risk tasks; user picks one before multiexpert-review. Optional, default-skip. |
-| `/multiexpert-review` | Panel of LLM evaluators (PoLL) review of an implementation plan |
+| `/multiexpert-review` | Panel of LLM evaluators (PoLL) review of a plan, spec, or test-plan via the appropriate profile |
 
 ### Implementation
 | Skill | Purpose |

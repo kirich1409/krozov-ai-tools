@@ -569,11 +569,20 @@ profile: spec
 <rest of args: full spec content + original feature goal>
 ```
 
-Why the hint: the draft spec at this point is in-memory content, not yet saved to
-`docs/specs/`, so the path-glob detector in multiexpert-review cannot classify it. Without
-the hint, the engine would fall through to the structural-signature / ask-user fallback —
-in practice, mis-classifying spec as implementation-plan and applying the wrong rubric
-(this was the historical drift this profile closes).
+Why the hint (defense-in-depth, not a single-cause fix): the `spec` profile's detector
+declares `frontmatter_type: [spec]` and `path_globs: ["docs/specs/**"]`. Either path would
+normally classify a draft that carries `type: spec` frontmatter and lives under `docs/specs/`.
+The explicit hint exists because:
+
+1. **Invocation-path robustness** — in some callsites the draft is passed as inline args
+   without the frontmatter block; the engine sees only body prose and can't rely on
+   frontmatter detection.
+2. **Cheapest deterministic route** — Step 1 hint-match short-circuits detection before
+   any YAML parse or path-glob evaluation; cost is a single-line prefix.
+3. **Detector-independence** — removes the orchestrator's dependency on detector internals.
+   Future detector refactors (reordering, different fallback) cannot silently re-open the
+   historical spec → implementation-plan misclassification drift that this profile exists
+   to close.
 
 **Artifact source:** in-memory draft, so engine classifies source as `conversation` and
 uses the spec profile's `source_routing.conversation: inline-revise` action for FAIL fixes
