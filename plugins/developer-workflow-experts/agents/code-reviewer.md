@@ -213,7 +213,7 @@ After scoring, filter findings before writing the output:
 
 Everything below those thresholds — drop silently, do not list.
 
-**Critical-risk exception:** if a finding could cause data loss, a security incident, or a production outage, include it even at confidence 50 with an explicit `please verify` note next to the score.
+**Critical-risk exception:** if a finding could cause data loss, a security incident, or a production outage, include it even at confidence 50. Keep `confidence` strictly numeric (0/25/50/75/100) — do not append any text to the value. Instead, prepend the marker `[please verify]` to the `issue` field so downstream parsers stay intact.
 
 Be honest about confidence. A low-confidence finding that is dropped is better than a false-high-confidence demand that erodes trust. Never inflate the score to keep a finding in the report.
 

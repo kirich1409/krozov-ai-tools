@@ -73,14 +73,18 @@ Skills invoke these by short name. If a platform plugin is not installed and you
 
 ## Recommended external plugins / MCP servers
 
-These are not installed as dependencies — install them yourself if the capability is useful. Skills detect and use them when available; they work without them with reduced capability.
+These are not installed as dependencies — install them yourself if the capability is useful.
 
-| Tool | Kind | Used by | What it adds |
+For **most skills**, these integrations are optional enhancements: when present, the skill uses them; when absent, the skill still runs with reduced capability.
+
+**QA execution is the exception.** The `manual-tester` agent and the live-execution parts of `acceptance` / `bug-hunt` perform real device/browser automation. If the matching `mobile` / `playwright` MCP server is not installed and enabled, those QA steps cannot run — they stop with a missing-tool message rather than falling back to a dry-run.
+
+| Tool | Kind | Used by | Required for |
 |---|---|---|---|
-| `mobile` | MCP server | `manual-tester`, `acceptance`, `bug-hunt` | iOS/Android UI automation and store management for mobile QA (pre-approved — required if you want mobile QA) |
-| `playwright` | MCP server (from `claude-plugins-official`) | `manual-tester`, `acceptance`, `bug-hunt` | Browser automation for web E2E verification |
-| `/code-review` | Slash command (from `claude-plugins-official`) | optional post-PR review | Standalone GitHub PR review with confidence-based scoring — separate from in-pipeline `code-reviewer` gate |
-| `ralph-loop` | Plugin (from `claude-plugins-official`) | ad-hoc use outside pipeline | While-true iteration on a single prompt until completion marker — alternative to our structured orchestrators for exploratory work |
+| `mobile` | MCP server | `manual-tester`, `acceptance`, `bug-hunt` | Live mobile QA execution (iOS/Android UI automation + store management). Required to run mobile-QA steps. |
+| `playwright` | MCP server (from `claude-plugins-official`) | `manual-tester`, `acceptance`, `bug-hunt` | Live browser QA execution. Required to run web-QA steps. |
+| `/code-review` | Slash command (from `claude-plugins-official`) | optional post-PR review | Optional. Standalone GitHub PR review with confidence-based scoring — separate from in-pipeline `code-reviewer` gate. |
+| `ralph-loop` | Plugin (from `claude-plugins-official`) | ad-hoc use outside pipeline | Optional. While-true iteration on a single prompt until completion marker — alternative to our structured orchestrators for exploratory work. |
 
 ## Installation
 
