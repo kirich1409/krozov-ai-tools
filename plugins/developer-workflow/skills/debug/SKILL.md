@@ -1,17 +1,16 @@
 ---
 name: debug
 description: >-
-  Systematic root cause investigation — stops at diagnosis, does NOT fix.
-  Invoke when user says "debug", "find root cause", "why is X broken", "investigate bug",
-  "что сломалось", "почему не работает", "найди причину", "дебаг", "отладь",
-  "test fails", "build breaks", "crash", "unexpected behavior", "regression",
-  or when a previous fix attempt didn't work.
-
+  This skill should be used when the user asks to "debug", "find root cause",
+  "why is X broken", "investigate bug", "что сломалось", "почему не работает",
+  "найди причину", "дебаг", "отладь", "test fails", "build breaks", "crash",
+  "unexpected behavior", "regression", or when a previous fix attempt didn't work.
+  Performs systematic root cause investigation — stops at diagnosis, does NOT fix.
   Produces a debug report with symptom, reproduction steps, root cause evidence, and
   recommended fix direction — ready to hand off to the implement stage.
-
-  Do NOT use for: feature implementation, code review, performance optimization (unless it's a
-  performance bug), writing new tests from scratch (use write-tests), general research (use research).
+  Do NOT use for: feature implementation, code review, performance optimization (unless
+  it's a performance bug), writing new tests from scratch (use write-tests), general
+  research (use research).
 disable-model-invocation: true
 ---
 
@@ -34,7 +33,7 @@ This skill stops at root cause — the fix is a separate stage.
 - Integration issues
 - Regressions
 - **Especially when:** under time pressure, "just one quick fix" seems obvious, previous fix
-  didn't work, you've tried multiple fixes already
+  didn't work, multiple fixes have already been tried
 
 ## Three Phases
 
@@ -48,7 +47,7 @@ Complete each phase before proceeding to the next.
    - They often contain the exact answer
 
 2. **Reproduce consistently**
-   - Can you trigger it reliably? What are the exact steps?
+   - Confirm the bug can be triggered reliably, and capture the exact steps
    - If not reproducible → gather more data, don't guess
 
 3. **Check recent changes**
@@ -85,7 +84,7 @@ At each step, halve the search space:
 
 **Rules:**
 - Each iteration MUST eliminate ~50% of the remaining search space
-- If you find yourself listing 5+ hypotheses without testing → STOP, switch to binary search
+- If 5+ hypotheses accumulate without being tested → STOP, switch to binary search
 - Document what was eliminated at each step
 
 ### Phase 3: Hypothesis and Confirmation
@@ -117,7 +116,7 @@ If no debugger is available:
 
 ## Red Flags — STOP and Return to Phase 1
 
-If you catch yourself thinking:
+Watch for these thought patterns:
 - "Just try changing X and see if it works"
 - "It's probably X, let me fix that"
 - "I don't fully understand but this might work"
@@ -130,9 +129,9 @@ If you catch yourself thinking:
 
 Escalate to user when:
 - Investigation reveals scope is larger than expected
-- Root cause is in a dependency or external system beyond your control
+- Root cause is in a dependency or external system beyond agent control
 - Multiple valid fix approaches exist with non-obvious trade-offs
-- The bug requires access, credentials, or environment you don't have
+- The bug requires access, credentials, or environment not available to the agent
 - Cannot reproduce after exhausting available information
 
 ## Report
