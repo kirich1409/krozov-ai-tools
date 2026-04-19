@@ -74,4 +74,4 @@ Spec profile does not write a receipt. Verdict is a conversation-level output co
 
 ## Rationale (why this profile exists)
 
-Before this profile, `write-spec` Phase 4.3 invoked `plan-review` on a spec artifact, and the detector silently classified it as `implementation-plan`. The implementation-plan rubric is generic tech-review; it doesn't specifically check whether AC are falsifiable, whether Out of Scope is explicit, whether decisions have rationale, etc. Specs ended up reviewed by a rubric that didn't match their structure. This profile closes that drift.
+Before this profile, `write-spec` Phase 4.3 invoked the review engine on a spec artifact, and the detector silently classified it as an implementation-plan. The implementation-plan rubric is generic tech-review; it doesn't specifically check whether AC are falsifiable, whether Out of Scope is explicit, whether decisions have rationale, etc. Specs ended up reviewed by a rubric that didn't match their structure. This profile closes that drift.

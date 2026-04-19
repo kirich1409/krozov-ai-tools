@@ -23,7 +23,7 @@ source_routing:
 
 ## Rubric
 
-Generic implementation-plan review. Each reviewer applies their expertise:
+Generic implementation-plan assessment. Each reviewer applies their expertise:
 
 - Scope of changes clearly described
 - Architectural fit — modules, layers, dependency direction
