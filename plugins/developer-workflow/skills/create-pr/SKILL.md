@@ -324,9 +324,17 @@ gh pr edit --body "<final-body>"      # or glab mr update --description
 # 2. Mark ready
 gh pr ready                           # GitHub
 # GitLab: --ready on current glab (≥1.32); older glab used --unwip.
-# Try --ready first; on `unknown flag` stderr fall back to --unwip:
-if ! glab mr update --ready 2> /tmp/glab.err; then
-  grep -q 'unknown flag' /tmp/glab.err && glab mr update --unwip || { cat /tmp/glab.err; exit 1; }
+# Try --ready first; fall back to --unwip ONLY when stderr shows that
+# --ready itself is an unknown flag. Any other error is real — surface it.
+GLAB_ERR=$(mktemp)
+trap 'rm -f "$GLAB_ERR"' EXIT
+if ! glab mr update --ready 2>"$GLAB_ERR"; then
+  if grep -qE 'unknown flag:? --ready|flag provided but not defined: -?ready' "$GLAB_ERR"; then
+    glab mr update --unwip
+  else
+    cat "$GLAB_ERR" >&2
+    exit 1
+  fi
 fi
 ```
 

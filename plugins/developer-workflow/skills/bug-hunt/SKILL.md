@@ -178,9 +178,19 @@ even in exploratory mode).
 ## Step 3: Collect and Present Exploration Report
 
 When the manual-tester agent completes, process its output into a structured report and
-persist it to `./swarm-report/bug-hunt-<SESSION_ID>.md` (the path registered in Step 1.1.1).
-This file is what `Re-exploration After Fixes` re-reads to verify previously reported bugs
-— the report is not scroll-ephemeral.
+persist it. The write path depends on which run this is:
+
+- **First run for this `<SESSION_ID>`** (no prior `bug-hunt-<SESSION_ID>*.md` exists in
+  `swarm-report/`) → write to `./swarm-report/bug-hunt-<SESSION_ID>.md` (the path
+  registered in Step 1.1.1).
+- **Re-exploration run** (the base file already exists — entered via the
+  `Re-exploration After Fixes` flow below) → write to
+  `./swarm-report/bug-hunt-<SESSION_ID>-run<N>.md`, where `<N>` is the next unused index
+  starting at 2. Leave earlier `run<N>` files and the base file in place; they are the
+  audit trail.
+
+Either way, the latest report is what `Re-exploration After Fixes` reads to verify
+previously reported bugs — the report is not scroll-ephemeral.
 
 ### Report Format
 
