@@ -16,8 +16,8 @@ Find and report:
 6. Any TODO/FIXME comments related to this feature area
 7. Test infrastructure available for the affected areas
 
-Use ast-index for all symbol searches. Use Grep only for string literals and comments.
-Check build files, configuration, and test code too.
+Prefer a code-index tool for symbol resolution when one is available in the environment.
+Use Grep for string literals and comments. Check build files, configuration, and test code too.
 
 Report: overview paragraph, then findings grouped by category with file paths and
 class/function names.
