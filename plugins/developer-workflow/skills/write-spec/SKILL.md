@@ -179,112 +179,38 @@ Update as each agent completes.
 
 ## Phase 2: Interview
 
-### 2.1 Synthesize and run feature checklist
+**Entry contract.** Research has completed; state file holds findings. No user
+questions have been asked yet beyond the optional scope-depth question in
+Phase 0.
 
-After research completes, before formulating questions, run through this checklist.
-Any item that applies and is unanswered becomes a question or a spec entry.
+**Round loop.** Run the interview as a sequence of rounds. Each round:
 
-**Feature Checklist:**
-- [ ] **OS permissions** — does this feature need to request permissions (notifications,
-      camera, location, contacts, storage)? What happens if denied?
-- [ ] **Platform-specific behavior** — does this work differently on different OS/devices?
-- [ ] **Prerequisites** — are there external setup steps (console config, service accounts,
-      API keys, entitlements) that can't be automated in code?
-- [ ] **Error states** — what can fail? What does the user see when it fails?
-- [ ] **Security** — does this expose sensitive data, require auth, or touch user credentials?
-- [ ] **Performance** — any risk of blocking the main thread, excessive memory, or battery drain?
-- [ ] **Backward compatibility** — does this change existing behavior anyone depends on?
-- [ ] **Pattern quality** — did Critical Evaluation flag any existing pattern as problematic?
+1. Synthesize research findings against the feature checklist (OS permissions,
+   platform behavior, prerequisites, error states, security, performance,
+   backward compatibility, pattern quality).
+2. Sort remaining items into **already known** (skip), **proposed defaults**
+   (propose for confirmation), and **genuine gaps** (ask).
+3. If Critical Evaluation produced 3 approach options and the approach is not
+   yet chosen, present those options **first** and wait for the user's pick
+   before asking anything else — the chosen approach shapes all subsequent
+   questions.
+4. Present all current open questions in the Question Format (each with a
+   recommended answer and alternatives). Wait for responses.
+5. Record answers in the state file. Check whether new gaps opened.
+6. Loop on remaining gaps.
 
-### 2.2 Present approach options
+**Exit criteria.** Exit the round loop when either: no open gaps remain and
+the approach is chosen (proceed to Phase 3), OR round 100 has completed (cap).
+On cap exit, record remaining items as non-blocking open questions in the
+spec and flag any blockers for the Phase 4 review.
 
-If Critical Evaluation ran, present the 3 approach options **before** asking other questions.
-This is the most important decision — it shapes everything else.
+**Large-feature phasing.** If the feature spans multiple independent
+development phases, offer a phased approach and, if accepted, spec Phase 1
+only — remaining phases go into the "Future Phases" section.
 
-```
-Based on research, here are the implementation approaches:
-
-**Option A — Radical:** {name}
-{2-3 sentences describing the approach}
-Trade-offs: {pros} / {cons}
-Best when: {context where this wins}
-
-**Option B — Classic:** {name}
-{2-3 sentences describing the approach}
-Trade-offs: {pros} / {cons}
-Best when: {context where this wins}
-
-**Option C — Conservative:** {name}
-{2-3 sentences describing the approach}
-Trade-offs: {pros} / {cons}
-Best when: {context where this wins}
-
-Recommended: Option {X} — {one sentence rationale}
-Or describe a custom approach: ___
-```
-
-Wait for the user to choose before proceeding. The chosen approach becomes the baseline
-for all subsequent questions.
-
-### 2.3 Synthesize gaps
-
-After the approach is chosen, synthesize remaining findings into three categories:
-- **Already known** — research gave a clear answer, no need to ask
-- **Proposed defaults** — research suggests a direction, propose it for confirmation
-- **Genuine gaps** — requires user input to resolve
-
-Only ask about genuine gaps. Present proposed defaults as recommendations the user
-confirms or overrides.
-
-### 2.4 Question format
-
-Each question in a round:
-
-```
-**Q: {question}**
-→ Recommended: {answer} — {brief rationale}
-→ Alternative: {different option}
-→ Alternative: {another option, if relevant}
-→ Or describe your preference: ___
-```
-
-Skip questions where the recommendation is overwhelmingly obvious and the answer
-doesn't meaningfully change the architecture. Save those decisions for the "Decisions
-Made" section in the spec.
-
-### 2.5 Round structure
-
-Each round:
-1. Present what's already understood (brief — gives user context)
-2. Ask all current open questions with recommended answers
-3. Wait for responses
-4. Record answers in state file
-5. Check if any new gaps opened from the answers
-6. If gaps remain → another round. If complete → proceed to drafting.
-
-**Cap: maximum 100 interview rounds.** If the 100th round completes and gaps remain,
-record them as open questions in the spec (non-blocking where possible) and proceed
-to drafting. Surface any remaining blockers to the user in the review phase.
-
-### 2.6 Large feature handling
-
-If the feature spans multiple independent development phases, offer phased approach:
-
-```
-This feature is substantial. Suggested phases:
-
-**Phase 1 — {name}:** {what it delivers and why first}
-**Phase 2 — {name}:** {what it adds, depends on Phase 1}
-**Phase 3 — {name}:** {what it adds}
-
-Recommendation: spec and fully implement Phase 1 before speccing Phase 2.
-Real feedback from Phase 1 will inform Phase 2 design.
-
-Proceed phased, or spec the full feature at once?
-```
-
-If phased: spec covers Phase 1 only. Include a "Future Phases" section for what's
-planned but not yet specced.
+See [`references/interview-rounds.md`](references/interview-rounds.md) for the
+full feature checklist, approach-options presentation, question format,
+round-structure script, and large-feature phasing template.
 
 ---
 
@@ -362,27 +288,13 @@ Once the user is satisfied and no issues remain, update spec status from `draft`
 
 ## Phase 5: Save
 
-### 5.1 Create docs/specs/ if needed
+Save the approved spec to `docs/specs/YYYY-MM-DD-<slug>.md`, flip its
+frontmatter `status` from `draft` to `approved`, retire the state file, and
+confirm to the user. Do not auto-invoke any downstream skill — the user
+decides when to proceed.
 
-Check if `docs/specs/` exists in the project root. Create it if not.
-
-### 5.2 Save
-
-Save spec to `docs/specs/YYYY-MM-DD-<slug>.md`.
-
-Update state file status to `done`.
-
-### 5.3 Confirm
-
-```
-Spec saved: docs/specs/{filename}
-
-This document is self-sufficient for implementation. When you're ready,
-decompose-feature will break it into tasks for autonomous execution.
-```
-
-Do not auto-invoke decompose-feature or any other skill. The spec is the deliverable.
-The user decides when and how to proceed.
+See [`references/output-layout.md`](references/output-layout.md) for the full
+save procedure, path conventions, confirmation message, and hand-off rules.
 
 ---
 
@@ -396,16 +308,3 @@ The user decides when and how to proceed.
   Propose phased approach and wait for user alignment.
 - **Decision requires product authority** — choice has business, legal, or brand implications
   the team cannot make unilaterally. Flag as blocking open question.
-
----
-
-## Output Artifacts
-
-| Artifact | Path | Lifetime |
-|----------|------|----------|
-| Spec | `docs/specs/YYYY-MM-DD-<slug>.md` | Permanent — version controlled |
-| State file | `./swarm-report/spec-<slug>-state.md` | Temporary — delete after save |
-
-The spec is the sole deliverable. It is designed to be handed to `decompose-feature` +
-`implement` at any future point, producing a complete autonomous implementation with
-user involvement only at genuine critical blockers.
