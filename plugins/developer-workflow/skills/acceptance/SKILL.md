@@ -17,130 +17,84 @@ parallel checks to specialized agents, aggregates verdicts into one receipt. Acc
 executes a pre-existing verification contract — it does not invent checks. When no contract
 is available, it halts and proposes the correct upstream skill.
 
+Procedural detail lives in reference files loaded only when the corresponding phase runs.
+SKILL.md stays the stable orchestration contract.
+
+| File | Covers |
+|---|---|
+| [`references/source-branches.md`](references/source-branches.md) | Step 1 spec frontmatter handling and the four `test_plan_source` branches (receipt / mounted / on-the-fly / absent), mount-receipt overrides |
+| [`references/subcheck-prompts.md`](references/subcheck-prompts.md) | Step 3.1–3.10 per-agent prompt contracts — `manual-tester`, `code-reviewer`, build smoke, `business-analyst`, `ux-expert`, `security-expert`, `performance-expert`, `architecture-expert`, `build-engineer`, `devops-expert` |
+| [`references/aggregation.md`](references/aggregation.md) | Step 4 PoLL aggregation rules, Aggregated Status table, full receipt template, downstream routing |
+| [`references/re-verification.md`](references/re-verification.md) | Re-verification Loop `diff_hash` decision table, spec/test-plan change overrides, back-compat rules |
+
 ---
 
 ## Vocabulary
 
-Canonical values used throughout this skill. Downstream consumers (feature-flow, bugfix-flow,
-create-pr) read these from the receipt.
+Canonical values used throughout this skill. Downstream consumers (`feature-flow`,
+`bugfix-flow`, `create-pr`) read these from the receipt.
 
 - **`project_type`** — one of: `android`, `ios`, `web`, `desktop`, `backend-jvm`,
-  `backend-node`, `cli`, `library`, `generic`. Source of truth: ORCHESTRATION.md §Project
-  type detection.
+  `backend-node`, `cli`, `library`, `generic`. Source of truth: `docs/ORCHESTRATION.md`
+  §Project type detection.
 - **`has_ui_surface`** — boolean derived from `project_type`. True for `android`, `ios`,
   `web`, `desktop`. False otherwise (`generic` → ask user).
-- **`ecosystem`** — build stack: `gradle`, `node`, `rust`, `go`, `python`, `xcode`. Used for
-  build-smoke command selection only; orthogonal to `project_type`.
+- **`ecosystem`** — build stack: `gradle`, `node`, `rust`, `go`, `python`, `xcode`. Used
+  for build-smoke command selection only; orthogonal to `project_type`.
 - **Per-check verdict** — each sub-check reports `PASS | WARN | FAIL | SKIPPED`, plus
   `severity` (`critical | major | minor`), `confidence` (`high | medium | low`), and
   `domain_relevance` (`high | medium | low`) for aggregation.
-- **Bug severity** — `P0 | P1 | P2 | P3`. Unchanged from prior receipt schema, primary axis
-  for `feature-flow`/`bugfix-flow` routing.
-- **Aggregated Status** — `VERIFIED | FAILED | PARTIAL`. Derived; see §Aggregation.
+- **Bug severity** — `P0 | P1 | P2 | P3`. Unchanged from prior receipt schema, primary
+  axis for `feature-flow`/`bugfix-flow` routing.
+- **Aggregated Status** — `VERIFIED | FAILED | PARTIAL`. Derived; table in
+  `references/aggregation.md` §Aggregated Status.
 
 ---
 
 ## Step 0: Detect Project Type
 
-Follow the canonical heuristic in `plugins/developer-workflow/docs/ORCHESTRATION.md` §Project
-type detection. Output: `project_type`, `has_ui_surface`, `ecosystem`.
+Follow the canonical heuristic in `plugins/developer-workflow/docs/ORCHESTRATION.md`
+§Project type detection. Output: `project_type`, `has_ui_surface`, `ecosystem`.
 
 **Override policy.** If the spec frontmatter `platform:` list is non-empty, **spec wins** —
-take the first platform value as the canonical `project_type`. If the list has more than one
-entry, record the full list separately as `platforms: [...]` in the receipt; do not invent a
-`multi-platform` `project_type`. Record `project_type_override: spec` in the receipt. If the
-user corrects detection mid-run, record `project_type_override: user`.
+take the first platform value as the canonical `project_type`. If the list has more than
+one entry, record the full list separately as `platforms: [...]` in the receipt; do not
+invent a `multi-platform` `project_type`. Record `project_type_override: spec` in the
+receipt. If the user corrects detection mid-run, record `project_type_override: user`.
 
-Step 0 file reads and Step 1 file reads are disjoint. You MAY issue both sets in one batched
-Read call set to avoid serial round-trips.
+Step 0 file reads and Step 1 file reads are disjoint. You MAY issue both sets in one
+batched Read call set to avoid serial round-trips.
 
 ---
 
 ## Step 1: Gather Inputs
 
-Acceptance requires at least one verification source. If none is available, Step 1.5 halts.
+Acceptance requires at least one verification source. If none is available, Step 1.5
+halts.
 
-### 1.1 Spec Source (optional if a test plan or debug.md is provided)
+Read spec sources (Figma, PRD, AC list, PR description, issue) and load the spec
+frontmatter (`platform`, `surfaces`, `risk_areas`, `non_functional`,
+`acceptance_criteria_ids`, `design.figma`).
 
-Accept any combination of: Figma mockups, PRD / requirements, acceptance criteria list, PR
-description, GitHub/Linear issue. Read all provided sources.
-
-**Read the spec frontmatter.** If present, load `platform`, `surfaces`, `risk_areas`,
-`non_functional`, `acceptance_criteria_ids`, `design.figma`. These drive the conditional
-triggers in Step 3 plus two invariant guards on the base plan:
-
-- `ui ∈ surfaces` forces `manual-tester` into the fan-out when a scenario source exists,
-  even if Step 0 detected a non-UI project (hybrid products with both UI and non-UI
-  surfaces).
-- `surfaces` set and does not contain `ui` on a UI-detected project means the spec
-  explicitly excludes UI — skip `manual-tester` even if `has_ui_surface` is true, and note
-  this in the Check Plan section of the receipt.
-
-If the spec has no frontmatter (pre-iteration-2 specs, external specs, or plain-text issues)
-— every conditional defaults to "not triggered" and `surfaces` is treated as unspecified;
-only the base checks keyed off `has_ui_surface` run. This preserves backward compatibility.
-
-### 1.2 Probe available artifacts (parallel)
-
-Before branching, read the following in a single batched Read call set. Each may error-as-absent
-— that is expected:
+Probe artifacts in a single batched Read call set:
 
 - `swarm-report/<slug>-test-plan.md` (receipt)
 - `docs/testplans/<slug>-test-plan.md` (permanent)
-- `swarm-report/<slug>-debug.md` (bug-fix reproduction steps)
+- `swarm-report/<slug>-debug.md` (bug-fix reproduction)
 
-Combined with inline inputs and spec sources, one of the branches below fires. Record the
-selected branch as `test_plan_source` in the receipt.
-
-#### Branch 1 — Receipt present (`test_plan_source: receipt`)
-
-**Condition:** `swarm-report/<slug>-test-plan.md` exists.
-
-Read the receipt's YAML frontmatter and load `permanent_path`. Interpret `review_verdict` per
-the canonical definition in `generate-test-plan/SKILL.md` §Receipt: treat `PASS` / `WARN` /
-`skipped` as proceed; `FAIL` and `pending` as blockers that escalate back to the invoking
-orchestrator or the user (acceptance is called from `feature-flow`, `bugfix-flow`, or
-standalone — it does not assume which), recommending revision via `multiexpert-review`
-before acceptance runs again. Pass the **permanent file** to `manual-tester` as the primary
-test-plan source. If the receipt has a `platform:` field, use it as an additional input to
-Step 0's override policy.
-
-#### Branch 2 — Permanent file exists without receipt (`test_plan_source: mounted`)
-
-**Condition:** Branch 1 did not fire **and** `docs/testplans/<slug>-test-plan.md` exists on
-disk without a matching receipt.
-
-Acceptance owns the mount-receipt when invoked outside `feature-flow`. Emit a mount-receipt
-at `swarm-report/<slug>-test-plan.md` following the canonical format in
-`generate-test-plan/SKILL.md` §Receipt. Apply the mount overrides: `status: Mounted`,
-`review_verdict: skipped`, `source_spec: existing (pre-orchestration)`. Derive
-`phase_coverage` from the permanent file's phase headings; omit the field if coverage cannot
-be determined reliably. Pass the permanent file to `manual-tester`.
-
-#### Branch 3 — Inline test plan or spec available (`test_plan_source: on-the-fly`)
-
-**Condition:** Branches 1 and 2 did not fire **and** the invocation provides a test plan
-inline, a spec source, or both.
-
-Three modes:
-
-- **Test plan only (no spec)** — execute as-is; verdict depends on TC pass/fail.
-- **Test plan + spec** — execute the plan, cross-reference against the spec, flag obvious gaps
-  to the user ("spec mentions X but the test plan doesn't cover it — add a TC?").
-- **Spec only (no test plan)** — generate a test plan from the spec: identify testable flows,
-  write TC-prefixed cases with tiers/steps/expected results, present for approval, adjust per
-  feedback.
-
-#### Branch 4 — Nothing available (`test_plan_source: absent`)
-
-**Condition:** no receipt, no permanent file, no inline test plan, no spec source, no
-`swarm-report/<slug>-debug.md` (bug-fix path).
-
-Proceed to Step 1.5. Do not run any checks.
+The selected source fires one of four branches — `test_plan_source: receipt | mounted |
+on-the-fly | absent`. If `swarm-report/<slug>-debug.md` is the only available verification
+source, it qualifies Branch 3 (`on-the-fly`) — bug-fix verification treats `debug.md` as a
+spec-like input. Full branch semantics, mount-receipt overrides, and spec frontmatter
+consumers (including the `surfaces` invariant guards) live in
+[`references/source-branches.md`](references/source-branches.md). Record the selected
+branch as `test_plan_source` in the receipt.
 
 ---
 
 ## Step 1.5: Source-Missing Gate
+
+Fires only on `test_plan_source: absent`.
 
 ### Proposal table
 
@@ -149,15 +103,16 @@ Proceed to Step 1.5. Do not run any checks.
 | No spec, no test plan, implement receipt exists (feature) | Run `/write-spec` (requirements doc) or `/generate-test-plan` (tests only), then re-run acceptance. |
 | Spec exists without acceptance criteria, no test plan, UI project | Run `/generate-test-plan` to produce executable TCs, or add acceptance criteria to the spec. |
 | Bugfix path with no `swarm-report/<slug>-debug.md` | Run `/debug` to capture reproduction steps, then re-run acceptance. |
-| Only `design.figma` in spec, no test plan, UI project | Design-only review possible via ux-expert; for functional acceptance also run `/generate-test-plan`. |
+| Only `design.figma` in spec, no test plan, UI project | Design-only review possible via `ux-expert`; for functional acceptance also run `/generate-test-plan`. |
 
 ### Options
 
-1. **Create the missing source** — invoke the proposed upstream skill, then re-run acceptance.
+1. **Create the missing source** — invoke the proposed upstream skill, then re-run
+   acceptance.
 2. **Abort acceptance** — exit without a receipt; user re-invokes when ready.
 
-Exploratory QA without a scenario is the `bug-hunt` skill's responsibility. Do not offer it as
-a fallback inside acceptance.
+Exploratory QA without a scenario is the `bug-hunt` skill's responsibility. Do not offer
+it as a fallback inside acceptance.
 
 From `feature-flow` / `bugfix-flow` this gate rarely fires — upstream skills guarantee a
 source. Standalone invocations are the main user.
@@ -166,14 +121,14 @@ source. Standalone invocations are the main user.
 
 ## Step 2: Persist E2E Scenario
 
-**Only relevant if `has_ui_surface == true` and a scenario source exists** (test plan, spec
-with AC, or debug.md). Re-anchoring against this file is enforced by `manual-tester` —
-acceptance writes it once here; re-reads during aggregation only.
+**Only relevant if `has_ui_surface == true` and a scenario source exists** (test plan,
+spec with AC, or `debug.md`). Re-anchoring against this file is enforced by
+`manual-tester` — acceptance writes it once here; re-reads during aggregation only.
 
 The running-app environment (device, simulator, emulator, browser) is **owned by
 `manual-tester` itself** — see its Step 0 Environment Setup. This skill does not probe
-devices, run `gradlew installDebug`, or start dev servers; it delegates that responsibility
-wholesale to the agent.
+devices, run `gradlew installDebug`, or start dev servers; it delegates that
+responsibility wholesale to the agent.
 
 Save to `swarm-report/<slug>-e2e-scenario.md`:
 
@@ -191,31 +146,33 @@ Spec source: <what was used>
 For bug fixes, steps come from `debug.md` reproduction steps inverted:
 - Original: "Step X triggers the bug" → E2E: "Step X no longer triggers the bug".
 
-Compaction-resilience (enforced by `manual-tester`, not by this skill): checkbox marks survive
-compaction; completed steps (`[x]`) are not repeated; resume from the first incomplete step.
+Compaction-resilience (enforced by `manual-tester`, not by this skill): checkbox marks
+survive compaction; completed steps (`[x]`) are not repeated; resume from the first
+incomplete step.
 
 ---
 
 ## Step 2.5: Dedup Probe
 
-Read `swarm-report/<slug>-quality.md` (produced by `implement`'s Quality Loop). Three cases:
+Read `swarm-report/<slug>-quality.md` (produced by `implement`'s Quality Loop). Three
+cases:
 
-- **`Status: PASS`, receipt is from the current branch head** — `code-reviewer` is skipped.
-  Freshness is inferred from the receipt's `Date:` field vs the branch commit window; if it
-  cannot be confirmed (e.g. receipt significantly older than the latest commit), do **not**
-  skip — run `code-reviewer` normally. On skip, write a stub artifact at
-  `swarm-report/<slug>-acceptance-code.md` with `verdict: SKIPPED`, `blocked_on: null`, and a
-  one-line body referencing `<slug>-quality.md`.
-- **`Status: FAIL`** — Quality Loop failed upstream; do not silently proceed. Run
-  `code-reviewer` anyway, and surface `blocked_on: quality-loop failed — see <slug>-quality.md`
-  in the Step 4 Summary. The aggregated Status is forced to `PARTIAL` at minimum (or
-  `FAILED` if `code-reviewer` itself returns `FAIL`).
-- **Receipt missing** — run `code-reviewer` normally. No skip.
+- **`Status: PASS`**, receipt from the current branch head → `code-reviewer` is skipped.
+  Freshness is inferred from the receipt's `Date:` field vs the branch commit window; if
+  it cannot be confirmed, do **not** skip — run `code-reviewer` normally. On skip, write a
+  stub at `swarm-report/<slug>-acceptance-code.md` with `verdict: SKIPPED`,
+  `blocked_on: null`, one-line body referencing `<slug>-quality.md`.
+- **`Status: FAIL`** → Quality Loop failed upstream. Run `code-reviewer` anyway, surface
+  `blocked_on: quality-loop failed — see <slug>-quality.md` in the Step 4 Summary. The
+  aggregated Status is forced to `PARTIAL` at minimum (or `FAILED` if `code-reviewer`
+  itself returns `FAIL`).
+- **Receipt missing** → run `code-reviewer` normally. No skip.
 
 Field name matches `implement`'s receipt schema. Note: `code-reviewer` skipping here is
-decoupled from the Re-verification Loop's `diff_hash` policy — the dedup here is about
-"implement already ran code-review on this diff", whereas `diff_hash` idempotency (§Re-verification
-Loop) is about "previous acceptance run covered this same diff".
+decoupled from the Re-verification Loop's `diff_hash` policy
+(see [`references/re-verification.md`](references/re-verification.md)) — the dedup here is
+about "implement already ran code-review on this diff", whereas `diff_hash` idempotency is
+about "previous acceptance run covered this same diff".
 
 This probe is synchronous — it decides the Step 3 fan-out composition and emits the stub
 before fan-out.
@@ -227,12 +184,12 @@ before fan-out.
 Before issuing the Step 3 fan-out — but **after** the full check plan has been finalized
 (Step 3 intro resolves base + all conditional triggers) — save the plan and
 compaction-resilient progress to `swarm-report/<slug>-acceptance-state.md`. Symmetric to
-`multiexpert-review`'s state file. This file carries the acceptance run across context compaction —
-it is never a receipt, just operational state.
+`multiexpert-review`'s state file. This file carries the acceptance run across context
+compaction — it is never a receipt, just operational state.
 
 Step ordering: 2.5 dedup probe → Step 3 intro resolves conditional triggers → write the
-state file here (Step 2.6) with the complete `Planned Checks` list → Step 3 body dispatches
-the fan-out.
+state file here (Step 2.6) with the complete `Planned Checks` list → Step 3 body
+dispatches the fan-out.
 
 ```markdown
 # Acceptance State: <slug>
@@ -255,7 +212,6 @@ Test-plan hash: <sha256 of permanent test plan, or null>
 ## Completed Checks
 - [x] code — swarm-report/<slug>-acceptance-code.md — PASS
 - [x] build — swarm-report/<slug>-acceptance-build.md — PASS
-...
 
 ## Aggregated Verdict History
 ### Cycle 1
@@ -264,6 +220,7 @@ Blockers: <copy from aggregated receipt>
 ```
 
 **Rules:**
+
 1. Create and populate the file only after the full check plan is finalized — base
    fan-out plus all conditional triggers (spec-driven and diff-driven) — and before any
    agent batch is spawned. The initial `Planned Checks` list must reflect that complete
@@ -273,10 +230,12 @@ Blockers: <copy from aggregated receipt>
    re-spawned on resume after compaction.
 3. Mark each check `[x]` with the artifact path and verdict as soon as the per-check file
    is written.
-4. On Re-verification Loop re-entry (§Re-verification Loop), increment `Cycle`, reset the
-   `Planned Checks` list using the new diff/spec/test-plan hashes, move checks to be skipped
-   to a **`## Re-used from previous cycle`** section (with artifact pointers), and append a
-   new entry under `Aggregated Verdict History` when the cycle completes.
+4. On Re-verification Loop re-entry
+   ([`references/re-verification.md`](references/re-verification.md)), increment `Cycle`,
+   reset the `Planned Checks` list using the new diff/spec/test-plan hashes, move checks
+   to be skipped to a **`## Re-used from previous cycle`** section (with artifact
+   pointers), and append a new entry under `Aggregated Verdict History` when the cycle
+   completes.
 5. When `Status: done` is written, the state file becomes read-only operational history —
    it is not deleted automatically.
 
@@ -288,9 +247,9 @@ acceptance's own fan-out cursor, owned by this skill.
 
 ## Step 3: Run Checks (parallel fan-out)
 
-Pick the check plan by `has_ui_surface` plus conditional triggers read from spec frontmatter.
-Emit **one** message containing all tool calls simultaneously (Agent calls + Bash smoke). Do
-not wait for any to return before dispatching the others.
+Pick the check plan by `has_ui_surface` plus conditional triggers read from spec
+frontmatter. Emit **one** message containing all tool calls simultaneously (Agent calls +
+Bash smoke). Do not wait for any to return before dispatching the others.
 
 ### Base check plan
 
@@ -301,9 +260,9 @@ not wait for any to return before dispatching the others.
 
 ### Conditional triggers
 
-Add to the fan-out only when the trigger fires. Each trigger maps to a specialist agent with a
-narrow prompt. When no trigger fires for an agent, the agent is not spawned. Triggers read
-either from spec frontmatter or directly from the diff.
+Add to the fan-out only when the trigger fires. Each trigger maps to a specialist agent
+with a narrow prompt. When no trigger fires for an agent, the agent is not spawned.
+Triggers read either from spec frontmatter or directly from the diff.
 
 | Trigger | Agent | Role |
 |---|---|---|
@@ -319,8 +278,8 @@ either from spec frontmatter or directly from the diff.
 **Diff-based trigger detection.** Two cached passes over the same diff:
 
 1. **Path pass** — run `git diff --name-only <base>...HEAD` once and cache the path set.
-   Use the cached set for all path-only rules (build files, CI/release config, cross-module
-   span).
+   Use the cached set for all path-only rules (build files, CI/release config,
+   cross-module span).
 2. **Content pass (on demand)** — when the `architecture-expert` rule needs to decide
    "diff touches a public API symbol", read the diff body once via
    `git diff --unified=0 <base>...HEAD -- <cached-paths>` and cache it for the whole run.
@@ -337,16 +296,16 @@ Both caches live for the duration of the acceptance run — do not re-probe per 
   `products` / `targets`.
 - **HTTP/RPC surface**: changes to files matching `**/routes/**`, `**/controllers/**`,
   `**/handlers/**`, `**/api/**`, `*.proto`, `*.graphql`, `openapi.yaml`.
-- **Cross-module threshold**: `git diff --name-only` spans ≥ 3 top-level module directories
-  discovered from `settings.gradle*` / `package.json` workspaces / `Cargo.toml`
-  `[workspace]` members.
+- **Cross-module threshold**: `git diff --name-only` spans ≥ 3 top-level module
+  directories discovered from `settings.gradle*` / `package.json` workspaces /
+  `Cargo.toml` `[workspace]` members.
 
 If the heuristic is ambiguous, default to **not** spawning `architecture-expert` — a false
 negative is safer than a false positive (the skill exists to catch high-risk changes, not
 every diff).
 
-When both design-review and a11y triggers fire, combine into one `ux-expert` invocation with
-mode `both`. When no trigger fires, acceptance runs the base plan only — preserving
+When both design-review and a11y triggers fire, combine into one `ux-expert` invocation
+with mode `both`. When no trigger fires, acceptance runs the base plan only — preserving
 backward compatibility with specs written before iteration 2.
 
 **Future iterations** will add `visual-check` as a separate sibling skill (not a fan-out
@@ -372,63 +331,53 @@ blocked_on: <optional — what the user must resolve; also used when a planned p
 
 **`diff_hash` semantics.** Computed once per acceptance run from
 `git diff <base>...HEAD | sha256sum`; every check written during that run records the same
-value. The Re-verification Loop uses it to decide which checks to re-run (see §Re-verification
-Loop). Bash-only checks (build smoke) record the same hash because their input is the same
-diff. Checks whose verdict does not depend on the diff at all (e.g. a spec-only sanity check
-with no code to review) may write `diff_hash: null` — the Re-verification Loop never skips
-such a check purely on hash match.
+value. The Re-verification Loop uses it to decide which checks to re-run (see
+[`references/re-verification.md`](references/re-verification.md)). Bash-only checks (build
+smoke) record the same hash because their input is the same diff. Checks whose verdict
+does not depend on the diff at all may write `diff_hash: null` — the Re-verification Loop
+never skips such a check purely on hash match.
 
 File naming is **one file per `check` value**: `swarm-report/<slug>-acceptance-<check>.md`
 (e.g. `-manual.md`, `-code.md`, `-design.md`, `-a11y.md`). When a single agent invocation
-covers multiple concerns (see `ux-expert` below), it writes separate files per concern to
-keep the one-file-per-check invariant intact.
+covers multiple concerns (see `ux-expert` in subcheck-prompts.md), it writes separate
+files per concern to keep the one-file-per-check invariant intact.
 
-`severity`, `confidence`, `domain_relevance` are required when `verdict` is `WARN` or `FAIL`;
-null for `PASS` / `SKIPPED`. These drive the PoLL aggregation in Step 4.
+`severity`, `confidence`, `domain_relevance` are required when `verdict` is `WARN` or
+`FAIL`; null for `PASS` / `SKIPPED`. These drive the PoLL aggregation in Step 4.
 
-### 3.1–3.10 Per-agent sub-check prompts
+### Per-agent prompt contracts
 
-Each sub-check (manual-tester, code-reviewer, build smoke, business-analyst, ux-expert in
-design-review / a11y / both modes, security-expert, performance-expert, architecture-expert,
-build-engineer, devops-expert) has a narrow prompt template and verdict rules — covering
-inputs, output path, and PASS/WARN/FAIL criteria. Spawn each via Agent tool in the same
-fan-out message; build smoke runs via Bash.
-
-See [`references/subcheck-prompts.md`](references/subcheck-prompts.md) for the full prompt template and verdict rules per
-agent and for the build-smoke command table.
+Prompt contents, output paths, and verdict rules for every sub-check —
+`manual-tester` (3.1), `code-reviewer` (3.2), build smoke (3.3), `business-analyst` (3.4),
+`ux-expert` (3.5), `security-expert` (3.6), `performance-expert` (3.7),
+`architecture-expert` (3.8), `build-engineer` (3.9), `devops-expert` (3.10) — live in
+[`references/subcheck-prompts.md`](references/subcheck-prompts.md).
 
 ---
 
 ## Step 4: Aggregate and Write Receipt
 
-Read each per-check artifact's frontmatter first (body only if `verdict != PASS`), then
-reduce via PoLL rules (same protocol as `multiexpert-review` §"Step 4 — Synthesize verdict").
-Bug severities (P0–P3) remain the primary routing axis; PoLL layers additional rules for
-cases not covered by bug severity alone. Derive Aggregated Status (`VERIFIED | FAILED |
-PARTIAL`), write the aggregated receipt to `swarm-report/<slug>-acceptance.md` (including
-idempotency hashes, Check Plan, Check Results table, Convergence signals, Summary, Bugs
-Found, Recommendation), and route to the invoking orchestrator.
+Apply the PoLL rules and the Aggregated Status table in
+[`references/aggregation.md`](references/aggregation.md) — same protocol as
+`multiexpert-review` but with per-check input shape. Read frontmatter of each per-check
+artifact first; read the body only if `verdict != PASS`. Missing per-check artifact →
+treat as `verdict: FAIL` with `blocked_on: per-check artifact missing`; never silently
+drop.
 
-Missing-artifact invariant: if a planned per-check artifact is missing at aggregation time,
-treat the check as `verdict: FAIL` with `blocked_on: per-check artifact missing` — do not
-silently drop it.
-
-See [`references/aggregation.md`](references/aggregation.md) for the PoLL rule table, Aggregated Status table, full
-receipt format, and the orchestrator routing table.
+Save the aggregated receipt at `swarm-report/<slug>-acceptance.md` using the receipt
+template in [`references/aggregation.md`](references/aggregation.md) §Receipt format.
+Routing for downstream orchestrators (VERIFIED / FAILED / PARTIAL branches) lives in the
+same reference §Routing.
 
 ---
 
 ## Re-verification Loop
 
-On fix-loop re-entry (after `FAILED` → `implement` fix → re-run acceptance), re-probe Step 0
-and Step 1, compute `diff_hash_new`, then decide per-check action from the decision table
-(PASS/SKIPPED/WARN with matching `diff_hash` → skip; any FAIL → always re-run; missing or
-`null` prior hash → re-run). `business-analyst` and `manual-tester` get a spec/test-plan
-change override: if `spec_hash` or `test_plan_hash` changed — or is missing from an older
-receipt — re-run them regardless of `diff_hash`. Overwrite per-check artifacts with a fresh
-`diff_hash`, aggregate into a fresh receipt, and repeat until VERIFIED or the user ships
-as-is.
+On fix-loop re-entry (after `FAILED` → `implement` fix → re-run acceptance), compute
+`diff_hash_new` and decide which checks to re-run vs reuse, per the decision table in
+[`references/re-verification.md`](references/re-verification.md). Spec and test-plan
+change overrides (`spec_hash` / `test_plan_hash` mismatch forces `business-analyst` /
+`manual-tester`) and back-compat rules are documented there.
 
-See [`references/re-verification.md`](references/re-verification.md) for the full per-check decision table, the
-spec/test-plan change override rule, the back-compat rule for older receipts, and the
-per-agent re-run scope details.
+Aggregate into a fresh receipt, overwriting the previous one. Repeat until VERIFIED or
+the user decides to ship as-is.

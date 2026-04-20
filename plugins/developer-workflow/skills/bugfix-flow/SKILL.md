@@ -181,7 +181,7 @@ implicit test case. For bugs in critical flows that need a formal structured pla
 `docs/testplans/<slug>-test-plan.md`. `acceptance` Branch 2 mounts by exact slug match; if
 the plan was generated under a different filename, rename it to
 `docs/testplans/<slug>-test-plan.md` before running `/bugfix-flow` (see
-`acceptance/SKILL.md` §1.2 Branch 2).
+`acceptance/references/source-branches.md` §Branch 2).
 
 Invoke `developer-workflow:acceptance` with:
 - Spec source: `swarm-report/<slug>-debug.md` (reproduction steps = acceptance criteria)
