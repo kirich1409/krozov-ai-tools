@@ -52,7 +52,7 @@ Round N:
   Phase C  → pr-review-toolkit trio (parallel) → fix BLOCK → /check → continue
   Phase D  → expert reviews (conditional, parallel) → fix BLOCK → /check → continue
   Round end: did any BLOCK remain unfixed?
-    yes → go to round N+1 (max 3 rounds total)
+    yes → go to round N+1 (up to max_rounds total — default 3, see §Max round budget)
     no  → exit with PASS
 ```
 
@@ -63,7 +63,7 @@ Round N:
 
 ### Max round budget
 
-Default `max_rounds = 3`, overridable to any integer ≥ 1 via the `--max-rounds N` flag (see §Inputs). The caller's flag wins when present; otherwise the default applies. ESCALATE semantics key off the effective value, not the constant — "after 3 rounds" in this document means "after the effective max_rounds".
+Default `max_rounds = 3`, overridable to any integer ≥ 1 via the `--max-rounds N` flag (see §Inputs). The caller's flag wins when present; otherwise the default applies. ESCALATE semantics key off the effective value.
 
 Total budget (per round: 4 phases + fixes + `/check` after each fix) can take non-trivial wall time on large diffs. If a project regularly hits the cap, the BLOCK threshold may be too strict for the project's conventions — tune Phase A's `code-reviewer` confidence threshold (see `developer-workflow-experts/agents/code-reviewer.md`) rather than silently raising `max_rounds`.
 
@@ -229,7 +229,7 @@ Findings that the user explicitly decided to accept (e.g., during escalation). N
 - **Prefer** to keep fixes inside the files touched by `implement`. Minimal, necessary edits in adjacent files are allowed when a finding explicitly requires them — e.g., Phase C's `pr-test-analyzer` may demand adding tests in a sibling test file, and Phase B's `/simplify` may extract a duplicated helper into an existing utility module. In every such case, keep the edit narrowly scoped to what the finding requires.
 - **Never** re-scope the task under the guise of "cleanup". If a finding points to a structural issue beyond narrow-fix reach → escalate, do not refactor.
 - **Never** silently skip Phase A — `code-reviewer`'s plan-conformance check is the anchor. If the agent fails to launch for infrastructure reasons, stop and escalate.
-- **Never** run forever. 3 rounds, then report.
+- **Never** run forever. Stop after `max_rounds` rounds (default 3) and report.
 
 ---
 
@@ -237,7 +237,7 @@ Findings that the user explicitly decided to accept (e.g., during escalation). N
 
 Stop and report to caller when:
 
-- After 3 rounds, BLOCK findings remain unresolved
+- After `max_rounds` rounds (default 3), BLOCK findings remain unresolved
 - `/check` fails and the fix doesn't converge after 1 retry
 - A BLOCK finding requires refactoring beyond the diff scope
 - An expert finding demands architectural changes (new modules, dependency reorg)

@@ -4,7 +4,8 @@ description: >-
   This skill should be used when the user wants a plan, spec, or test-plan reviewed by a
   panel of independent expert agents (PoLL — Panel of LLM Evaluators — protocol) before
   committing. Triggers: "review the plan", "review the spec", "review the test-plan",
-  "multi-expert review", "panel review", "проверь план", "оцени план", "проверь спецификацию",
+  "multi-expert review", "panel review", "validate the approach", "sanity check this",
+  "what did I miss?", "проверь план", "оцени план", "проверь спецификацию",
   "проверь тест-план". Do NOT use for code review (use code-reviewer) or for generating
   alternative designs (use design-options).
 ---

@@ -69,8 +69,9 @@ out=$(glab mr view --output json 2>&1); rc=$?
 
 **On real error (non-zero rc that is not the "no PR" case):** abort with the captured
 stderr and stop. Do not proceed as if no PR exists — that would try to create a duplicate.
-Typical cause inside the sandbox: the proxy-injected token is missing; see
-`CLAUDE.md` (root) → "If `git push` fails with authentication errors".
+Typical causes: `gh` / `glab` not installed or not authenticated (`gh auth status`,
+`glab auth status`), API outage, or a sandbox/proxy environment where the Git provider
+token is missing.
 
 Capture on success:
 - `PR_EXISTS` — true/false

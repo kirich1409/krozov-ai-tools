@@ -2,13 +2,11 @@
 name: acceptance
 description: >
   This skill should be used when the user wants to confirm an implementation meets its spec
-  (feature) or that a bug no longer reproduces (bug fix). Fans out parallel checks to
-  manual-tester, code-reviewer, and conditional expert agents (selected by spec frontmatter
-  and project type), then aggregates verdicts into one receipt via PoLL rules. Without a
-  verification source, proposes /write-spec, /generate-test-plan, or /debug. Triggers:
-  "test this", "verify against spec", "QA the implementation", "run the test plan",
-  "validate acceptance criteria", "verify the PR", "verify the fix", "confirm bug is gone",
-  "acceptance", "приёмка", "проверь", "протестируй".
+  (feature) or that a bug no longer reproduces (bug fix). Fans out parallel checks and
+  aggregates verdicts into one receipt. Triggers: "test this", "verify against spec",
+  "QA the implementation", "run the test plan", "validate acceptance criteria",
+  "verify the PR", "verify the fix", "confirm bug is gone", "acceptance", "приёмка",
+  "проверь", "протестируй".
 disable-model-invocation: true
 ---
 
