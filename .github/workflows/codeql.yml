@@ -1,0 +1,58 @@
+name: CodeQL
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    # Weekly scan to match the previous default-setup schedule.
+    - cron: "37 5 * * 1"
+
+# Advanced setup (replaces default setup).
+#
+# Advanced setup runs for every PR regardless of changed paths, which is the
+# reason for switching. Default setup auto-skips PRs that touch no tracked
+# language files (JSON/YAML/MD-only changes), but the repo ruleset requires a
+# CodeQL analysis on every PR — resulting in permanently-blocked merges for
+# release-bump PRs. Advanced setup always uploads an analysis, so the
+# code_scanning ruleset is always satisfied.
+#
+# Languages mirror what default setup had detected: actions, javascript-
+# typescript (covers both JS and TS), python.
+jobs:
+  analyze:
+    name: Analyze (${{ matrix.language }})
+    runs-on: ubuntu-latest
+    permissions:
+      security-events: write
+      packages: read
+      actions: read
+      contents: read
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - language: actions
+            build-mode: none
+          - language: javascript-typescript
+            build-mode: none
+          - language: python
+            build-mode: none
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: ${{ matrix.language }}
+          build-mode: ${{ matrix.build-mode }}
+          queries: security-and-quality
+
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@v3
+        with:
+          category: "/language:${{ matrix.language }}"
