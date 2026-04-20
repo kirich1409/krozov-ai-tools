@@ -29,10 +29,12 @@ export class FileCache {
 
   async set<T>(key: string, data: T): Promise<void> {
     const filePath = this.filePath(key);
-    await mkdir(path.dirname(filePath), { recursive: true });
+    // Owner-only permissions: cache may hold GitHub tokens / API responses
+    // that should not be readable by other users on shared systems.
+    await mkdir(path.dirname(filePath), { recursive: true, mode: 0o700 });
 
     const entry: CacheEntry<T> = { data, timestamp: Date.now() };
-    await writeFile(filePath, JSON.stringify(entry));
+    await writeFile(filePath, JSON.stringify(entry), { mode: 0o600 });
   }
 
   /**

@@ -7,7 +7,7 @@ vi.mock("node:fs/promises");
 const mockedFsp = vi.mocked(fsp);
 
 describe("FileCache", () => {
-  const baseDir = "/tmp/test-cache";
+  const baseDir = "/fixtures/maven-cache";
   let cache: FileCache;
 
   beforeEach(() => {
@@ -23,7 +23,7 @@ describe("FileCache", () => {
 
       expect(result).toBeUndefined();
       expect(mockedFsp.readFile).toHaveBeenCalledWith(
-        "/tmp/test-cache/some-key.json",
+        "/fixtures/maven-cache/some-key.json",
         "utf-8"
       );
     });
@@ -36,7 +36,7 @@ describe("FileCache", () => {
 
       expect(result).toEqual({ version: "1.0.0" });
       expect(mockedFsp.readFile).toHaveBeenCalledWith(
-        "/tmp/test-cache/my-key.json",
+        "/fixtures/maven-cache/my-key.json",
         "utf-8"
       );
     });
@@ -76,12 +76,14 @@ describe("FileCache", () => {
 
       await cache.set("my-key", { name: "test" });
 
-      expect(mockedFsp.mkdir).toHaveBeenCalledWith("/tmp/test-cache", {
+      expect(mockedFsp.mkdir).toHaveBeenCalledWith("/fixtures/maven-cache", {
         recursive: true,
+        mode: 0o700,
       });
       expect(mockedFsp.writeFile).toHaveBeenCalledWith(
-        "/tmp/test-cache/my-key.json",
-        JSON.stringify({ data: { name: "test" }, timestamp: 1700000000000 })
+        "/fixtures/maven-cache/my-key.json",
+        JSON.stringify({ data: { name: "test" }, timestamp: 1700000000000 }),
+        { mode: 0o600 },
       );
     });
     it("creates nested directories for keys with path separators", async () => {
@@ -91,12 +93,14 @@ describe("FileCache", () => {
 
       await cache.set("scm/io.ktor/ktor-core", { owner: "ktorio", repo: "ktor" });
 
-      expect(mockedFsp.mkdir).toHaveBeenCalledWith("/tmp/test-cache/scm/io.ktor", {
+      expect(mockedFsp.mkdir).toHaveBeenCalledWith("/fixtures/maven-cache/scm/io.ktor", {
         recursive: true,
+        mode: 0o700,
       });
       expect(mockedFsp.writeFile).toHaveBeenCalledWith(
-        "/tmp/test-cache/scm/io.ktor/ktor-core.json",
+        "/fixtures/maven-cache/scm/io.ktor/ktor-core.json",
         expect.any(String),
+        { mode: 0o600 },
       );
     });
   });
