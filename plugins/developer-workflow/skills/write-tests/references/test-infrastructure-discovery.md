@@ -12,7 +12,7 @@ project — do not introduce a new framework, assertion library, or mocking tool
 | Category | What to detect | Where to look |
 |----------|---------------|---------------|
 | Test framework (Kotlin) | JUnit 4, JUnit 5, Kotest | `build.gradle(.kts)` dependencies, existing test imports |
-| Test framework (Swift) | Swift Testing (`@Test` / `@Suite`), XCTest (`XCTestCase`), Quick/Nimble | `Package.swift` dependencies, Xcode test targets, existing test imports |
+| Test framework (Swift) | Swift Testing (`@Test` / `@Suite`), XCTest (`XCTestCase`), Quick | `Package.swift` dependencies, Xcode test targets, existing test imports |
 | Assertion library | Truth, AssertJ, Kotest matchers, kotlin.test, `#expect`, `XCTAssert*`, Nimble matchers | Existing test imports and assertions |
 | Mocking / test doubles | MockK, Mockito-Kotlin, manual fakes; protocol-backed fakes/stubs/spies in Swift | Existing test imports, `@MockK`, `mock()`, `Fake*`/`Stub*`/`Spy*` classes |
 | Async testing | `kotlinx-coroutines-test` (`runTest`), Turbine; Swift `async` tests, `withCheckedContinuation`, `XCTestExpectation` | Existing test imports, build config |
