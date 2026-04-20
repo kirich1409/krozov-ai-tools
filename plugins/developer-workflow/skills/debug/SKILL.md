@@ -100,7 +100,7 @@ At each step, halve the search space:
    - Don't test multiple hypotheses simultaneously
 
 3. **Evaluate result**
-   - Confirmed → document root cause and produce artifact
+   - Confirmed → **STOP. Do NOT fix.** Document root cause and produce the artifact. Even if the fix is one obvious line, the fix belongs to the `implement` stage — ending here is the contract of this skill.
    - Refuted → form NEW hypothesis informed by what was learned, return to Phase 2
    - After 3+ failed hypotheses → STOP, likely an architectural issue, escalate to user
 
