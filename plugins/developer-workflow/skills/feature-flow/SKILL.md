@@ -60,7 +60,8 @@ Acceptance     -> PR               (VERIFIED)
 Acceptance     -> Implement        (FAILED — bugs to fix; Implement then re-runs Finalize)
 Acceptance     -> TestPlan         (FAILED — add Regression TC for new bugs)
 Acceptance     -> Debug            (FAILED — unclear root cause)
-Debug          -> Implement        (root cause diagnosed — fix follows)
+Debug          -> Implement        (root cause diagnosed — fix follows; forward recovery
+                                     edge, not counted against any backward cap)
 PR             -> Merge            (TERMINAL — no further transitions)
 PR             -> Implement        (review feedback requires code changes)
 PR             -> escalate         (drive-to-merge blocker — DISCUSSION on P0/P1,

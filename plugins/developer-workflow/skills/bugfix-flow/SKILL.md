@@ -157,7 +157,10 @@ If a draft PR already exists for this branch (re-entry on rollback), `--draft` i
 
 After `implement` passes its two gates (mechanical checks + intent check), invoke `developer-workflow:finalize` with:
 - Slug
-- Path to `swarm-report/<slug>-debug.md` (serves as the plan anchor for bugfix-flow — describes root cause and fix direction)
+- Plan anchor — pass `swarm-report/<slug>-plan.md` when the Plan stage ran (Phase 1.5);
+  otherwise pass `swarm-report/<slug>-debug.md`. The plan overrides debug.md as the
+  anchor because the plan carries the chosen approach, while debug.md stays authoritative
+  for root cause and reproduction steps (see Phase 1.5).
 
 `finalize` runs a multi-round loop (max 3): code-reviewer → /simplify → pr-review-toolkit trio → conditional expert reviews, with `/check` between fixes.
 
@@ -196,7 +199,7 @@ Wait for `swarm-report/<slug>-acceptance.md`.
 |--------|-----------|--------|
 | VERIFIED (bug gone) | **Acceptance → PR** | Proceed |
 | FAILED — same bug | **Acceptance → Implement** | Fix again (max 2 retries — see Backward Transitions). After the 2nd retry also fails acceptance, route **Acceptance → Debug** (re-diagnose). |
-| FAILED — new bug | Route per bug: trivial → Implement, complex → Debug |
+| FAILED — new bug | Route per bug: trivial → Implement (counted against the `Acceptance → Implement` cap of 2), complex → Debug (counted against the `Acceptance → Debug` cap of 1). If either cap is exhausted, **escalate** — do not loop again. |
 | PARTIAL — bug gone, minor issues | Ask user: fix or ship as-is |
 
 ---
