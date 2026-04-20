@@ -47,110 +47,39 @@ The merge step in Phase 5 **always** asks — `--auto` does not override that.
 
 ---
 
+## Operational references
+
+Volatile procedural detail — CLI recipes, GraphQL mutations, sanitize pipeline, retry
+logic — lives in reference files loaded only when the relevant phase runs. SKILL.md
+stays the stable orchestration contract.
+
+| File | Covers |
+|---|---|
+| [`references/setup.md`](references/setup.md) | Phase 1: platform detect, metadata fetch, preconditions, state-file schema, mode precedence on resume |
+| [`references/ci.md`](references/ci.md) | Phase 2.2: run-id extraction from `statusCheckRollup`, log download, classification, CI failure table, infra-flake retry, failure-loop guard |
+| [`references/reviews.md`](references/reviews.md) | Phase 2.3 + 2.4: fetch, categorize, verify, pattern-match, group, propose; decision-table format and gate behaviour |
+| [`references/delegation.md`](references/delegation.md) | Phase 3: edit / delegate / ask-in-thread / dismiss; reply-delivery safety rules; commit + push; re-request review (humans + Copilot) |
+| [`references/polling.md`](references/polling.md) | Phase 4: ScheduleWakeup schedule, delaySeconds matrix, cache-window tuning, poll-cap blocker |
+| [`references/merge.md`](references/merge.md) | Phase 5: pre-merge checks, confirmation UX, final re-check, merge commands; Phase 2.6 rebase companion |
+
+---
+
 ## Phase 1: Setup
 
-### 1.1 Detect platform
-
-Extract hostname from the remote URL and probe the matching CLI — do not regex for `github.com` / `gitlab` literals, which miss GitHub Enterprise Server and self-hosted GitLab.
-
-```bash
-REMOTE_URL=$(git remote get-url origin)
-HOST=$(echo "$REMOTE_URL" | sed -E 's#^(https?://|git@)([^/:]+)[/:].*#\2#')
-
-if gh auth status --hostname "$HOST" >/dev/null 2>&1; then
-  PLATFORM=github
-elif glab auth status --hostname "$HOST" >/dev/null 2>&1 || glab config get --global gitlab_uri 2>/dev/null | grep -q "$HOST"; then
-  PLATFORM=gitlab
-else
-  echo "Unknown host $HOST — authenticate gh or glab against it and rerun." >&2
-  exit 1
-fi
-```
-
-### 1.2 Fetch PR/MR metadata
-
-```bash
-# GitHub
-PR_INFO=$(gh pr view --json id,number,baseRefName,headRefName,title,body,isDraft,state,url,\
-statusCheckRollup,reviewDecision,mergeable,mergeStateStatus,labels,closingIssuesReferences)
-PR_NUMBER=$(jq -r .number <<<"$PR_INFO")
-PR_URL=$(jq -r .url <<<"$PR_INFO")
-IS_DRAFT=$(jq -r .isDraft <<<"$PR_INFO")
-BASE=$(jq -r .baseRefName <<<"$PR_INFO")
-HEAD=$(jq -r .headRefName <<<"$PR_INFO")
-PR_NODE_ID=$(jq -r .id <<<"$PR_INFO")     # graphql node id from the same call — no extra round-trip
-REPO=$(gh repo view --json nameWithOwner -q .nameWithOwner)
-OWNER=${REPO%/*}; REPO_NAME=${REPO#*/}
-
-# Repository node id — needed for thread-ownership re-verify before every POST.
-REPO_NODE_ID=$(gh api graphql -f query='query($o:String!,$n:String!){repository(owner:$o,name:$n){id}}' \
-  -F o="$OWNER" -F n="$REPO_NAME" --jq '.data.repository.id')
-# COPILOT_NODE_ID is resolved lazily in Phase 3.6 and cached in the state file header.
-
-# GitLab
-MR_INFO=$(glab mr view --output json)
-MR_IID=$(jq -r .iid <<<"$MR_INFO")
-MR_URL=$(jq -r .web_url <<<"$MR_INFO")
-IS_DRAFT=$(jq -r '.title | startswith("Draft:")' <<<"$MR_INFO")
-BASE=$(jq -r .target_branch <<<"$MR_INFO")
-PROJECT=$(glab repo view --output json | jq -r '.path_with_namespace | @uri')
-```
+Detect platform, fetch PR/MR metadata, verify preconditions, load or initialise the state
+file. Full procedure in [`references/setup.md`](references/setup.md).
 
 If the PR/MR is already merged or closed — stop and report the final state.
-
-### 1.3 Preconditions
-
-Abort with a clear message if any of these fail:
-
-- Current branch matches the PR head branch. If not — abort with `checkout <head> first; this skill does not auto-switch branches`.
-- Local branch is fetched and not behind the remote head (`git fetch origin && git status -sb`).
-- `gh auth status` / `glab auth status` — token valid.
-- The base branch still exists on the remote.
-
-### 1.4 State file
-
-`swarm-report/<slug>-drive-state.md`. Slug = `<branch-with-prefix-stripped>-pr<PR_NUMBER>` (e.g. `fix/login` on PR 42 → `login-pr42`). The PR number disambiguates parallel branches that would otherwise produce the same slug (e.g. `feature/login` and `fix/login`, or two re-openings of the same branch). Verify `swarm-report/` is gitignored by running `git check-ignore -q swarm-report/`; exit 0 = ignored, non-zero = not ignored. On non-zero — abort with `swarm-report/ is not ignored by git; add swarm-report/ to .gitignore and rerun`. Do not auto-modify `.gitignore`: that creates an unrelated diff inside a PR-driving loop and surprises the user.
-
-Schema (markdown, machine-parseable by the skill on resume):
-
-```markdown
-# Drive to Merge — <PR title>
-
-URL: <PR URL>
-Platform: github | gitlab
-Mode: default | auto | dry-run
-Principal: <@actor>            # gh api user --jq .login
-Repository node id: <graphql node id of the repository>
-PR node id: <graphql node id of the pull request>
-Copilot node id: <graphql node id of copilot-pull-request-reviewer or `unavailable`>
-Started: <ISO8601>
-Status: running | waiting-for-user | merged | blocked
-
-## Rounds
-| # | Started | Trigger | CI | New comments | Actions | Outcome |
-|---|---------|---------|----|--------------|---------|---------|
-
-## Commitments (open threads this skill owns)
-| thread_id | category | delegated_to | fix_commit_sha | replied | resolved |
-|-----------|----------|--------------|----------------|---------|----------|
-
-`fix_commit_sha` holds the abbreviated sha of the commit that addressed the thread (empty string if the thread is dismiss-only, no code change).
-
-## Blockers raised
-<empty | list of items the skill surfaced to the user>
-```
-
-On every resume (new session after context compaction) — re-read this file first; do not re-run analysis that already lives in a "Commitments" row unless the reviewer posted new activity.
-
-**Mode precedence on resume.** The state file `Mode` is the authoritative source. A fresh invocation without a flag inherits the stored mode; a fresh invocation with an explicit flag **overrides** the stored mode and rewrites it. This lets the user downgrade an `auto` run to `default` by re-invoking the skill, but does not silently demote an autonomous run just because the wake-up prompt was edited.
 
 ---
 
 ## Phase 2: Round loop
 
-One round = one full pass of Phases 2.1 → 2.5. After 2.5, either merge (Phase 5) or sleep (Phase 4) and start a new round.
+One round = one full pass of Phases 2.1 → 2.5. After 2.5, either merge (Phase 5) or sleep
+(Phase 4) and start a new round.
 
-Each round begins by re-fetching PR state. Nothing is cached across rounds except the state file.
+Each round begins by re-fetching PR state. Nothing is cached across rounds except the state
+file.
 
 ### 2.1 Sync PR state
 
@@ -172,195 +101,38 @@ Classify:
 
 ### 2.2 CI handling
 
-For each failed check:
-
-1. Download the job log (GitHub: `gh run view --log-failed <run-id>`; GitLab: `glab ci trace`).
-2. Classify the failure:
-   - Test failure → symptom + failing test path.
-   - Build failure → file + error.
-   - Lint / format → specific rule.
-   - Infra / runner / network error → retryable without code change.
-3. Render a **CI failure table** in session:
-
-   ```
-   | Check | Failure | Likely cause | Proposed action | Delegate |
-   |-------|---------|--------------|-----------------|----------|
-   | build | unresolved reference: Foo | renamed class, import stale | update import at <file:line> | implement |
-   | test  | ExpectedFooTest.bar assert | behaviour change in diff | review diff vs test expectation | debug |
-   | lint  | ktlint wrapping            | auto-fixable               | run `ktlint --format` | implement |
-   | e2e   | network timeout            | flake                      | retry once                | — |
-   ```
-4. Retry infra flakes once automatically (`gh run rerun <run-id> --failed`). Do not retry actual failures.
-5. For code-fix rows — delegate per the **Delegation protocol** (§ Phase 3).
-6. After fixes land: push, re-enter Phase 2.1.
-
-**Failure-loop guard.** If the same check name fails 3 rounds in a row with no new commit diagnosis (same error signature), stop and surface as a blocker. Record it in state file's `Blockers raised` and ask the user what to do.
+Investigate failing checks, retry infra flakes, hand code-fix rows to Phase 3. Procedure
+(run-id extraction, classification, failure-loop guard) in [`references/ci.md`](references/ci.md).
 
 ### 2.3 Review handling
 
-Fetch all comments and thread state:
-
-```bash
-# GitHub — inline review comments (line-attached)
-gh api "repos/$OWNER/$REPO_NAME/pulls/$PR_NUMBER/comments" \
-  --jq '[.[] | {id, in_reply_to_id, user:.user.login, path, line, body, created_at}]'
-
-# GitHub — review summaries (top-level)
-gh api "repos/$OWNER/$REPO_NAME/pulls/$PR_NUMBER/reviews" \
-  --jq '[.[] | {id, user:.user.login, state, body, submitted_at}]'
-
-# GitHub — PR-level issue comments
-gh api "repos/$OWNER/$REPO_NAME/issues/$PR_NUMBER/comments" \
-  --jq '[.[] | {id, user:.user.login, body, created_at}]'
-
-# GitHub — review threads (for isResolved + node ids used when replying + resolving)
-# Paginate 100 per page until hasNextPage == false; accumulate to a temp file
-```
-
-For GitLab use `glab api "/projects/$PROJECT/merge_requests/$MR_IID/discussions"` which returns resolution state inline.
-
-Fetch diff:
-
-```bash
-git diff "origin/$BASE"...HEAD
-```
-
-Filter before categorizing:
-
-- Skip replies in already-resolved threads.
-- Skip the skill's own earlier replies — identify by `(author == principal) AND (comment id OR body signature matches a state file `Commitments` row with `replied: true`)`. Do NOT skip every comment from the principal unconditionally — the user may also post from the same account, and those comments must be treated as reviewer input.
-- Skip comments already covered by a row in state file `Commitments` with `replied: true`.
-
-#### Categorize each remaining item
-
-Category (one of):
-
-| Category | When |
-|---|---|
-| `BLOCKING` | Security vuln, correctness bug on main path, crash, data loss risk, compliance violation, inaccurate data in regulated/audit/financial pipelines |
-| `IMPORTANT` | Non-critical bug, missing error handling, logic error, edge-case miss, missing test for a broken case |
-| `SUGGESTION` | Refactor, alternative approach, architectural improvement — no correctness risk if left as-is |
-| `NIT` | Naming, formatting, style with no functional impact |
-| `QUESTION` | Reviewer asks for clarification — may or may not imply a change |
-| `PRAISE` | Approval, compliment |
-| `OUT_OF_SCOPE` | Valid but belongs in a different PR or issue |
-
-Actionability (one of):
-
-| Actionability | Meaning |
-|---|---|
-| `FIXABLE` | Clear what to change; can be handed off as-is |
-| `NEEDS_CLARIFICATION` | Ambiguous comment — must ask reviewer before acting |
-| `DISCUSSION` | No single right answer — needs user decision |
-| `NO_ACTION` | Already fixed, duplicate, invalid, praise |
-
-Priority (derived, used for ordering in the decision table):
-
-- `P0` = BLOCKING + FIXABLE
-- `P1` = IMPORTANT + FIXABLE
-- `P2` = SUGGESTION + FIXABLE, or any category + NEEDS_CLARIFICATION on a P0/P1 item
-- `P3` = NIT + FIXABLE, SUGGESTION + DISCUSSION
-- `P4` = PRAISE, OUT_OF_SCOPE, NO_ACTION
-
-#### Verify the suggestion against the diff
-
-For every BLOCKING / IMPORTANT + FIXABLE item:
-
-1. Is the suggestion correct for this codebase's patterns?
-2. Would it break tests that currently pass?
-3. Is there a comment / ADR / commit message explaining why the current form exists?
-4. Does it apply to all platforms/versions this PR targets?
-
-If any check fails → keep the category but change actionability to `DISCUSSION`, record a short note explaining what's wrong with the suggestion.
-
-#### Pattern match across the diff
-
-For every concrete code pattern mentioned (missing null check, deprecated API, hardcoded string, etc.) — search the rest of the diff for the same shape. Additional locations become part of the same item, not separate ones.
-
-#### Group and dedup
-
-Multiple reviewers pointing at the same issue → one group. Multiple comments from one reviewer covering concerns one fix addresses → one group.
-
-#### Propose a concrete solution per actionable item
-
-For each FIXABLE item, generate a specific proposal — not a category label. The proposal is one of:
-
-- **Edit:** `<file:line>` with before/after snippet (≤15 lines total). Shown inline in the decision table row.
-- **Delegate with intent:** a one-paragraph instruction naming the engineer (kotlin-engineer / swift-engineer / …) or skill (`implement` / `debug`) and the exact files to touch, when the change is too big for a snippet.
-- **Ask in thread:** the clarifying question the skill will post, verbatim. Used for NEEDS_CLARIFICATION.
-- **Dismiss with reply:** the canned template with a 1-sentence context slot, for PRAISE / OUT_OF_SCOPE / NO_ACTION / NIT+NO_ACTION.
-
-Never output only a category without a proposal. The value of this skill is the proposal.
+Fetch comments, filter already-owned threads, categorize (BLOCKING / IMPORTANT /
+SUGGESTION / NIT / QUESTION / PRAISE / OUT_OF_SCOPE) crossed with actionability (FIXABLE
+/ NEEDS_CLARIFICATION / DISCUSSION / NO_ACTION), verify suggestions against the diff,
+pattern-match, group, and generate a concrete proposal per item. Full procedure in
+[`references/reviews.md`](references/reviews.md).
 
 ### 2.4 Decision table (the gate)
 
-Render in session as a **prioritized list**, not a table. One section per priority bucket present in the round, ordered most critical first. Each item is one short paragraph: bold headline = the gist; then prose with author, location, brief context, and the action — no bullet labels, no `→` arrows, no `Reviewer:` / `Action:` / `Verdict:` fields. Reads like a human issue note, not a form.
+Render in session as a **prioritized list** — sections P0 → P1 → P2 → P3 → P4 with
+continuous numbering. Each item is one short paragraph: bold headline, author, location,
+action. `## Blockers` section always last. `## Summary` one line with action-type
+breakdown. Format and example in [`references/reviews.md`](references/reviews.md).
 
-```
-Round N — review proposals
+Gate behaviour:
 
-## P0 — Blocking
+- **default** — stop, wait for `approve` / `skip N,M` / `stop`. Accept space- and
+  comma-separated number lists.
+- **`--auto`** — skip waiting, proceed to Phase 3.
+- **`--dry-run`** — print the list and stop for good.
 
-1. **Crash: userId is nullable, used as non-null on .length.** @alice, api/User.kt:42.
-   Reproducible from the diff. Guard with a safe call:
-
-       - val length = userId.length
-       + val length = userId?.length ?: 0
-
-## P1 — Important
-
-2. **Flow.collect leaks without a cancellation guard on rotate.** @bob,
-   api/Repo.kt:88 (same pattern at :120). Delegate to `implement`: переписать
-   оба места на `repeatOnLifecycle(STARTED)`, ничего больше не трогать.
-
-## P2 — Suggestion
-
-3. **Уточнить scope для v1 vs v2.** @bob, api/Repo.kt:91. Ревьюер спросил, нужно
-   ли это для initial release. Ответить в треде: "Targeting v2 — opening a
-   follow-up issue. Does that work?"
-
-## P3 — Nit
-
-4. **Локальная переменная `tmp` непонятна.** @alice, ui/Screen.kt:12.
-   Переименовать `tmp` → `pendingUser`.
-
-## P4 — Praise / Out-of-scope / NoAction
-
-5. **PRAISE.** @alice. Reply: "Thanks — appreciated." Резолв.
-
-6. **OUT_OF_SCOPE.** @carol, api/Repo.kt:200. Reply: "Valid concern, out of scope
-   for this PR. Follow-up issue если скажешь." Резолв.
-
-## Blockers
-
-нет.
-
-## Summary
-
-6 пунктов: 2 правки, 1 делегирование, 2 dismiss, 1 уточнение.
-```
-
-**Format rules:**
-
-- Sections in order P0 → P1 → P2 → P3 → P4. Skip empty buckets.
-- Numbering is **continuous** across sections (1, 2, 3 …) — gate-команды (`approve`, `skip 1,4`, `stop`) ссылаются на эти номера.
-- Each item: `**Bold headline.**` (one sentence про суть) + `@author, file:line.` + 1–2 sentences context and action. Snippet inline indented when relevant (≤15 lines).
-- Quote the reviewer verbatim only when paraphrase loses meaning. Иначе перевести в суть и пропустить кавычки.
-- No labels, no `→`, no category/actionability/delegate columns — приоритет уже сказан секцией; что делать — последним предложением.
-- `## Blockers` section всегда выводится последней (одно слово «нет.» если пусто) — это то, что останавливает раунд для пользователя.
-- `## Summary` — одна строка с разбивкой по типам действий.
-
-**Gate behaviour:**
-
-- Default mode: stop here. Tell the user: `reply "approve" to execute all items, "skip 1,4" (or "skip 1 4") to drop items by number, or "stop" to end the round without acting.` Wait for input. Accept both comma-separated and space-separated number lists; strip whitespace around commas. Numbering is global and continuous across sections — no letters, no per-section restart.
-- `--auto`: skip waiting; proceed to Phase 3.
-- `--dry-run`: print the list and stop for good.
-
-Blockers are always surfaced — `--auto` does not swallow them. If any P0 item is DISCUSSION, stop and ask regardless of mode.
+Blockers are always surfaced — `--auto` does not swallow them. If any P0 item is
+DISCUSSION, stop and ask regardless of mode.
 
 ### 2.5 Round outcome
 
-After Phase 3 executes the approved rows: push, update state file (append a row to `Rounds` and to `Commitments`), decide next step:
+After Phase 3 executes the approved rows: push, update state file (append a row to `Rounds`
+and to `Commitments`), decide next step:
 
 | Situation | Next |
 |---|---|
@@ -372,198 +144,47 @@ After Phase 3 executes the approved rows: push, update state file (append a row 
 
 ### 2.6 Rebase when base has advanced
 
-When `mergeStateStatus` is `BEHIND` / `OUT_OF_DATE`:
-
-```bash
-git fetch origin
-git rebase "origin/$BASE"
-```
-
-On clean rebase: run local `check` skill (build + lint + tests); on success push with `--force-with-lease`. On conflict: resolve only truly mechanical conflicts (import reshuffle, unrelated whitespace); otherwise surface as a blocker — do not guess merge resolutions that involve logic.
-
-**Expected side effect.** After a `--force-with-lease` push, some repos reset `reviewDecision` from `APPROVED` back to `REVIEW_REQUIRED` (branch-protection "Dismiss stale approvals" setting). Do not treat this as a regression — re-request review per Phase 3.6 and keep looping. Tracking commit sha in `Commitments.fix_commit_sha` identifies which fixes have already been through review versus which are new since the rebase.
+Procedure and "Dismiss stale approvals" side effect in [`references/merge.md`](references/merge.md).
 
 ---
 
 ## Phase 3: Execute approved rows
 
-Execute strictly in table order. Record each row's outcome inline in the session as it runs.
+Execute strictly in table order. Branches:
 
-### 3.1 Edit rows
+- **Edit rows** — apply snippet, run `check`, stop on failure.
+- **Delegate rows** — invoke `implement` / `debug` or engineer agent sequentially; scope-guard
+  diff after each returns.
+- **Ask-in-thread rows** — post verbatim question, do not resolve.
+- **Dismiss rows** — canned template + sanitized slot, resolve thread.
 
-Apply the snippet directly via Edit tool (one file at a time). After all edit rows: run `check` skill (build + lint + tests). If `check` fails, roll the loop to Phase 2.2 with the new errors — do not push broken code.
+Commit with `Address review: …`, push plain or `--force-with-lease` (never plain
+`--force`). Re-request review from any reviewer whose state was `CHANGES_REQUESTED` when
+code changed; Copilot via GraphQL mutation.
 
-### 3.2 Delegate rows
-
-For each delegate row: invoke the named skill (`implement` or `debug`) or engineer agent via the Task tool. Prompt includes:
-
-- The reviewer comment quote.
-- The proposed approach from the decision table.
-- The files to touch.
-- Scope guard: "Touch only the listed files. No new tests, no CI / workflow / build-config edits, no doc rewrites, no dependency changes, no refactors outside the listed files. Report back with a diff summary."
-
-Delegates run sequentially, not in parallel, so their edits don't stomp each other. After each delegate returns — spot-check the diff; if it touched anything outside the listed files (including `.github/`, tests directories not mentioned, `package.json` / `build.gradle`, docs), revert and surface as a blocker.
-
-### 3.3 Ask-in-thread rows (NEEDS_CLARIFICATION)
-
-Post the verbatim question as a reply in the thread. Do not resolve. Record in state file `Commitments` with `replied: true, resolved: false`.
-
-### 3.4 Dismiss rows (terminal verdicts)
-
-For PRAISE / OUT_OF_SCOPE / NO_ACTION / NIT+NO_ACTION:
-
-1. Post reply using the canned template + sanitized 1-sentence slot.
-2. Resolve the thread.
-3. Record in state file `Commitments` with `replied: true, resolved: true`.
-
-**Reply delivery — safety rules:**
-
-- Body always piped through `jq -n --arg b ... --argjson r ...` into `gh api --input -`. Never `-f body="$TEXT"`.
-- Rate-limit handling: on `403` / `429`, inspect `x-ratelimit-remaining`, `x-ratelimit-reset`, and `retry-after`. **Primary rate limit** (`x-ratelimit-remaining: 0`) — schedule a `ScheduleWakeup` at `x-ratelimit-reset` (UTC epoch) and exit the round. **Secondary rate limit / abuse detection** (`retry-after: N`) — sleep `N + 5` seconds locally and retry once; if it fails again, surface as a blocker. Never burn the round in a tight retry loop.
-- Sanitize slot: NFKC normalize → strip BiDi + format chars → strip HTML → strip shell metacharacters (`` ` ``, `$(`, `${`) → collapse newlines → neutralize `@mention` (remove `@`) and cross-refs (`#123` → `issue-123`) → clamp to 120 chars. Empty after sanitize → drop the slot, use template without it.
-- Cap total reply body at 280 chars.
-- Pre-POST thread-ownership verify: GraphQL node query → `pullRequest.number` matches + `repository.id` matches header `Repository node id` from state file. Mismatch → skip this row, log `integrity_mismatch`, abort the round (do not continue POSTing other rows).
-- Pre-POST race check: if the thread was resolved by someone else since Phase 2.3 fetch, skip (record `already_resolved`).
-
-### 3.5 Commit + push
-
-After code-change rows (edit + delegate): one commit per logical group of reviewer items. Commit message: `Address review: <short summary>`. Push: plain `git push` for fast-forward additions; `git push --force-with-lease` only when history was rewritten (rebase, amend, fixup squash). Plain `--force` is forbidden.
-
-### 3.6 Re-request review after code changes
-
-If any BLOCKING / IMPORTANT row actually changed code — re-request review from all reviewers whose `state` was `CHANGES_REQUESTED` in the current round snapshot.
-
-```bash
-# GitHub: request a re-review from a specific user
-gh api "repos/$OWNER/$REPO_NAME/pulls/$PR_NUMBER/requested_reviewers" \
-  -X POST -F "reviewers[]=<login>"
-
-# Copilot bot — the login is "copilot-pull-request-reviewer[bot]".
-# Resolve its node id from the PR's suggestedReviewers / past reviewer pool:
-COPILOT_NODE_ID=$(gh api graphql -f query='
-  query($owner:String!,$repo:String!,$pr:Int!){
-    repository(owner:$owner,name:$repo){
-      pullRequest(number:$pr){
-        suggestedReviewers { reviewer { login ... on Bot { id } ... on User { id } } }
-        reviews(first:50) { nodes { author { login ... on Bot { id } ... on User { id } } } }
-      }
-    }
-  }' -F owner="$OWNER" -F repo="$REPO_NAME" -F pr="$PR_NUMBER" \
-  | jq -r '[.data.repository.pullRequest.suggestedReviewers[].reviewer,
-            .data.repository.pullRequest.reviews.nodes[].author]
-           | map(select(.login=="copilot-pull-request-reviewer"))[0].id // empty')
-
-# Best-effort. If empty — Copilot is not part of this repo's review pool, skip silently.
-if [ -n "$COPILOT_NODE_ID" ]; then
-  MUTATION_OUT=$(gh api graphql -f query='
-    mutation($pr:ID!,$user:ID!){
-      requestReviews(input:{pullRequestId:$pr, userIds:[$user]}){
-        pullRequest { id }
-      }
-    }' -f pr="$PR_NODE_ID" -f user="$COPILOT_NODE_ID" 2>&1)
-  # Explicit error check — a bot no longer in the review pool returns an `errors` array,
-  # not a non-zero exit code. Without this check the failure is silent.
-  if jq -e '.errors // empty' <<<"$MUTATION_OUT" >/dev/null 2>&1 || [ -z "$MUTATION_OUT" ]; then
-    # Record once, stop trying for the rest of this PR's lifetime.
-    # Downgrade state-file header field `Copilot node id:` to the sentinel `unavailable`.
-    COPILOT_NODE_ID=""
-  fi
-fi
-```
-
-Cache `$COPILOT_NODE_ID` in the state file header once resolved (avoid re-querying every round). If the lookup returned empty or the mutation returned `errors` — write the sentinel `Copilot node id: unavailable` into the header (the single schema-defined way to flag this; do NOT invent a separate `copilot_unavailable` field) and stop trying for the rest of this PR's lifetime.
-
-GitLab: `glab mr update $MR_IID --reviewer <user>` for humans; GitLab has no first-class bot equivalent of Copilot review — skip.
+Full procedure, safety rules (stdin-piped bodies, rate-limit handling, pre-POST
+thread-ownership verify), and Copilot node-id resolution in
+[`references/delegation.md`](references/delegation.md).
 
 ---
 
 ## Phase 4: Poll (ScheduleWakeup)
 
-When the round ended with "wait" (CI running or review pending) — schedule the next round. The wake-up prompt is built from the stored `Mode` in the state file (per "Mode precedence on resume" in Phase 1.4) — never hardcoded.
+Schedule the next round when the round ended in "wait" (CI running or review pending).
+Delay is chosen by what we are waiting on; prompt is derived from the stored `Mode` in the
+state file, never hardcoded. Cache-window discipline (≤270 or ≥600, avoid 280–550s).
 
-```
-WAKEUP_PROMPT="/drive-to-merge"
-[ "$STATE_MODE" = "auto" ] && WAKEUP_PROMPT="/drive-to-merge --auto"
-# dry-run never reaches Phase 4 — it exits after the first decision table.
-
-ScheduleWakeup(
-  delaySeconds: <picked>,
-  reason:       "drive-to-merge poll: <what we're waiting on>",
-  prompt:       $WAKEUP_PROMPT
-)
-```
-
-Pick `delaySeconds`:
-
-| Waiting on | delaySeconds |
-|---|---|
-| CI in progress, fast pipeline known (<5 min) | 270 (stay in cache window) |
-| CI in progress, slow pipeline (≥5 min) | 600–1200 |
-| Copilot bot review after re-request | 270 (stay in cache window for the first check); if still pending, 600 |
-| Human reviewer after re-request | 1800 (30 min) |
-| Approved but `mergeStateStatus == BLOCKED` on an unknown reason | 900 |
-
-Avoid the 280–550s range: past 270s the prompt cache TTL expires, but under ~600s the cache miss is not amortized. Pick either ≤270 (stay warm) or ≥600 (commit to a longer wait).
-
-After 6 consecutive polls with no state change — stop, record in state file `Blockers raised`, surface to the user.
-
-On wake-up: re-read the state file, re-enter Phase 2.1.
+Procedure and delaySeconds matrix in [`references/polling.md`](references/polling.md).
 
 ---
 
 ## Phase 5: Merge (always user-confirmed)
 
-Entered when: CI all green + `reviewDecision == APPROVED` + no unresolved threads owned by this skill + `mergeable == MERGEABLE` + `mergeStateStatus == CLEAN`.
+Pre-merge checks → confirmation message → final re-check → `gh pr merge` / `glab mr merge`.
+`--auto` does not skip this gate — by design, final merge always requires explicit user
+approval.
 
-Before proposing merge:
-
-1. Re-verify the state file's `Commitments` section — every row with `delegated_to` must have non-empty `fix_commit_sha` and `replied: true`.
-2. Re-pull PR state (reviewers may have changed their decision since last round).
-3. Confirm the branch has not diverged from origin. If `git status -sb` shows the local branch behind / ahead of `origin/$HEAD` unexpectedly — skip merge, log the delta, return to Phase 2.1 for one more round.
-
-Show the user:
-
-```
-PR ready to merge.
-
-URL:     <PR URL>
-Branch:  <head> → <base>
-Commits: <N since branch point>
-Final CI: ✔ all checks passing
-Review:  ✔ approved by <reviewers>
-Threads: <T> resolved, 0 unresolved
-
-Proposed merge method: squash | merge | rebase   (pick per repo convention)
-Proposed commit message:
-  <subject>
-
-  <body>
-
-Reply "merge" to execute, or supply a different method / message.
-```
-
-Wait for explicit user confirmation. `--auto` does NOT skip this gate — by design, final merge always requires explicit user approval.
-
-On confirmation, re-verify state one last time before invoking merge — between the gate and the API call, CI may have failed or approval may have been dismissed:
-
-```bash
-FINAL=$(gh pr view --json statusCheckRollup,reviewDecision,mergeable,mergeStateStatus)
-# Abort merge if anything regressed since the gate; loop back to Phase 2.1.
-```
-
-If the re-check is still green:
-
-```bash
-gh pr merge "$PR_NUMBER" --<method> --subject "<subject>" --body "<body>" --delete-branch
-# GitLab
-glab mr merge "$MR_IID" --<method-flag> --delete-source-branch
-```
-
-After merge:
-
-1. Mark state file `Status: merged`, timestamp the `Rounds` final entry.
-2. Report the merged URL + commit sha to the user.
-3. Stop. No further polling.
+Procedure in [`references/merge.md`](references/merge.md).
 
 ---
 
