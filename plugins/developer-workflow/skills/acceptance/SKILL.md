@@ -394,7 +394,7 @@ build-engineer, devops-expert) has a narrow prompt template and verdict rules �
 inputs, output path, and PASS/WARN/FAIL criteria. Spawn each via Agent tool in the same
 fan-out message; build smoke runs via Bash.
 
-See `references/subcheck-prompts.md` for the full prompt template and verdict rules per
+See [`references/subcheck-prompts.md`](references/subcheck-prompts.md) for the full prompt template and verdict rules per
 agent and for the build-smoke command table.
 
 ---
@@ -413,7 +413,7 @@ Missing-artifact invariant: if a planned per-check artifact is missing at aggreg
 treat the check as `verdict: FAIL` with `blocked_on: per-check artifact missing` — do not
 silently drop it.
 
-See `references/aggregation.md` for the PoLL rule table, Aggregated Status table, full
+See [`references/aggregation.md`](references/aggregation.md) for the PoLL rule table, Aggregated Status table, full
 receipt format, and the orchestrator routing table.
 
 ---
@@ -429,6 +429,6 @@ receipt — re-run them regardless of `diff_hash`. Overwrite per-check artifacts
 `diff_hash`, aggregate into a fresh receipt, and repeat until VERIFIED or the user ships
 as-is.
 
-See `references/re-verification.md` for the full per-check decision table, the
+See [`references/re-verification.md`](references/re-verification.md) for the full per-check decision table, the
 spec/test-plan change override rule, the back-compat rule for older receipts, and the
 per-agent re-run scope details.

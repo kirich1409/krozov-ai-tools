@@ -56,7 +56,7 @@ the artifact via receipt-based gating. The permanent file remains the source of 
 the receipt is metadata + pointer. Standalone invocations (no slug passed) skip the
 receipt entirely and write only the canonical `docs/testplans/<slug>-test-plan.md` file.
 
-See `references/receipt-format.md` for the full YAML schema, field conventions
+See [`references/receipt-format.md`](references/receipt-format.md) for the full YAML schema, field conventions
 (`status`, `review_verdict`, `review_warnings` / `review_blockers`, `phase_coverage`,
 `platform`, `created` / `updated`), and the standalone-without-slug backward-compatibility
 rules.
@@ -164,7 +164,7 @@ be grouped by phase, split the `## Test Cases` section into `### Phase N (T-i..T
 subsections (still one permanent file per feature). The receipt's `phase_coverage` then lists
 the phase labels present.
 
-See `references/format-templates.md` for the full standard and lightweight templates (verbatim
+See [`references/format-templates.md`](references/format-templates.md) for the full standard and lightweight templates (verbatim
 markdown), the phase-segmentation worked example, and the rules for when each variant applies.
 
 ## Field Definitions

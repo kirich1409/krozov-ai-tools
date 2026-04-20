@@ -142,7 +142,7 @@ Tracks and their inclusion rules:
 - **Critical Evaluation (general-purpose subagent)** — include when the user proposed a specific technical approach, OR the codebase has established patterns in this area that may be outdated or problematic. Produces 3 approach options (Radical / Classic / Conservative).
 - **Dependency Chain (general-purpose subagent)** — include when the feature integrates with external services, requires OS-level capabilities, touches infrastructure, or the user's request implies a setup phase.
 
-Use these research-agent prompt templates verbatim when launching each expert. See `references/research-prompts.md` for the full per-agent prompt text.
+Use these research-agent prompt templates verbatim when launching each expert. See [`references/research-prompts.md`](references/research-prompts.md) for the full per-agent prompt text.
 
 ### 1.2 State file
 
@@ -296,7 +296,7 @@ explicit with its rationale.
 
 Follow the canonical Markdown spec template — YAML frontmatter with `type`/`slug`/`date`/`status` plus optional `platform`/`surfaces`/`risk_areas`/`non_functional`/`acceptance_criteria_ids`/`design` fields that drive downstream `acceptance` and `generate-test-plan`, followed by body sections: Context and Motivation, Acceptance Criteria (stable `AC-N` ids), Prerequisites, Affected Modules and Files, Technical Approach, Technical Constraints, Decisions Made, Out of Scope, Open Questions, and Future Phases.
 
-See `references/spec-template.md` for the full template (frontmatter fields, section headers, table shapes, and inline instructions) — copy it verbatim into the draft and fill in each placeholder.
+See [`references/spec-template.md`](references/spec-template.md) for the full template (frontmatter fields, section headers, table shapes, and inline instructions) — copy it verbatim into the draft and fill in each placeholder.
 
 ---
 
@@ -329,7 +329,7 @@ profile: spec
 <rest of args: full spec content + original feature goal>
 ```
 
-The hint is defense-in-depth: inline-arg callsites lack the frontmatter the detector would classify on, and the one-line prefix short-circuits detection deterministically and independently of detector internals. See `references/profile-hint-rationale.md` for the full rationale.
+The hint is defense-in-depth: inline-arg callsites lack the frontmatter the detector would classify on, and the one-line prefix short-circuits detection deterministically and independently of detector internals. See [`references/profile-hint-rationale.md`](references/profile-hint-rationale.md) for the full rationale.
 
 **Artifact source:** in-memory draft, so engine classifies source as `conversation` and
 uses the spec profile's `source_routing.conversation: inline-revise` action for FAIL fixes

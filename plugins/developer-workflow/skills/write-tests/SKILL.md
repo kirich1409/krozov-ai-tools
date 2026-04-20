@@ -83,7 +83,7 @@ that the Phase 4 engineer agent consumes verbatim.
 The goal is simple: generated tests must look hand-written. Never introduce a new framework
 or style that isn't already present in the project.
 
-See `references/test-infrastructure-discovery.md` for the detection tables (frameworks,
+See [`references/test-infrastructure-discovery.md`](references/test-infrastructure-discovery.md) for the detection tables (frameworks,
 assertions, mocking, async, UI, DI, naming, placement, setup, assertion style) and the exact
 Test Infrastructure Summary template.
 
@@ -156,7 +156,7 @@ Every delegation prompt must include: target code paths, the Phase 2 Test Infras
 Summary, the Phase 3 test cases, a style-reference test file, and the Phase 1.5 test plan
 if one exists.
 
-See `references/agent-prompts.md` for the full prompt templates for `kotlin-engineer`,
+See [`references/agent-prompts.md`](references/agent-prompts.md) for the full prompt templates for `kotlin-engineer`,
 `compose-developer`, `swift-engineer`, and `swiftui-developer`. Fill in the `{…}`
 placeholders and keep the section headings intact.
 

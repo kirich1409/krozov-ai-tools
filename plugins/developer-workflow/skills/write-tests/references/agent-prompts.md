@@ -3,8 +3,8 @@
 Reference for `write-tests` Phase 4.2 — see `../SKILL.md` for the skill entry point.
 
 Pick the template that matches the agent you selected in Phase 4.1 and fill in the `{…}`
-placeholders from Phases 1-3. Keep the section headings exactly as written — the agents
-parse these prompts by section.
+placeholders from Phases 1-3. Keep the section headings exactly as written so downstream
+agents can locate the slots reliably.
 
 Every delegation prompt must include:
 
@@ -127,6 +127,9 @@ Read these files:
 
 ## Style reference
 Read this existing test for style and conventions: {path to example test}
+
+## Test plan (optional)
+{path to test plan from docs/testplans/, or "No test plan available"}
 
 ## Requirements
 - Match the project's existing approach — ViewInspector-style unit tests, XCUITest UI tests,

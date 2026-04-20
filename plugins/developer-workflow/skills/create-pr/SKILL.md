@@ -177,7 +177,7 @@ Body composition is mode-aware.
 
 The body is composed from a catalog of optional sections: What changed, Why / motivation, Artifacts, How to test, Status, Screenshots / demo, Checklist, and a trailing Claude Code footer. Include only the sections that apply for the current mode and available artifacts.
 
-See `references/body-sections.md` for the full section-bank templates with example content and status-table formatting.
+See [`references/body-sections.md`](references/body-sections.md) for the full section-bank templates with example content and status-table formatting.
 
 ### 7.2 Section selection per mode
 
@@ -195,7 +195,7 @@ See `references/body-sections.md` for the full section-bank templates with examp
 
 Scan the changed file paths for platform-specific UI markers (Android/Compose, Compose Multiplatform, Web, iOS/SwiftUI). If any match, include the "Screenshots / demo" section and prompt the user for attachments in `--draft` and `--promote` modes; `--refresh` preserves existing Screenshots content verbatim.
 
-See `references/visual-change-patterns.md` for the full glob patterns per platform.
+See [`references/visual-change-patterns.md`](references/visual-change-patterns.md) for the full glob patterns per platform.
 
 ### 7.4 Preserve user edits on refresh/promote
 
