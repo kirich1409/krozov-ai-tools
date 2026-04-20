@@ -215,7 +215,7 @@ Between `implement` and `acceptance`, the orchestrator runs the `finalize` skill
 |---|---|---|
 | A | `code-reviewer` (from `developer-workflow-experts`) | Semantic review: plan conformance, CLAUDE.md, bug detection. Confidence-scored 0/25/50/75/100. |
 | B | `/simplify` (built-in) | Reuse / quality / efficiency pass with auto-fix (3 parallel review agents + direct fix) |
-| C | `pr-review-toolkit:pr-test-analyzer`, `pr-review-toolkit:silent-failure-hunter`, `pr-review-toolkit:type-design-analyzer` — parallel | Test quality, silent failures, type design invariants |
+| C | `pr-review-toolkit:pr-test-analyzer`, `pr-review-toolkit:silent-failure-hunter`, `pr-review-toolkit:type-design-analyzer` — parallel, optional (soft-ref; skipped if plugin not installed) | Test quality, silent failures, type design invariants |
 | D | `security-expert`, `performance-expert`, `architecture-expert` — conditional, parallel | Domain-specific deep review |
 
 Between phases and after any auto-fix, the orchestrator invokes `/check` to confirm mechanical pass.
@@ -293,7 +293,7 @@ Route implementation to the right specialist:
 | Full autonomous bug-fix cycle | `bugfix-flow` skill |
 | Architectural variability | `design-options` skill (optional pre-multiexpert-review stage) |
 | Mechanical verification (build/lint/typecheck/tests) | `check` skill |
-| Code-quality pass (review + /simplify + pr-review-toolkit + experts) | `finalize` skill |
+| Code-quality pass (review + /simplify + optional pr-review-toolkit + experts) | `finalize` skill |
 | PR creation and lifecycle management | `create-pr` skill (`--draft` / `--refresh` / `--promote`) |
 | Drive an open PR/MR to merge — monitor CI, handle review comments (categorize → propose concrete fixes → delegate → reply → resolve), re-request review, poll for activity, confirm merge with user | `drive-to-merge` skill |
 | Plan review (PoLL) | `multiexpert-review` skill |

@@ -162,7 +162,7 @@ After `implement` passes its two gates (mechanical checks + intent check), invok
   anchor because the plan carries the chosen approach, while debug.md stays authoritative
   for root cause and reproduction steps (see Phase 1.5).
 
-`finalize` runs a multi-round loop (max 3): code-reviewer → /simplify → pr-review-toolkit trio → conditional expert reviews, with `/check` between fixes.
+`finalize` runs a multi-round loop (max 3): code-reviewer → /simplify → optional pr-review-toolkit trio (skipped if plugin absent) → conditional expert reviews, with `/check` between fixes.
 
 Wait for `swarm-report/<slug>-finalize.md`.
 

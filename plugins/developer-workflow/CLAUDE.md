@@ -43,7 +43,7 @@ Skills in this plugin delegate to engineer agents (kotlin-engineer / compose-dev
 - Planning/research: `research`, `decompose-feature`, `write-spec`, `multiexpert-review`, `design-options` (optional pre-multiexpert-review stage — generates 2-3 architectural alternatives for high-arch-risk tasks)
 - Implementation: `implement`, `write-tests`, `debug`
 - Verification utility: `check` — reusable mechanical-check runner (build + lint + typecheck + tests), invoked by `implement`, `finalize`, and any code-modifying skill
-- Code-quality pass: `finalize` — multi-round review-and-fix loop (code-reviewer → /simplify → pr-review-toolkit trio → expert reviews) that runs between `implement` and `acceptance`
+- Code-quality pass: `finalize` — multi-round review-and-fix loop (code-reviewer → /simplify → optional pr-review-toolkit trio → expert reviews) that runs between `implement` and `acceptance`. The `pr-review-toolkit` trio is a soft-reference: installed → Phase C runs; absent → Phase C is skipped with a log entry.
 - QA: `generate-test-plan`, `acceptance`, `bug-hunt`
 - PR: `create-pr`, `drive-to-merge`
 - Orchestrators: `feature-flow`, `bugfix-flow`

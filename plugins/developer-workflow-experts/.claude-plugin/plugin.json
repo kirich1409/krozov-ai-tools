@@ -1,6 +1,6 @@
 {
   "name": "developer-workflow-experts",
-  "version": "0.11.0",
+  "version": "0.11.1",
   "description": "Reusable expert agents for code review, architecture, security, performance, UX, build, DevOps, business analysis, and debugging. Safe to install standalone \u2014 no skills, no hooks, no MCP servers.",
   "author": {
     "name": "kirich1409"

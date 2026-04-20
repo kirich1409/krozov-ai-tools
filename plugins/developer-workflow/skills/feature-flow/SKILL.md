@@ -342,7 +342,7 @@ After `implement` passes its two gates (mechanical checks + intent check), invok
 - Slug
 - Path to `swarm-report/<slug>-plan.md` (for Phase A code-reviewer anchor)
 
-`finalize` runs a multi-round loop (max 3 rounds): code-reviewer → /simplify → pr-review-toolkit trio → conditional expert reviews, with `/check` between fixes.
+`finalize` runs a multi-round loop (max 3 rounds): code-reviewer → /simplify → optional pr-review-toolkit trio (skipped if plugin absent) → conditional expert reviews, with `/check` between fixes.
 
 Wait for `swarm-report/<slug>-finalize.md`.
 

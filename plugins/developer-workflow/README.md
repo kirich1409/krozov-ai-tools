@@ -38,7 +38,7 @@ Installing this plugin automatically pulls `developer-workflow-experts`. Install
 |---|---|
 | `/implement` | Writes code to meet the plan; mechanical checks via `/check` + intent check only. Semantic review, simplify, and expert review live in `/finalize`. |
 | `/check` | Mechanical verification utility — auto-detects project tooling (Gradle/Node/Cargo/Swift/Python/Go), runs build + lint + typecheck + tests. Called by `implement`, `finalize`, migration skills, or user. |
-| `/finalize` | Code-quality pass between `implement` and `acceptance`. Multi-round loop: `code-reviewer` → `/simplify` → `pr-review-toolkit` trio → conditional expert reviews, with `/check` between fixes. Max 3 rounds. |
+| `/finalize` | Code-quality pass between `implement` and `acceptance`. Multi-round loop: `code-reviewer` → `/simplify` → optional `pr-review-toolkit` trio (skipped if plugin absent) → conditional expert reviews, with `/check` between fixes. Max 3 rounds. |
 | `/debug` | Read-only root cause analysis (via `debugging-expert` from `-experts`) |
 | `/write-tests` | Retroactive tests for existing code — delegates test generation to engineers |
 
@@ -89,32 +89,32 @@ For **most skills**, these integrations are optional enhancements: when present,
 | `ast-index` | CLI + plugin | `research`, `write-spec`, `write-tests`, `decompose-feature` | Optional. Structured code index for symbol / usages / deps / API lookups — non-QA skills use it when available and fall back to `Grep` + `Read` otherwise. |
 | `/code-review` | Slash command (from `claude-plugins-official`) | optional post-PR review | Optional. Standalone GitHub PR review with confidence-based scoring — separate from in-pipeline `code-reviewer` gate. |
 | `ralph-loop` | Plugin (from `claude-plugins-official`) | ad-hoc use outside pipeline | Optional. While-true iteration on a single prompt until completion marker — alternative to our structured orchestrators for exploratory work. |
+| `pr-review-toolkit` | Plugin (from `claude-plugins-official`) | `finalize` Phase C | Optional. Enables the `pr-test-analyzer` / `silent-failure-hunter` / `type-design-analyzer` trio. When absent, `finalize` skips Phase C and continues. |
 
 ## Installation
-
-**Prerequisite — cross-marketplace dependency.** `developer-workflow` declares a hard dependency on `pr-review-toolkit` from Anthropic's official plugin marketplace. That marketplace's name is `claude-plugins-official` (see [`.claude-plugin/marketplace.json`](https://github.com/anthropics/claude-plugins-official/blob/main/.claude-plugin/marketplace.json)) and it is added by giving Claude Code the GitHub repo path `anthropics/claude-plugins-official`:
-
-```
-/plugin marketplace add anthropics/claude-plugins-official
-```
-
-After that, the marketplace is registered under its declared name `claude-plugins-official`, which matches the `marketplace` field in our `plugin.json` dependency entry.
-
-Then add our marketplace and install the plugin:
 
 ```
 /plugin marketplace add kirich1409/krozov-ai-tools
 /plugin install developer-workflow@krozov-ai-tools
 ```
 
-`developer-workflow-experts` and `pr-review-toolkit` install automatically as declared dependencies. Add platform plugins as needed:
+`developer-workflow-experts` installs automatically as a declared dependency. Add platform plugins as needed:
 
 ```
 /plugin install developer-workflow-kotlin@krozov-ai-tools
 /plugin install developer-workflow-swift@krozov-ai-tools
 ```
 
-If the cross-marketplace dep fails to resolve (e.g., `claude-plugins-official` marketplace not registered in the user's environment), `developer-workflow` installation will abort with a clear message. Add the marketplace and retry.
+### Recommended — richer `finalize` Phase C
+
+The `finalize` skill's Phase C invokes the `pr-review-toolkit` trio (test quality, silent failures, type design) when available. To enable it, install `pr-review-toolkit` from Anthropic's official marketplace:
+
+```
+/plugin marketplace add anthropics/claude-plugins-official
+/plugin install pr-review-toolkit@claude-plugins-official
+```
+
+The plugin is **not** declared as a hard dependency because `claude-plugins-official` publishes marketplace entries without `version` fields, making semver resolution impossible for Claude Code. When `pr-review-toolkit` is absent, `finalize` logs `Phase C skipped — pr-review-toolkit not installed` and continues normally.
 
 ## Pipeline documentation
 

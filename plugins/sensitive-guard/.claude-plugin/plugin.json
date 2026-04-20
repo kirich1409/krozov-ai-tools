@@ -1,6 +1,6 @@
 {
   "name": "sensitive-guard",
-  "version": "0.11.0",
+  "version": "0.11.1",
   "description": "Prevents sensitive data (secrets, PII) from reaching AI servers by scanning files before they are read into conversation",
   "author": {
     "name": "kirich1409"
