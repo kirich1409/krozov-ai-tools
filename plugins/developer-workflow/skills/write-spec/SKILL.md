@@ -133,131 +133,16 @@ before the research even starts.
 Launch relevant expert agents **in a single message** (parallel). Each works independently.
 Select tracks based on what the feature actually needs — not all every time.
 
-#### Codebase Expert (Explore subagent) — always include
+Tracks and their inclusion rules:
 
-```
-Investigate the codebase for everything related to: {feature goal}
+- **Codebase Expert (Explore subagent)** — always include. Surveys existing code, patterns, deps, module boundaries, integration points, TODOs, test infra.
+- **Architecture Expert (architecture-expert agent)** — include when the feature adds a new module, changes dependency direction, introduces new abstractions, or crosses more than one architectural layer.
+- **Web Research (general-purpose subagent)** — include when the feature involves external protocols, non-trivial algorithms, third-party integration, or unfamiliar domain.
+- **Business Analyst (business-analyst agent)** — include when the feature has user-facing impact, unclear scope, or comes from a vague idea.
+- **Critical Evaluation (general-purpose subagent)** — include when the user proposed a specific technical approach, OR the codebase has established patterns in this area that may be outdated or problematic. Produces 3 approach options (Radical / Classic / Conservative).
+- **Dependency Chain (general-purpose subagent)** — include when the feature integrates with external services, requires OS-level capabilities, touches infrastructure, or the user's request implies a setup phase.
 
-Find and report:
-1. Existing code that relates to this feature — classes, interfaces, modules, files
-2. Current patterns used for similar concerns in this project
-3. Dependencies already in the project that are relevant
-4. Module boundaries and architectural layers that would be affected
-5. Integration points — where would new code connect to existing code?
-6. Any TODO/FIXME comments related to this feature area
-7. Test infrastructure available for the affected areas
-
-Use ast-index for all symbol searches. Use Grep only for string literals and comments.
-Check build files, configuration, and test code too.
-
-Report: overview paragraph, then findings grouped by category with file paths and
-class/function names.
-```
-
-#### Architecture Expert (architecture-expert agent)
-
-Include when: feature adds a new module, changes dependency direction, introduces new
-abstractions, or crosses more than one architectural layer.
-
-```
-Evaluate the architectural implications of: {feature goal}
-
-Analyze:
-1. Which modules and layers would be affected?
-2. Does this align with the current architecture? What structural changes are needed?
-3. Dependency direction — any problematic new dependencies introduced?
-4. API boundaries — what contracts need to change or be created?
-5. Where should new code live (which module, which layer)?
-6. What existing architectural patterns should this follow?
-7. Are there alternative approaches worth comparing?
-
-Read the relevant module structure and build files before making judgments.
-```
-
-#### Web Research (general-purpose subagent)
-
-Include when: feature involves external protocols, non-trivial algorithms, third-party
-integration, or unfamiliar domain.
-
-```
-Research best practices and implementation approaches for: {feature goal}
-
-If Perplexity MCP is available, use it for deep research (perplexity_research or
-perplexity_ask). Otherwise use built-in web search tools.
-
-Investigate:
-1. Common implementation approaches with trade-offs
-2. Known pitfalls and mistakes to avoid
-3. Relevant libraries or standards
-4. Real-world examples from open-source projects
-5. Platform-specific considerations (Android/iOS/KMP if relevant)
-
-Note if web search was unavailable. Include source URLs for key claims.
-```
-
-#### Business Analyst (business-analyst agent)
-
-Include when: feature has user-facing impact, unclear scope, or comes from a vague idea.
-
-```
-Analyze the scope and requirements of: {feature goal}
-
-Assess:
-1. Is the scope well-defined? What's ambiguous?
-2. What is the MVP — smallest version that delivers real value?
-3. What requirements are implicit but not stated?
-4. Edge cases and error scenarios not yet covered?
-5. Where could this feature grow beyond its original intent?
-6. Dependencies on external systems, APIs, or other teams?
-
-Be concrete — list specific scenarios, not abstract concerns.
-```
-
-#### Critical Evaluation (general-purpose subagent)
-
-Include when: the user proposed a specific technical approach, OR the codebase has
-established patterns in this area that may be outdated or problematic.
-
-```
-Critically evaluate the approach for: {feature goal}
-User's proposed approach (if any): {what the user suggested}
-
-Investigate:
-1. Existing patterns in the codebase for this concern — are they good practice or
-   legacy/problematic? If problematic, explain why and what would be better.
-2. Is the user's proposed approach optimal? What are its trade-offs?
-3. What would a modern/industry-recommended approach look like?
-4. Prepare 3 concrete approach options for the user to choose from:
-   - **Radical**: most complete, modern, future-proof — higher upfront cost
-   - **Classic**: follows existing project patterns — familiar but may carry baggage
-   - **Conservative**: minimal change, quickest to ship — simplest but most limited
-5. For each option: trade-offs, estimated complexity, recommended when.
-
-Do NOT recommend blindly following project patterns if they are outdated or problematic.
-Flag bad patterns explicitly — the user should know before committing to them.
-```
-
-#### Dependency Chain (general-purpose subagent)
-
-Include when: feature integrates with external services, requires OS-level capabilities,
-touches infrastructure, or the user's request implies a setup phase.
-
-```
-Map the full dependency chain for: {feature goal}
-
-Identify everything that must exist or be configured BEFORE the feature can work:
-
-1. Infrastructure / services — third-party APIs, cloud services, databases, queues
-2. Platform requirements — OS permissions, capability declarations, entitlements
-3. Console / dashboard setup — developer consoles, API keys, service accounts
-4. Configuration — environment variables, config files, secrets
-5. Code prerequisites — base classes, interfaces, or modules that must exist first
-6. Test prerequisites — what test infrastructure or fixtures are needed
-
-For each dependency: is it already in place, or does it need to be created/configured?
-Flag any dependency that requires manual steps outside of code (e.g., "create FCM project
-in Firebase console") — these become explicit prerequisite steps in the spec.
-```
+Use these research-agent prompt templates verbatim when launching each expert. See [`references/research-prompts.md`](references/research-prompts.md) for the full per-agent prompt text.
 
 ### 1.2 State file
 
@@ -409,134 +294,9 @@ Write the spec as if the reader is an implementing agent with zero additional co
 Nothing can be left to inference. Every requirement is verifiable. Every decision is
 explicit with its rationale.
 
-```markdown
----
-type: spec
-slug: {slug}
-date: {YYYY-MM-DD}
-status: draft
-# Optional fields — leave blank when not applicable. Consumed by `acceptance`
-# (choreography) and by `generate-test-plan` (platform-aware coverage).
-platform: []                     # Canonical values from ORCHESTRATION.md §Project type detection: [android], [ios], [web], [desktop], [backend-jvm], [backend-node], [cli], [library], [generic]. May be multi-value for cross-platform features.
-surfaces: []                     # e.g. [ui], [api], [cli], [background-job]. Drives which acceptance checks run.
-risk_areas: []                   # e.g. [auth], [payment], [pii], [data-migration], [perf-critical]. Each entry triggers a conditional expert in acceptance.
-non_functional:                  # Optional block. Each present entry triggers an expert check.
-  sla:                           # e.g. p99 < 150ms. Triggers performance-expert.
-  a11y:                          # e.g. wcag-aa. Triggers ux-expert a11y mode.
-acceptance_criteria_ids: []      # e.g. [AC-1, AC-2, AC-3]. Each AC in the list MUST appear as a bullet in §Acceptance Criteria.
-design:                          # Optional.
-  figma:                         # e.g. https://www.figma.com/file/XXX. Triggers ux-expert design-review.
-  design_system:                 # Optional reference to a design system doc.
----
+Follow the canonical Markdown spec template — YAML frontmatter with `type`/`slug`/`date`/`status` plus optional `platform`/`surfaces`/`risk_areas`/`non_functional`/`acceptance_criteria_ids`/`design` fields that drive downstream `acceptance` and `generate-test-plan`, followed by body sections: Context and Motivation, Acceptance Criteria (stable `AC-N` ids), Prerequisites, Affected Modules and Files, Technical Approach, Technical Constraints, Decisions Made, Out of Scope, Open Questions, and Future Phases.
 
-# Spec: {Feature Name}
-
-Date: {YYYY-MM-DD}
-Status: draft
-Slug: {slug}
-
----
-
-## Context and Motivation
-
-{2-4 sentences: what this feature does, who benefits, why now.
-Write the "why" that will still make sense in 6 months.}
-
-## Acceptance Criteria
-
-The feature is complete when ALL of the following are true. Each criterion is assigned a
-stable `AC-N` id. The frontmatter `acceptance_criteria_ids` list is **optional** for
-back-compat, but when it is provided, it MUST include every `AC-N` id listed here and nothing
-else; that is what `acceptance` uses to drive AC-coverage checks via `business-analyst`.
-Leaving `acceptance_criteria_ids` empty disables the business-analyst conditional.
-
-- [ ] **AC-1** — {Concrete, observable behavior — not internal state}
-- [ ] **AC-2** — {Another criterion}
-- [ ] **AC-3** — {Error / edge case criterion}
-- [ ] **AC-4** — {Performance criterion with specific numbers, if relevant}
-- [ ] **AC-5** — {Compatibility criterion, if relevant}
-
-**Authoritative definition of done.** The implementing agent validates against this
-list before marking any task complete.
-
-## Prerequisites
-
-Steps that must be completed BEFORE implementation begins. Each item is either
-already done, or is an explicit task for the implementing agent or a human.
-
-| Prerequisite | Status | Owner | Notes |
-|--------------|--------|-------|-------|
-| {e.g., Create FCM project in Firebase console} | ⬜ Todo / ✅ Done | Human / Agent | {how to do it} |
-| {e.g., Add notification entitlement to app} | ⬜ Todo | Agent | {file to modify} |
-
-*(Remove this section if there are no prerequisites outside of code changes.)*
-
-## Affected Modules and Files
-
-| Module / File | Change type | Notes |
-|---------------|-------------|-------|
-| {path or module name} | New / Modified / Deleted | {what changes and why} |
-
-Key integration points:
-- {Interface or class that new code must implement or call}
-- {Existing service or repository that will be extended}
-
-## Technical Approach
-
-{High-level description of HOW the feature will be implemented — not code, but enough
-to guide architecture:
-- Which pattern to follow (existing or new)
-- Data flow: source → transformation → destination
-- Key new abstractions (classes, interfaces, modules)
-- Error handling strategy
-- State management approach (if UI-relevant)}
-
-## Technical Constraints
-
-Rules the implementing agent must follow without deviation:
-
-- {Must use X library — already in project}
-- {Must NOT add new dependencies without approval}
-- {Must follow Y pattern used elsewhere}
-- {Must support API level Z+}
-- {Must be KMP-compatible / Android-only}
-- {No blocking operations on the main thread}
-
-## Decisions Made
-
-Choices locked in during spec. The implementing agent does NOT revisit these.
-
-| Decision | Choice | Rationale |
-|----------|--------|-----------|
-| {What was decided} | {The choice} | {Why this over alternatives} |
-
-## Out of Scope
-
-Will NOT be implemented as part of this spec:
-
-- {Behavior or feature explicitly excluded}
-- {Edge case deferred to a future spec}
-- {Migration or compatibility concern left out}
-
-## Open Questions
-
-Unresolved questions the implementing agent must handle or escalate:
-
-- [ ] {Question} — *blocking / non-blocking*
-  - Options: {A}, {B}
-  - Recommendation: {preferred}
-
-If none: write "None — spec is complete." and remove this section.
-
-## Future Phases
-
-*(Only when feature was split into phases)*
-
-**Phase 2 — {name}:** {brief description, why deferred}
-**Phase 3 — {name}:** {brief description}
-
-Specced separately after Phase 1 is implemented and validated in production.
-```
+See [`references/spec-template.md`](references/spec-template.md) for the full template (frontmatter fields, section headers, table shapes, and inline instructions) — copy it verbatim into the draft and fill in each placeholder.
 
 ---
 
@@ -569,20 +329,7 @@ profile: spec
 <rest of args: full spec content + original feature goal>
 ```
 
-Why the hint (defense-in-depth, not a single-cause fix): the `spec` profile's detector
-declares `frontmatter_type: [spec]` and `path_globs: ["docs/specs/**"]`. Either path would
-normally classify a draft that carries `type: spec` frontmatter and lives under `docs/specs/`.
-The explicit hint exists because:
-
-1. **Invocation-path robustness** — in some callsites the draft is passed as inline args
-   without the frontmatter block; the engine sees only body prose and can't rely on
-   frontmatter detection.
-2. **Cheapest deterministic route** — Step 1 hint-match short-circuits detection before
-   any YAML parse or path-glob evaluation; cost is a single-line prefix.
-3. **Detector-independence** — removes the orchestrator's dependency on detector internals.
-   Future detector refactors (reordering, different fallback) cannot silently re-open the
-   historical spec → implementation-plan misclassification drift that this profile exists
-   to close.
+The hint is defense-in-depth: inline-arg callsites lack the frontmatter the detector would classify on, and the one-line prefix short-circuits detection deterministically and independently of detector internals. See [`references/profile-hint-rationale.md`](references/profile-hint-rationale.md) for the full rationale.
 
 **Artifact source:** in-memory draft, so engine classifies source as `conversation` and
 uses the spec profile's `source_routing.conversation: inline-revise` action for FAIL fixes

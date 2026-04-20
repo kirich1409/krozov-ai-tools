@@ -386,347 +386,49 @@ keep the one-file-per-check invariant intact.
 `severity`, `confidence`, `domain_relevance` are required when `verdict` is `WARN` or `FAIL`;
 null for `PASS` / `SKIPPED`. These drive the PoLL aggregation in Step 4.
 
-### 3.1 Spawn `manual-tester` (UI branch)
+### 3.1–3.10 Per-agent sub-check prompts
 
-`manual-tester` owns the runtime environment end-to-end per its Step 0 Environment Setup.
-Acceptance does not pre-launch — that is intentional delegation.
+Each sub-check (manual-tester, code-reviewer, build smoke, business-analyst, ux-expert in
+design-review / a11y / both modes, security-expert, performance-expert, architecture-expert,
+build-engineer, devops-expert) has a narrow prompt template and verdict rules — covering
+inputs, output path, and PASS/WARN/FAIL criteria. Spawn each via Agent tool in the same
+fan-out message; build smoke runs via Bash.
 
-Prompt contents:
-1. **Spec context** — full text or clear pointers.
-2. **Test plan** — the complete set of test cases.
-3. **Target hints** (optional) — device/URL if the user already named one.
-4. **Scope** — which tiers (default: Smoke + Feature).
-5. **Output path** — `swarm-report/<slug>-acceptance-manual.md` with the per-check schema.
-
-If the agent returns `WARN` with `blocked_on`, surface that text to the user as the primary
-next-step requirement before re-running acceptance.
-
-### 3.2 Spawn `code-reviewer` (delta review, skipped if Step 2.5 matched)
-
-Prompt contents:
-1. **Task description** — one sentence from spec or PR title.
-2. **Plan pointer** — path to implement receipt or research report if present.
-3. **Git diff** — current diff.
-4. **Output path** — `swarm-report/<slug>-acceptance-code.md`.
-
-Verdict rules: `PASS` if no semantic bugs, logic errors, or security issues; `WARN` for
-style/minor; `FAIL` for blockers.
-
-### 3.3 Build smoke (non-UI branch)
-
-Pick the command by `ecosystem` (see ORCHESTRATION.md §Build system detection):
-
-| `ecosystem` | Command |
-|---|---|
-| `gradle` | `./gradlew build -x test --quiet` (single-module) or `./gradlew :check` (multi-module) |
-| `node` | `npm run build` (or `pnpm build` / `yarn build`) |
-| `rust` | `cargo build --release --quiet` |
-| `go` | `go build ./...` |
-| `python` | `python -m compileall .` or package-specific build |
-
-Multi-module detection: scan `settings.gradle*` for `include(` statements. If subprojects are
-declared and the user did not specify a target module, ask which module is the smoke target
-**before** entering Step 3 (do not block the fan-out message with a question).
-
-If the `ecosystem` or command is not resolvable, skip with `verdict: SKIPPED` and
-`blocked_on: build command unknown`. On success write `verdict: PASS`; on failure capture the
-last ~50 lines and write `verdict: FAIL`. Receipt at
-`swarm-report/<slug>-acceptance-build.md`.
-
-### 3.4 Spawn `business-analyst` (conditional — AC coverage)
-
-Fires when `acceptance_criteria_ids` in spec frontmatter is a non-empty list.
-
-Prompt contents:
-1. **Spec** — the spec file path.
-2. **Diff / implement receipt** — evidence for each AC.
-3. **Test plan** (if any) — TC list mapped to AC via each test case's `Source:` field
-   (e.g. `Source: AC-1` or `Source: AC-2, AC-3`). This is the canonical mapping used by
-   `generate-test-plan`; do not invent a new `AC-ref:` field.
-4. **manual-tester output** (if running) — pointer to
-   `swarm-report/<slug>-acceptance-manual.md`.
-5. **Output path** — `swarm-report/<slug>-acceptance-ac-coverage.md`.
-
-Verdict rules: `PASS` if every `AC-N` has at least one evidence pointer; `WARN` for weak
-coverage (single witness on high-risk AC); `FAIL` for any missing AC. Severity: `FAIL` on
-missing AC is `critical`; weak coverage is `major`.
-
-### 3.5 Spawn `ux-expert` (conditional — design-review or a11y)
-
-Fires when **`has_ui_surface == true`** AND (`design.figma` is set for design-review mode
-**or** `non_functional.a11y` is set for a11y mode). Non-UI projects never trigger this even
-if `non_functional.a11y` is present — a11y on backend/library/CLI has no surface to audit.
-
-Design-review and a11y can both fire in one invocation. When both trigger, spawn `ux-expert`
-once with mode `both`; the agent writes **two** artifacts (one per concern) so aggregation in
-Step 4 treats them as independent checks:
-
-- `swarm-report/<slug>-acceptance-design.md` with `check: design`
-- `swarm-report/<slug>-acceptance-a11y.md` with `check: a11y`
-
-When only one mode fires, only the corresponding artifact is written.
-
-Prompt contents:
-1. **Mode** — `design-review` / `a11y` / `both`.
-2. **Spec** — file path.
-3. **Design source** — `design.figma` URL (design-review mode).
-4. **a11y target** — value of `non_functional.a11y` (e.g. `wcag-aa`).
-5. **Running app pointer** — target hints; the agent reads running-app state via MCP only
-   when the environment is already prepared, otherwise works from screenshots/code.
-6. **Output paths** — one or both of the filenames listed above, matching the mode.
-
-Verdict rules: `PASS` if design matches reference and a11y criteria met; `WARN` for minor
-spacing/color deviations or AA soft failures; `FAIL` for missing components, broken
-interaction paths, or hard a11y violations (keyboard trap, contrast below threshold).
-
-### 3.6 Spawn `security-expert` (conditional)
-
-Fires when `risk_areas` intersects `{auth, payment, pii, data-migration}`.
-
-Prompt contents:
-1. **Risk list** — the intersection subset.
-2. **Diff** — full git diff.
-3. **Spec** — file path.
-4. **Output path** — `swarm-report/<slug>-acceptance-security.md`.
-
-Verdict rules: `PASS` if no applicable OWASP / project-security-rule violations; `WARN` for
-minor hardening opportunities; `FAIL` for exploitable issues, secret leaks, or regulation
-breaches.
-
-### 3.7 Spawn `performance-expert` (conditional)
-
-Fires when `non_functional.sla` is set **or** `risk_areas` contains `perf-critical`.
-
-Prompt contents:
-1. **SLA target** — from `non_functional.sla`, or implicit `perf-critical` baseline.
-2. **Diff** — full git diff.
-3. **Output path** — `swarm-report/<slug>-acceptance-performance.md`.
-
-Verdict rules: `PASS` if no regression; `WARN` for borderline; `FAIL` for violations.
-
-### 3.8 Spawn `architecture-expert` (conditional — diff-triggered)
-
-Fires when the diff touches a public API symbol **or** spans ≥ 3 top-level modules (see the
-heuristic at §Conditional triggers).
-
-Prompt contents:
-1. **Trigger reason** — `public-api` / `cross-module` / `both` with the specific file list
-   that matched.
-2. **Diff** — full git diff (scoped to triggered files + their immediate neighbours).
-3. **Module map** — list of top-level modules touched, discovered from
-   `settings.gradle*` / `package.json` workspaces / `Cargo.toml` workspace members.
-4. **Output path** — `swarm-report/<slug>-acceptance-architecture.md` with `check: architecture`.
-
-Verdict rules: `PASS` if public contracts are preserved and module dependency direction is
-clean; `WARN` for style issues (e.g., missing deprecation annotation, avoidable coupling);
-`FAIL` for contract breakage, circular dependencies, or leaking internals into a public API.
-
-### 3.9 Spawn `build-engineer` (conditional — diff-triggered)
-
-Fires when the diff touches any build file listed in §Conditional triggers.
-
-Prompt contents:
-1. **Build files changed** — exact file list from the diff.
-2. **Diff** — scoped to those files plus any touched module manifests.
-3. **Ecosystem** — resolved `ecosystem` from Step 0 (drives which toolchain the agent should
-   evaluate against).
-4. **Output path** — `swarm-report/<slug>-acceptance-build-config.md` with
-   `check: build-config`.
-
-Note: `check: build` is already used by the non-UI build smoke (§3.3). The expert review of
-**config changes** uses a distinct check identifier `build-config` so aggregation can treat
-the two axes independently (a project can have a clean smoke and a broken config, or vice
-versa).
-
-Verdict rules: `PASS` if dependency additions are pinned/hash-verified, plugin versions are
-consistent, and task wiring is intact; `WARN` for unpinned version ranges, unused
-dependencies, or minor style issues; `FAIL` for breaking plugin mismatches, missing required
-configuration, or dependency choices that conflict with project policy.
-
-### 3.10 Spawn `devops-expert` (conditional — diff-triggered)
-
-Fires when the diff touches CI / release configuration (see §Conditional triggers).
-
-Prompt contents:
-1. **CI files changed** — exact file list.
-2. **Diff** — scoped to CI/release files.
-3. **Repo context** — `public` vs `private` (affects secret handling guidance),
-   and any related marketplace/deployment manifests if present.
-4. **Output path** — `swarm-report/<slug>-acceptance-devops.md` with `check: devops`.
-
-Verdict rules: `PASS` if pipeline health is preserved, secrets are handled correctly, and
-rollout gates remain sound; `WARN` for minor inefficiencies or missing
-`timeout-minutes` / `concurrency` guards; `FAIL` for leaked secrets, disabled safety gates,
-or breaking workflow syntax.
+See [`references/subcheck-prompts.md`](references/subcheck-prompts.md) for the full prompt template and verdict rules per
+agent and for the build-smoke command table.
 
 ---
 
 ## Step 4: Aggregate and Write Receipt
 
-Read frontmatter of each `swarm-report/<slug>-acceptance-<check>.md` first (verdict +
-severity + confidence + domain_relevance + blocked_on). Read the body only if
-`verdict != PASS`. Do not inline artifact bodies — link them.
+Read each per-check artifact's frontmatter first (body only if `verdict != PASS`), then
+reduce via PoLL rules (same protocol as `multiexpert-review` §"Step 4 — Synthesize verdict").
+Bug severities (P0–P3) remain the primary routing axis; PoLL layers additional rules for
+cases not covered by bug severity alone. Derive Aggregated Status (`VERIFIED | FAILED |
+PARTIAL`), write the aggregated receipt to `swarm-report/<slug>-acceptance.md` (including
+idempotency hashes, Check Plan, Check Results table, Convergence signals, Summary, Bugs
+Found, Recommendation), and route to the invoking orchestrator.
 
-**Missing per-check artifact.** Step 2.5 writes a stub for skipped `code-reviewer`; Step 3.3
-writes an artifact even on build-smoke failure. If a planned per-check artifact is
-nonetheless missing at aggregation time, treat the check as `verdict: FAIL` with
-`blocked_on: per-check artifact missing` — do not silently drop it. `blocked_on` is the
-canonical field for surfacing unresolved conditions per the per-check schema; no separate
-`error:` field exists.
+Missing-artifact invariant: if a planned per-check artifact is missing at aggregation time,
+treat the check as `verdict: FAIL` with `blocked_on: per-check artifact missing` — do not
+silently drop it.
 
-### Aggregation — PoLL rules
-
-Acceptance uses the same aggregation protocol as `multiexpert-review` (see
-`multiexpert-review/SKILL.md` §"Step 4 — Synthesize verdict"). Input shape is per-check
-(not per-reviewer), reduction logic identical:
-
-| Signal | Action |
-|---|---|
-| **`critical` severity** from any sub-check with `confidence: high` | → Blocker. Aggregated Status = `FAILED`. |
-| **Same issue** (same file:line or same AC id) raised by 2+ sub-checks independently | → Escalate to `critical` regardless of individual severity. Multiple specialists seeing the same problem = real problem. |
-| **`major` severity** from a sub-check with `domain_relevance: high` | → Important. Aggregated Status = `PARTIAL` if not already escalated. |
-| **Contradicting verdicts** (one `PASS`, another `FAIL` on the same item) | → "Uncertainty — requires decision". Aggregated Status = `PARTIAL`, contradiction listed in the receipt. |
-| **`minor` severity** or **`low` confidence** from a single check | → Note, not blocker. Does not affect aggregated Status. |
-| **`low` domain_relevance** check flagging an issue | → Note, weight lower. |
-
-**Bug severities (P0–P3) remain the primary routing axis** for
-`feature-flow`/`bugfix-flow`. Any P0/P1 bug reported by any sub-check maps directly to
-`FAILED` regardless of the PoLL above; PoLL layers additional rules on top for cases not
-covered by bug severity alone (e.g. AC coverage FAIL without an associated P0 bug).
-
-### Aggregated Status — final table
-
-| Input | Aggregated Status |
-|---|---|
-| All checks `PASS` or `SKIPPED`, no P0–P3 bugs, no PoLL blocker | `VERIFIED` |
-| Any P0 / P1 bug **or** PoLL blocker (critical high-confidence, or 2+-agent escalation) | `FAILED` |
-| P2 / P3 bugs only, **or** PoLL important, **or** contradicting verdicts, **or** any `WARN` not otherwise classified | `PARTIAL` |
-| `manual-tester` returned `WARN` with `blocked_on` | `PARTIAL` with `blocked_on` surfaced in Summary |
-
-### Receipt format
-
-Save to `swarm-report/<slug>-acceptance.md`. Legacy fields preserved; new sections appended.
-
-```markdown
-# Acceptance: <slug>
-
-**Status:** VERIFIED / FAILED / PARTIAL
-**Date:** <date>
-**Type:** Feature / Bug fix
-**Project type:** <project_type>
-**Project type override:** <spec | user | none>
-**Ecosystem:** <ecosystem>
-**Spec source:** [what was used]
-**Test plan:** [resolved permanent path / generated on-the-fly / none]
-**test_plan_source:** receipt | mounted | on-the-fly | absent
-**Context artifacts:** [paths to research.md, debug.md, implement.md, quality.md used as input]
-
-## Idempotency Hashes
-- `diff_hash`: <sha256 of `git diff <base>...HEAD`>
-- `spec_hash`: <sha256 of the spec file bytes, or `null` if no file spec>
-- `test_plan_hash`: <sha256 of the permanent test plan, or `null`>
-
-These three hashes drive the Re-verification Loop decision table; downstream orchestrators
-don't need to read them.
-
-## Check Plan
-- list of checks that ran, one per line, with their trigger
-- e.g. `business-analyst` (AC coverage) — triggered by spec.acceptance_criteria_ids
-- e.g. `ux-expert` — not triggered (no design.figma)
-
-## Check Results
-
-| Check | Agent / Tool | Verdict | Severity | Confidence | Artifact |
-|---|---|---|---|---|---|
-| Manual QA | manual-tester | … | … | … | swarm-report/<slug>-acceptance-manual.md |
-| Code review | code-reviewer | … | … | … | swarm-report/<slug>-acceptance-code.md |
-| AC coverage | business-analyst | … | … | … | swarm-report/<slug>-acceptance-ac-coverage.md |
-| Design | ux-expert | … | … | … | swarm-report/<slug>-acceptance-design.md |
-| A11y | ux-expert | … | … | … | swarm-report/<slug>-acceptance-a11y.md |
-| Security | security-expert | … | … | … | swarm-report/<slug>-acceptance-security.md |
-| Performance | performance-expert | … | … | … | swarm-report/<slug>-acceptance-performance.md |
-| Architecture | architecture-expert | … | … | … | swarm-report/<slug>-acceptance-architecture.md |
-| Build config | build-engineer | … | … | … | swarm-report/<slug>-acceptance-build-config.md |
-| DevOps | devops-expert | … | … | … | swarm-report/<slug>-acceptance-devops.md |
-| Build smoke | bash | … | … | … | swarm-report/<slug>-acceptance-build.md |
-
-## Convergence signals
-Issues raised by 2+ sub-checks independently. Strongest signal of real problems.
-List one line each with the file:line or AC id and the list of checks that flagged it.
-
-## Summary
-[1–3 sentences. If PARTIAL with blocked_on — state the blocker first. If any convergence
-signal — mention it in the first sentence.]
-
-## Test Results
-- Total: [n] | Passed: [n] | Failed: [n] | Blocked: [n]
-
-## Bugs Found
-[List by severity — P0 first, then P1, P2, P3. Link each to the per-check artifact that
-reported it.]
-
-## Bug Reproduction Check (bug fix only)
-- Reproduction steps from debug.md: [executed / not applicable]
-- Bug reproduces after fix: [yes / no]
-
-## Recommendation
-[Ship / Do not ship / Ship with known issues — and why]
-```
-
-### Routing (consumed by orchestrators)
-
-- **VERIFIED** → `create-pr` (or mark existing PR ready for review).
-- **FAILED** with P0/P1 and obvious cause → `implement` with the bug list as input. Max 3
-  round-trips.
-- **FAILED** with P0/P1 and unclear cause → `debug` first, then `implement`.
-- **FAILED** with P0/P1 requiring regression coverage → `test-plan` append `## Regression TC`,
-  then `implement`.
-- **PARTIAL** with P2/P3 only or WARN — orchestrator asks the user: fix now or ship with
-  known issues (continue to `create-pr`, include in PR description).
-- **PARTIAL** with `blocked_on` — surface the blocker; do not continue until resolved.
+See [`references/aggregation.md`](references/aggregation.md) for the PoLL rule table, Aggregated Status table, full
+receipt format, and the orchestrator routing table.
 
 ---
 
 ## Re-verification Loop
 
-On fix-loop re-entry (after `FAILED` → `implement` fix → re-run acceptance):
+On fix-loop re-entry (after `FAILED` → `implement` fix → re-run acceptance), re-probe Step 0
+and Step 1, compute `diff_hash_new`, then decide per-check action from the decision table
+(PASS/SKIPPED/WARN with matching `diff_hash` → skip; any FAIL → always re-run; missing or
+`null` prior hash → re-run). `business-analyst` and `manual-tester` get a spec/test-plan
+change override: if `spec_hash` or `test_plan_hash` changed — or is missing from an older
+receipt — re-run them regardless of `diff_hash`. Overwrite per-check artifacts with a fresh
+`diff_hash`, aggregate into a fresh receipt, and repeat until VERIFIED or the user ships
+as-is.
 
-1. Re-probe Step 0 and Step 1 (project type rarely changes; inputs may).
-2. Compute `diff_hash_new` = `sha256(git diff <base>...HEAD)`.
-3. Decide per-check action using the previous per-check artifact and `diff_hash`:
-
-   | Previous verdict | Previous `diff_hash` vs `diff_hash_new` | Action |
-   |---|---|---|
-   | `PASS` or `SKIPPED` | match | **Skip** — reuse the existing artifact as-is. Record `re-used previous verdict` in the aggregated receipt. |
-   | `PASS` or `SKIPPED` | mismatch | Re-run. |
-   | `WARN` | match | Skip. Re-used verdict keeps the WARN; user had the option to ship with it. |
-   | `WARN` | mismatch | Re-run. |
-   | `FAIL` | any | **Always re-run.** A FAIL is the point of the loop; hash match means the fix didn't land in the diff yet — still must re-run to confirm. |
-   | any prior verdict with previous `diff_hash` = `null`, absent, or unreadable | any | Re-run — cannot prove idempotency without a usable hash. |
-
-   An explicit `diff_hash: null` and a missing `diff_hash` field are treated the same way:
-   both mean the prior artifact does not carry enough information to prove idempotency, so
-   the check must be re-run.
-
-4. For checks that are re-run:
-   - Overwrite the per-check artifact with fresh content and a new `diff_hash`.
-   - `manual-tester` specifically re-runs previously-failed TCs plus a Smoke tier by default;
-     the full plan is re-run only on explicit request or when the spec changed.
-5. Aggregate into a fresh `swarm-report/<slug>-acceptance.md`, overwriting the previous one.
-6. Repeat until VERIFIED or the user decides to ship as-is.
-
-**Spec/test-plan change override.** If the spec file or test-plan file changed between runs
-(detected by comparing their `sha256` to values recorded in the previous aggregated receipt
-under `spec_hash` / `test_plan_hash`), `business-analyst` and `manual-tester` are always
-re-run regardless of `diff_hash` — their input is the spec/TC list, not just the code diff.
-Other checks remain subject to the `diff_hash` policy.
-
-**Back-compat rule.** If the previous aggregated receipt does not contain `spec_hash`
-and/or `test_plan_hash` (e.g. a pre-iteration-3 receipt) — or either prior value is unknown
-or unreadable — treat that input as **changed** and re-run the affected checks to be safe:
-missing/unknown `spec_hash` forces `business-analyst`; missing/unknown `test_plan_hash`
-forces `manual-tester`. If both are missing/unknown, re-run both. Other checks remain
-subject to the `diff_hash` policy.
-
-This is the full idempotency pass that iteration 2 parked. Cost saving: on a single-file fix
-after a 5-agent FAIL, typically 2–3 passed checks are re-used instead of re-run.
+See [`references/re-verification.md`](references/re-verification.md) for the full per-check decision table, the
+spec/test-plan change override rule, the back-compat rule for older receipts, and the
+per-agent re-run scope details.

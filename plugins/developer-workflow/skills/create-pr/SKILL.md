@@ -175,44 +175,9 @@ Body composition is mode-aware.
 
 ### 7.1 Section bank
 
-Available sections (include only those that apply):
+The body is composed from a catalog of optional sections: What changed, Why / motivation, Artifacts, How to test, Status, Screenshots / demo, Checklist, and a trailing Claude Code footer. Include only the sections that apply for the current mode and available artifacts.
 
-```markdown
-## What changed
-<!-- Technical description from commit log + diff -->
-
-## Why / motivation
-<!-- From task description or plan artifact; link ticket if URL in commits -->
-
-## Artifacts
-<!-- Bullet list of swarm-report/ paths that exist -->
-- Plan: swarm-report/<slug>-plan.md
-- Test plan: swarm-report/<slug>-test-plan.md
-- ...
-
-## How to test
-<!-- From test-plan.md or plan.md acceptance criteria; checkbox list -->
-- [ ] Scenario 1
-- [ ] Scenario 2
-
-## Status
-<!-- Table: Implement / Finalize / Acceptance stages, pass/fail/pending from artifacts -->
-| Stage | Result | Notes |
-|---|---|---|
-| Implement | ✅ PASS | all gates green |
-| Finalize  | ⏳ in progress | round 2/3 |
-| Acceptance | ⏸ pending | waits for finalize |
-
-## Screenshots / demo
-<!-- For visual changes; prompt user -->
-
-## Checklist
-- [ ] Tests added or updated
-- [ ] No breaking changes (or documented)
-- [ ] Relevant docs updated
-
-🤖 Generated with [Claude Code](https://claude.com/claude-code)
-```
+See [`references/body-sections.md`](references/body-sections.md) for the full section-bank templates with example content and status-table formatting.
 
 ### 7.2 Section selection per mode
 
@@ -228,13 +193,9 @@ Available sections (include only those that apply):
 
 ### 7.3 Detect visual changes
 
-Look at changed file paths for:
-- Android/Compose: `*Screen.kt`, `*Composable.kt`, `res/layout/`, `res/drawable/`
-- Compose Multiplatform: Kotlin UI patterns + `commonMain` UI dirs
-- Web: `*.tsx`, `*.jsx`, `*.css`, `*.scss`, `*.html`
-- iOS: `*.swift` (SwiftUI), `*.xib`, `*.storyboard`
+Scan the changed file paths for platform-specific UI markers (Android/Compose, Compose Multiplatform, Web, iOS/SwiftUI). If any match, include the "Screenshots / demo" section and prompt the user for attachments in `--draft` and `--promote` modes; `--refresh` preserves existing Screenshots content verbatim.
 
-If visual changes detected — include "Screenshots / demo" section and prompt the user (in `--draft` and `--promote` modes) for attachments. `--refresh` preserves existing Screenshots content.
+See [`references/visual-change-patterns.md`](references/visual-change-patterns.md) for the full glob patterns per platform.
 
 ### 7.4 Preserve user edits on refresh/promote
 

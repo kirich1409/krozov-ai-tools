@@ -1,6 +1,6 @@
 ---
 name: write-tests
-description: "Write retroactive tests for existing code — classes, modules, or directories lacking test coverage. Discovers test infrastructure (framework, assertions, mocking, naming), plans test cases, delegates generation to kotlin-engineer or compose-developer for Compose UI, verifies tests compile and pass, reports findings. Use when: \"write tests for\", \"add tests to\", \"test this class\", \"increase coverage\", \"add unit tests\", \"this code has no tests\", \"cover with tests\", \"retroactive tests\". Do NOT use when: user wants a test plan document without code (use generate-test-plan), run tests on live app (use acceptance), exploratory QA (use bug-hunt), or tests are part of a new feature (kotlin-engineer handles within implement). Orchestrator — delegates actual test code to engineer agents. Consumes test plans from generate-test-plan when available."
+description: "Write retroactive tests for existing code — classes, modules, or directories lacking test coverage. Discovers test infrastructure (framework, assertions, mocking, naming), plans test cases, delegates generation to platform engineer agents (kotlin-engineer, compose-developer, swift-engineer, swiftui-developer) matched to the target code, verifies tests compile and pass, reports findings. Use when: \"write tests for\", \"add tests to\", \"test this class\", \"increase coverage\", \"add unit tests\", \"this code has no tests\", \"cover with tests\", \"retroactive tests\". Do NOT use when: user wants a test plan document without code (use generate-test-plan), run tests on live app (use acceptance), exploratory QA (use bug-hunt), or tests are part of a new feature (the engineer agent handles tests within implement). Orchestrator — delegates actual test code to engineer agents. Consumes test plans from generate-test-plan when available."
 ---
 
 # Write Tests
@@ -10,8 +10,9 @@ discovers what needs testing, understands the project's test infrastructure, pla
 delegates code generation to the appropriate agent, verifies the tests, and reports results.
 
 **Key principle:** this skill is an orchestrator. It never writes test code directly — it
-delegates to `kotlin-engineer` (business logic, data layer, domain) or `compose-developer`
-(Compose UI code). The skill's job is discovery, planning, delegation, and verification.
+delegates to a platform engineer agent: `kotlin-engineer` / `compose-developer` for
+Kotlin/Android targets, or `swift-engineer` / `swiftui-developer` for Swift/iOS targets.
+The skill's job is discovery, planning, delegation, and verification.
 
 ---
 
@@ -20,10 +21,10 @@ delegates to `kotlin-engineer` (business logic, data layer, domain) or `compose-
 ### 1.1 Accept target
 
 The user provides one or more of:
-- A file path (`src/main/kotlin/com/example/UserRepository.kt`)
-- A class name (`UserRepository`)
-- A module or directory (`feature/auth`, `:core:network`)
-- A vague reference ("the auth module", "this class")
+- A file path (`src/main/kotlin/com/example/UserRepository.kt`, `Sources/Auth/LoginService.swift`)
+- A class or type name (`UserRepository`, `LoginService`)
+- A module or directory (`feature/auth`, `:core:network`, `Sources/Auth`, an Xcode target)
+- A vague reference ("the auth module", "this class", "the login view")
 
 Resolve vague references using a code-index tool when one is available in the environment;
 fall back to `Grep` / `Glob` + `Read` otherwise. If the reference remains ambiguous after
@@ -42,16 +43,19 @@ Read all source files in the target scope. For each file, identify:
 - Public API surface (public/internal classes, functions, properties)
 - Dependencies (constructor parameters, injected services)
 - Complexity indicators (branching, state management, error handling)
-- Whether the code is Compose UI or non-UI Kotlin
+- Whether the code is UI (Compose composables, SwiftUI views) or non-UI code (Kotlin business
+  logic / data layer, Swift services / models / repositories)
 
 ### 1.3 Find existing tests
 
 Search for existing tests:
-- Check the corresponding test source set (`src/test/`, `src/androidTest/`, `src/commonTest/`)
+- Check the corresponding test location — Kotlin/Android: `src/test/`, `src/androidTest/`,
+  `src/commonTest/`; Swift: `Tests/<TargetName>Tests/` (SwiftPM) or the Xcode test target
+  (often `<AppName>Tests/` or `<AppName>UITests/`)
 - Prefer a code-index tool when one is available in the environment to locate test classes
   that reference the target by symbol (search / usages / class lookups); fall back to
   `Grep "TargetClass" path/to/test-src-set` when no index is available
-- Check for `@Test` annotations that exercise target functions
+- Check for `@Test` (JUnit / Swift Testing) or `XCTestCase` subclasses that exercise target functions
 
 ### 1.4 Identify untested code
 
@@ -70,51 +74,18 @@ without one — a test plan is helpful but not required.
 
 ## Phase 2: Discover Test Infrastructure
 
-Analyze the project's existing test setup to ensure generated tests match the codebase
-conventions. Inspect existing test files (at least 3-5 if available) and build configuration.
+Inspect 3-5 existing test files plus build configuration (`build.gradle(.kts)`,
+`Package.swift`, Xcode project) to discover the framework, assertion library, mocking /
+test-double approach, async-testing helpers, UI-testing stack, and naming / file-placement
+conventions in use. Compile the results into a structured **Test Infrastructure Summary**
+that the Phase 4 engineer agent consumes verbatim.
 
-### 2.1 Detect frameworks and libraries
+The goal is simple: generated tests must look hand-written. Never introduce a new framework
+or style that isn't already present in the project.
 
-| Category | What to detect | Where to look |
-|----------|---------------|---------------|
-| Test framework | JUnit 4, JUnit 5, Kotest | `build.gradle(.kts)` dependencies, existing test imports |
-| Assertion library | Truth, AssertJ, Kotest matchers, kotlin.test | Existing test imports and assertions |
-| Mocking | MockK, Mockito-Kotlin, fakes (manual) | Existing test imports, `@MockK`, `mock()`, `Fake*` classes |
-| Coroutine testing | `kotlinx-coroutines-test` (`runTest`), Turbine | Existing test imports, `build.gradle(.kts)` |
-| Compose testing | `compose-ui-test`, `createComposeRule` | Existing test imports, `build.gradle(.kts)` |
-| DI in tests | Hilt test, Koin test, manual construction | Existing test setup patterns |
-
-### 2.2 Detect conventions
-
-| Convention | What to detect | How |
-|-----------|---------------|-----|
-| Naming | `should verb`, `test verb`, backtick names, `given_when_then` | Read existing test function names |
-| File placement | Same package as source? Separate test package? | Compare test file locations to source |
-| Test class naming | `ClassNameTest`, `ClassNameSpec`, `ClassNameTests` | Read existing test class names |
-| Setup pattern | `@Before`/`@BeforeEach`, `init {}`, builder/factory | Read existing test setup blocks |
-| Assertion style | Fluent (`assertThat(x).isEqualTo(y)`) vs plain (`assertEquals`) | Read existing assertions |
-
-### 2.3 Produce Test Infrastructure Summary
-
-Compile findings into a structured summary for the code generation agent:
-
-```
-## Test Infrastructure Summary
-
-**Framework:** {JUnit 4 / JUnit 5 / Kotest}
-**Assertions:** {Truth / AssertJ / Kotest matchers / kotlin.test}
-**Mocking:** {MockK / Mockito-Kotlin / fakes / none}
-**Coroutine testing:** {runTest + Turbine / runTest only / runBlocking / none}
-**Compose testing:** {compose-ui-test / none}
-
-**Naming convention:** {description — e.g., "backtick names with 'should' prefix"}
-**Class naming:** {e.g., "ClassNameTest"}
-**File placement:** {e.g., "same package in src/test/kotlin/"}
-**Setup pattern:** {e.g., "@Before with MockK annotations"}
-**Assertion style:** {e.g., "Truth fluent assertions"}
-
-**Example test file:** {path to a representative existing test for reference}
-```
+See [`references/test-infrastructure-discovery.md`](references/test-infrastructure-discovery.md) for the detection tables (frameworks,
+assertions, mocking, async, UI, DI, naming, placement, setup, assertion style) and the exact
+Test Infrastructure Summary template.
 
 ---
 
@@ -168,79 +139,26 @@ the agent writes the code.
 
 | Target code type | Agent |
 |-----------------|-------|
-| Business logic, data layer, domain, ViewModel | `kotlin-engineer` |
+| Kotlin business logic, data layer, domain, ViewModel | `kotlin-engineer` |
 | Compose UI composables | `compose-developer` |
+| Swift business logic, data layer, services, models, repositories | `swift-engineer` |
+| SwiftUI views, screens, modifiers, navigation | `swiftui-developer` |
 
-If the target includes both UI and non-UI code, launch separate agents for each.
+Route by both language and layer: Kotlin/Android targets go to `kotlin-engineer` or
+`compose-developer`; Swift/iOS/macOS targets go to `swift-engineer` or `swiftui-developer`.
+If the target includes both UI and non-UI code, launch separate agents for each. If the
+required platform plugin is not installed, the Task call will fail with a clear message —
+report it and ask the user to install the matching platform plugin.
 
 ### 4.2 Agent prompt
 
-Include in the delegation prompt:
+Every delegation prompt must include: target code paths, the Phase 2 Test Infrastructure
+Summary, the Phase 3 test cases, a style-reference test file, and the Phase 1.5 test plan
+if one exists.
 
-1. **Target code paths** — full file paths to the code being tested
-2. **Test Infrastructure Summary** — from Phase 2
-3. **Test cases to implement** — from Phase 3 plan
-4. **Existing test examples** — path to 1-2 representative test files for style reference
-5. **Test plan** — if one was found in Phase 1.5, include its path
-
-**Prompt template for kotlin-engineer:**
-```
-Write unit tests for the following code. Match the project's existing test conventions exactly.
-
-## Target code
-Read these files:
-{list of file paths}
-
-## Test Infrastructure
-{Test Infrastructure Summary from Phase 2}
-
-## Test cases to write
-{list of test cases from Phase 3}
-
-## Style reference
-Read this existing test for style and conventions: {path to example test}
-
-## Test plan (optional)
-{path to test plan from docs/testplans/, or "No test plan available"}
-
-## Requirements
-- Write complete, compilable test files — no TODOs, no placeholders
-- Follow the project's existing naming, assertion, and setup conventions exactly
-- Use the same mocking approach as existing tests (MockK/Mockito-Kotlin/fakes)
-- Cover happy path, edge cases, and error paths as specified in the test case list
-- Place test files in the correct test source set and package
-- Each test function tests exactly one behavior
-- Test names describe the behavior being verified, not the implementation
-
-Respond in the same language as the user's request.
-```
-
-**Prompt template for compose-developer:**
-```
-Write Compose UI tests for the following composables. Match the project's existing test conventions.
-
-## Target composables
-Read these files:
-{list of file paths}
-
-## Test Infrastructure
-{Test Infrastructure Summary from Phase 2}
-
-## Test cases to write
-{list of test cases from Phase 3}
-
-## Style reference
-Read this existing test for style and conventions: {path to example test}
-
-## Requirements
-- Use createComposeRule() or createAndroidComposeRule() as used in existing tests
-- Test UI state rendering, user interactions, and state changes
-- Use semantic matchers (onNodeWithText, onNodeWithTag) over implementation details
-- Write complete, compilable test files — no TODOs, no placeholders
-- Follow the project's existing conventions exactly
-
-Respond in the same language as the user's request.
-```
+See [`references/agent-prompts.md`](references/agent-prompts.md) for the full prompt templates for `kotlin-engineer`,
+`compose-developer`, `swift-engineer`, and `swiftui-developer`. Fill in the `{…}`
+placeholders and keep the section headings intact.
 
 ---
 
@@ -248,19 +166,31 @@ Respond in the same language as the user's request.
 
 ### 5.1 Run tests
 
-Run the test suite for the target module:
+Run the test suite for the target module. Pick the command family that matches the project
+build system:
 
 ```bash
-# Unit tests
+# Kotlin / Android (Gradle)
 ./gradlew :module:test
 # or more specific: ./gradlew :module:testDebugUnitTest
 
-# Instrumentation / Compose UI tests (if generated into src/androidTest/)
+# Android instrumentation / Compose UI tests (if generated into src/androidTest/)
 ./gradlew :module:connectedAndroidTest
+
+# Swift — SwiftPM package
+swift test
+# Narrow by test-product (test target): swift test --test-product <TestTargetName>
+# Narrow by identifier pattern: swift test --filter <Suite>/<method>  (e.g. LoginTests/testSignIn)
+# Note: --filter matches test identifiers/regex, not targets.
+
+# Swift — Xcode project / workspace (iOS, macOS, etc.)
+xcodebuild test -scheme <Scheme> -destination 'platform=iOS Simulator,name=iPhone 15'
+# For a macOS scheme: -destination 'platform=macOS'
+# Narrow with: -only-testing:<TestTarget>/<TestClass>/<testMethod>
 ```
 
-Choose the appropriate command based on where tests were generated. If both unit and
-instrumentation tests were created, run both.
+Choose the appropriate command based on where tests were generated and what build system the
+project uses. If both unit and UI / instrumentation tests were created, run both.
 
 ### 5.2 Handle failures
 
@@ -268,7 +198,7 @@ If tests fail, classify each failure:
 
 | Failure type | Action |
 |-------------|--------|
-| **Test bug** — incorrect assertion, wrong setup, missing mock | Fix via `kotlin-engineer` (max 3 attempts) |
+| **Test bug** — incorrect assertion, wrong setup, missing mock | Fix via the same engineer agent that wrote the test (max 3 attempts) |
 | **Production bug** — test correctly exposes a real bug in the target code | Do NOT fix. Record as a finding. |
 
 **How to distinguish:**
@@ -282,7 +212,9 @@ If tests fail, classify each failure:
 ### 5.3 Fix cycle
 
 For test bugs:
-1. Delegate the fix to `kotlin-engineer` with the failure output and the test file path
+1. Delegate the fix to the engineer agent that wrote the test (`kotlin-engineer` /
+   `compose-developer` / `swift-engineer` / `swiftui-developer`) with the failure output and
+   the test file path
 2. Re-run the tests
 3. Repeat up to 3 times total
 
@@ -362,8 +294,9 @@ Target: {file/module path}
 
 ## Constraints
 
-- **Orchestrator only** — this skill plans and delegates; `kotlin-engineer` and
-  `compose-developer` write the actual test code
+- **Orchestrator only** — this skill plans and delegates; the platform engineer agents
+  (`kotlin-engineer`, `compose-developer`, `swift-engineer`, `swiftui-developer`) write the
+  actual test code
 - **No production code changes** — if tests reveal bugs, report them as findings.
   Do not fix the production code. The user decides what to do with findings.
 - **Match existing conventions** — generated tests must be indistinguishable from

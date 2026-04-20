@@ -50,81 +50,16 @@ The resulting filename is then `docs/testplans/<slug>-test-plan.md` (for example
 
 ### Receipt (when invoked from orchestrator with a slug)
 
-When this skill is invoked from the `feature-flow` orchestrator, a `slug` argument is passed
-explicitly. In that case, in addition to the permanent document above, produce a **receipt**
-at `swarm-report/<slug>-test-plan.md` that the orchestrator and downstream stages
-(`multiexpert-review`, `acceptance`) can consume for receipt-based gating.
+When invoked from `feature-flow` with a `slug` argument, also emit a receipt at
+`swarm-report/<slug>-test-plan.md` so `multiexpert-review` and `acceptance` can mount
+the artifact via receipt-based gating. The permanent file remains the source of truth;
+the receipt is metadata + pointer. Standalone invocations (no slug passed) skip the
+receipt entirely and write only the canonical `docs/testplans/<slug>-test-plan.md` file.
 
-The permanent file remains the source of truth. The receipt is metadata + pointer.
-
-Receipt format:
-
-```markdown
----
-name: test-plan-receipt
-description: Test plan artifact for <slug>
-slug: <slug>
-type: test-plan-receipt
-status: Draft | Ready | Approved | Mounted
-permanent_path: docs/testplans/<slug>-test-plan.md
-source_spec: <path to spec if any, or "inline spec">
-review_verdict: pending | PASS | WARN | FAIL | skipped
-review_warnings: []            # populated by multiexpert-review on WARN — list of short strings
-review_blockers: []            # populated by multiexpert-review on FAIL — list of short strings
-phase_coverage: [Phase 1, Phase 2, ...]
-platform: []                   # optional; inherited from the source spec's `platform:` field when present.
-                               # Drives platform-aware TC generation and downstream acceptance checks (e.g.,
-                               # skip mobile-only TCs on a backend-only target). Leave empty when the spec
-                               # did not set it; acceptance falls back to its project-type heuristic.
-created: YYYY-MM-DD
-updated: YYYY-MM-DD
----
-
-# Test Plan Receipt: <slug>
-
-**Status:** <status>
-**Permanent artifact:** [`docs/testplans/<slug>-test-plan.md`](../docs/testplans/<slug>-test-plan.md)
-**Source spec:** <path or description>
-**Review verdict:** <verdict>
-```
-
-Field conventions:
-- `status`: `Draft` right after generation; `Ready` after multiexpert-review returns PASS/WARN;
-  `Approved` when the user explicitly signs off; `Mounted` when a user-authored permanent
-  file is adopted without regeneration (see `feature-flow/SKILL.md` §1.5 Pre-check).
-- `review_verdict`: `pending` at creation; updated by `multiexpert-review` to
-  `PASS | WARN | FAIL`; `skipped` on mount (no review occurs).
-- `review_warnings` / `review_blockers`: arrays of short strings populated by `multiexpert-review`.
-  `review_warnings` is written on WARN verdicts (items d or e of the checklist violated —
-  non-blocking); `review_blockers` is written on FAIL (items a, b, or c violated —
-  blocks transition to Implement). Both remain empty arrays on PASS / pending / skipped.
-  Frontmatter is the single source of truth for review findings — the receipt body does
-  not re-list them, keeping downstream YAML parsers authoritative.
-- `phase_coverage`: list of phase labels present in the permanent file. Empty list if the
-  feature has no phase segmentation.
-- `created` / `updated`: ISO dates (`YYYY-MM-DD`). `updated` must change whenever either the
-  permanent file or any receipt field is modified.
-- Relative path in the markdown link assumes the conventional `swarm-report/` ↔ `docs/`
-  sibling layout at the repo root.
-
-### Backward compatibility — standalone invocation without slug
-
-When a user invokes this skill directly (e.g. "create a test plan for X") without the
-orchestrator passing a `slug`, the receipt is **not** produced. The permanent file is
-still saved under the canonical slug-based filename:
-
-- Permanent file generated at `docs/testplans/<slug>-test-plan.md`, where `<slug>` is
-  either provided inline or derived from the feature name per the Slug resolution rules
-  above. If the plan may later be consumed by another workflow that mounts an existing
-  plan (e.g. `bugfix-flow` → `acceptance` Branch 2), use the eventual orchestrator slug
-  at creation time so the file is deterministically mountable without renaming.
-- No `swarm-report/<slug>-test-plan.md` receipt is written.
-- No `phase_coverage` or receipt metadata tracked elsewhere.
-
-Standalone callers continue to work: the slug-based filename is the single canonical
-artifact. Pre-existing `docs/testplans/*-test-plan.md` files authored before this
-convention are not auto-migrated — they remain readable by humans, but mount logic
-matches only on the exact `<slug>-test-plan.md` path.
+See [`references/receipt-format.md`](references/receipt-format.md) for the full YAML schema, field conventions
+(`status`, `review_verdict`, `review_warnings` / `review_blockers`, `phase_coverage`,
+`platform`, `created` / `updated`), and the standalone-without-slug backward-compatibility
+rules.
 
 ## Input Discovery
 
@@ -211,184 +146,26 @@ Before writing test cases, identify:
 
 ## Test Plan Format
 
-Every generated test plan must follow this exact structure:
+Every generated test plan has the same top-level layout: YAML frontmatter with `type: test-plan`
+and `slug`, a header metadata table, then `Findings`, `Risk Areas`, `Test Cases`,
+`Edge Cases & Negative Scenarios`, `Coverage Matrix`, and `Suggested Automation Candidates`.
+Each `TC-[N]` block is itself a table with `Priority`, `Tier`, `Preconditions`, `Steps`,
+`Expected Result`, and `Source` rows.
 
-```markdown
----
-type: test-plan
-slug: <feature-slug>
-generated: YYYY-MM-DD
----
+Two variants exist:
 
-# Test Plan: [Feature Name]
+- **Standard format** — the default; full Steps + Expected Result columns.
+- **Lightweight format (non-UI features)** — when the non-UI detector triggers, TC blocks
+  collapse Steps and Expected Result into a single `Scenario (Given/When/Then)` row.
+  All other sections are unchanged.
 
-| Field | Value |
-|-------|-------|
-| **Source** | [spec link / Figma link / code path — whatever was provided] |
-| **Generated** | [YYYY-MM-DD] |
-| **Scope** | [one-line summary of what is covered] |
-| **Status** | Draft / Ready for Review / Approved |
+When the feature arrives via `decompose-feature` with two or more phases and test cases can
+be grouped by phase, split the `## Test Cases` section into `### Phase N (T-i..T-j) — <label>`
+subsections (still one permanent file per feature). The receipt's `phase_coverage` then lists
+the phase labels present.
 
-The `type: test-plan` frontmatter lets `multiexpert-review` and `acceptance` identify the
-artifact deterministically (Signal #1 of the classifier). `slug` matches the receipt and
-any decomposition artifact for the same feature.
-
----
-
-## Findings
-
-Discrepancies, ambiguities, or assumptions discovered during analysis.
-Each finding has a short title and explanation.
-
-- **[Finding title]** — [explanation]
-
-> Omit this section entirely if there are no findings.
-
----
-
-## Risk Areas
-
-| Area | Risk Level | Reason |
-|------|-----------|--------|
-| [area name] | High / Medium / Low | [why this area is risky] |
-
----
-
-## Test Cases
-
-### [Group Name]
-
-Group related test cases by feature area, screen, or workflow
-(e.g., Authentication, Cart Checkout, Error Handling).
-
-#### TC-[N]: [Short descriptive title]
-
-| Field | Value |
-|-------|-------|
-| **Priority** | P0 Critical / P1 High / P2 Medium / P3 Low |
-| **Tier** | Smoke / Feature / Regression |
-| **Preconditions** | What must be true before starting |
-| **Steps** | 1. First step  2. Second step  3. Third step |
-| **Expected Result** | Observable outcome that means the test passed |
-| **Source** | Spec §section / Figma frame name / `path/to/file.kt:42` / [inferred from code] |
-
----
-
-## Edge Cases & Negative Scenarios
-
-Same TC format as above. Grouped separately for visibility.
-Includes: boundary values, invalid inputs, error states, permission denials,
-network failures, empty/null data, concurrent operations.
-
----
-
-## Coverage Matrix
-
-| Requirement / Screen / Flow | Test Cases | Risk |
-|-----------------------------|-----------|------|
-| [requirement or screen name] | TC-1, TC-3 | High |
-| [another requirement] | TC-2 | Low |
-
----
-
-## Suggested Automation Candidates
-
-Test cases that are good candidates for automated testing.
-
-| Test Case | Rationale |
-|-----------|-----------|
-| TC-[N] | [why this is a good automation candidate] |
-
-> Omit this section if no test cases are suitable for automation.
-```
-
-### Phase Segmentation
-
-When the feature reaches this skill via `decompose-feature` with phases (e.g. T-1..T-3 in
-Phase 1, T-4..T-6 in Phase 2), the permanent file splits the `## Test Cases` section by
-phase so each phase can ship and be re-verified independently. One permanent document per
-feature remains the rule — phases are sections inside it, not separate files.
-
-Apply segmentation when the decomposition artifact contains two or more phases **and** test
-cases can be grouped by which phase introduces the behavior they cover. Otherwise keep a
-single flat `## Test Cases` section.
-
-Example for a feature with two phases:
-
-```markdown
-## Test Cases
-
-### Phase 1 (T-1..T-3) — Core login flow
-
-#### TC-1: Successful login with valid credentials
-| Field | Value |
-|-------|-------|
-| **Priority** | P0 Critical |
-| **Tier** | Smoke |
-| **Preconditions** | User account exists, email is verified |
-| **Steps** | 1. Open login screen  2. Enter email  3. Enter password  4. Tap Login |
-| **Expected Result** | Home screen is shown, session token stored |
-| **Source** | Spec §2.1 |
-
-#### TC-2: Invalid password shows inline error
-...
-
-#### TC-3: Rate-limit after 5 failed attempts
-...
-
-### Phase 2 (T-4..T-6) — Password reset flow
-
-#### TC-4: Request reset email from login screen
-| Field | Value |
-|-------|-------|
-| **Priority** | P0 Critical |
-| **Tier** | Feature |
-| **Preconditions** | User account exists |
-| **Steps** | 1. Tap "Forgot password?"  2. Enter email  3. Submit |
-| **Expected Result** | Confirmation screen shown, reset email dispatched |
-| **Source** | Spec §3.2 |
-
-#### TC-5: Reset link expires after 15 minutes
-...
-
-#### TC-6: Reset flow rejects reused link
-...
-```
-
-When segmentation is applied, the receipt's `phase_coverage` field lists the phase labels
-present (e.g. `[Phase 1, Phase 2]`), and the TC ranges covered by each phase appear in the
-receipt's Phase Coverage section.
-
-### Lightweight template (non-UI features)
-
-When the non-UI detector triggers (see Input Discovery), use this reduced TC format in place
-of the standard one. The entire behavior of each TC is captured in Given/When/Then — no
-numbered Steps, no separate Expected Result field, since both collapse into the Then clause
-for non-interactive surfaces.
-
-```markdown
-#### TC-[N]: [Short title]
-| **Priority** | P0/P1/P2/P3 |
-| **Tier** | Smoke/Feature/Regression |
-| **Preconditions** | [state] |
-| **Scenario (Given/When/Then)** | Given X, When Y, Then Z |
-| **Source** | [Spec §section / inferred from code] |
-```
-
-Example:
-
-```markdown
-#### TC-3: Token refresh succeeds before expiry
-| **Priority** | P0 Critical |
-| **Tier** | Feature |
-| **Preconditions** | Valid refresh token stored, access token within 60s of expiry |
-| **Scenario (Given/When/Then)** | Given an access token with <60s TTL, When the client calls `refresh()`, Then a new access token is returned with the original refresh-token scope preserved |
-| **Source** | `src/auth/TokenManager.kt:142` |
-```
-
-All other sections of the Test Plan Format (front-matter table, Findings, Risk Areas,
-Coverage Matrix, Suggested Automation Candidates, Phase Segmentation when applicable) are
-used unchanged — only the TC blocks switch to this reduced form.
+See [`references/format-templates.md`](references/format-templates.md) for the full standard and lightweight templates (verbatim
+markdown), the phase-segmentation worked example, and the rules for when each variant applies.
 
 ## Field Definitions
 
