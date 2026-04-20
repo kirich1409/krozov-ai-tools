@@ -1,16 +1,12 @@
 ---
 name: multiexpert-review
 description: >-
-  Review documentation artifacts (plan, spec, test-plan) with a panel of independent expert
-  agents before commit. Use when asked to review a plan, spec, test-plan, or similar
-  documentation artifact. Uses the PoLL (Panel of LLM Evaluators) consensus protocol.
-  Invoke on phrases: "review the plan", "review the spec", "check the plan", "validate the
-  approach", "multi-expert review", "panel review", "план ревью", "проверь план", "оцени план",
-  "check the spec", or after exiting Plan Mode and wanting independent expert evaluation before
-  implementation. Also invoke when the user says "is this plan good?", "what did I miss?",
-  "sanity check this", "review this before I start", "check my approach", or wants multiple
-  viewpoints on an implementation strategy. Do NOT invoke for code review (use code-reviewer
-  agent instead) or PR review.
+  This skill should be used when the user wants a plan, spec, or test-plan reviewed by a
+  panel of independent expert agents (PoLL — Panel of LLM Evaluators — protocol) before
+  committing. Triggers: "review the plan", "review the spec", "review the test-plan",
+  "multi-expert review", "panel review", "проверь план", "оцени план", "проверь спецификацию",
+  "проверь тест-план". Do NOT use for code review (use code-reviewer) or for generating
+  alternative designs (use design-options).
 ---
 
 # Multi-Expert Review

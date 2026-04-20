@@ -1,16 +1,12 @@
 ---
 name: design-options
 description: >
-  Generate 2-3 alternative architectural approaches for a single task before multiexpert-review.
-  Launches architecture-expert agents in parallel, each under a different style constraint
-  (minimal / clean / pragmatic), and presents the options side-by-side so the user can pick
-  one informed choice instead of committing to the first approach that came to mind.
-  Optional stage between write-spec (or decompose-feature for a single-task feature) and
-  multiexpert-review. Trigger when: task is high architectural risk, multiple plausible approaches
-  exist, or user explicitly requests it.
-  Invoke on: "explore design options", "show me alternatives", "предложи варианты архитектуры",
-  "разные подходы", "choose between approaches", or when feature-flow runs this as an
-  opt-in stage for high-arch-risk tasks.
+  This skill should be used when the user wants to compare 2-3 alternative architectural
+  approaches for a single task before locking the plan — typically for high-arch-risk work
+  or when multiple plausible designs exist. Launches architecture-expert agents in parallel
+  under different style constraints (minimal / clean / pragmatic) and presents the options
+  side-by-side for an informed pick. Triggers: "explore design options", "show me alternatives",
+  "choose between approaches", "предложи варианты архитектуры", "разные подходы".
 ---
 
 # Design Options
@@ -198,7 +194,7 @@ Once the user picks an option (or a hybrid is specified):
 - **Out of scope:** writing the implementation plan (that is multiexpert-review's input — we produce the *design*, not the steps); writing code; updating the spec.
 - **Never** pick an option for the user silently. Always present, always wait.
 - **Never** generate just one option — if only one survives scoping, there is nothing to choose; skip this stage entirely.
-- **Never** generate more than 4 options — beyond 4, choice fatigue dominates.
+- **Never** generate more than 3 options — the cap declared in Inputs (`maximum 3`); beyond that, choice fatigue dominates.
 
 ---
 

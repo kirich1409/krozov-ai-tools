@@ -1,17 +1,11 @@
 ---
 name: drive-to-merge
 description: >
-  Autonomous orchestrator that takes an existing PR/MR from its current state to merge. Monitors
-  CI/CD, diagnoses failures, fetches review comments, categorizes them inline, proposes concrete
-  fixes (snippet or delegation), delegates to implement/debug, posts replies, resolves threads,
-  re-requests review (Copilot + humans), polls via ScheduleWakeup, loops until merged. Decision
-  tables rendered in-session — no user-editable manifest. Default mode waits for "approve" per
-  round; `--auto` proceeds without waiting; `--dry-run` stops after the first table. Final merge
-  always requires explicit user confirmation. Triggers: "drive this PR to merge", "get this PR
-  merged", "monitor CI and reviews", "ship this PR", "land this PR", "доведи PR до мержа",
-  "веди PR", "замержь этот PR". Autonomous-mode triggers (equivalent to `--auto`): "действуй
-  автономно", "без подтверждений", "auto mode", "не спрашивай", "run autonomously". Do NOT use
-  for creating new PRs (use create-pr) or code written from scratch (use implement).
+  This skill should be used when the user wants an existing PR/MR driven to merge —
+  monitor CI, triage review comments, fix failures, re-request review, loop until merged.
+  Triggers: "drive this PR to merge", "get this PR merged", "monitor CI and reviews",
+  "ship this PR", "land this PR", "доведи PR до мержа", "веди PR", "замержь этот PR".
+  Do NOT use for creating new PRs (use create-pr) or code written from scratch (use implement).
 ---
 
 # Drive to Merge

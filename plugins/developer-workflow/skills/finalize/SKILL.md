@@ -1,14 +1,12 @@
 ---
 name: finalize
 description: >
-  Code-quality pass over the current branch changes. Multi-round review-and-fix loop:
-  code-reviewer (plan conformance, CLAUDE.md, bugs) → /simplify (reuse/quality/efficiency) →
-  pr-review-toolkit agents (test quality, silent failures, type design) → conditional expert
-  reviews (security, performance, architecture). `/check` between fixes. Exits PASS when no
-  BLOCK-level findings remain, or ESCALATE after 3 rounds. Invoke on: "finalize", "run code
-  quality pass", "clean up the code", "prepare for review", "полируй код", "финализация",
-  "доведи код", "почисти", or when an orchestrator (feature-flow, bugfix-flow) runs this
-  stage between implement and acceptance.
+  This skill should be used when the user wants a code-quality pass over the current branch —
+  multi-round review-and-fix loop that polishes how the code is written, not what it does.
+  Runs code-reviewer, /simplify, pr-review-toolkit, and conditional expert reviews with /check
+  between rounds; exits PASS when no BLOCK findings remain or ESCALATE after max rounds.
+  Triggers: "finalize", "run code quality pass", "clean up the code", "prepare for review",
+  "полируй код", "финализация", "доведи код", "почисти".
 ---
 
 # Finalize
@@ -61,7 +59,7 @@ Round N:
 ### Exit criteria
 
 - **PASS (exit):** no BLOCK severity findings from any phase. WARN and NIT findings listed in the report but do not block.
-- **ESCALATE (stop and report to caller):** after 3 rounds, BLOCK findings still present. Dump unresolved findings, caller decides whether to override or loop back to `implement`.
+- **ESCALATE (stop and report to caller):** after `max_rounds` rounds (default 3, see §Max round budget), BLOCK findings still present. Dump unresolved findings, caller decides whether to override or loop back to `implement`.
 
 ### Max round budget
 
@@ -196,7 +194,7 @@ Save `swarm-report/<slug>-finalize.md` on exit (PASS or ESCALATE):
 ## Unresolved BLOCKs (on ESCALATE only)
 
 Findings that could not be fixed and were NOT downgraded. Populated only when the
-finalize stage exits ESCALATE — lists BLOCKs that remain after 3 rounds, or BLOCKs
+finalize stage exits ESCALATE — lists BLOCKs that remain after `max_rounds` rounds, or BLOCKs
 whose fix broke `/check` and was reverted (per §Mechanical verification). The user
 must decide: loop back to `implement`, accept as risk, or re-scope.
 
