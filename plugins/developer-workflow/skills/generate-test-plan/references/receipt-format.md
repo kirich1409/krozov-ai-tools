@@ -17,10 +17,10 @@ name: test-plan-receipt
 description: Test plan artifact for <slug>
 slug: <slug>
 type: test-plan-receipt
-status: Draft | Ready | Approved | Mounted
+status: Draft
 permanent_path: docs/testplans/<slug>-test-plan.md
 source_spec: <path to spec if any, or "inline spec">
-review_verdict: pending | PASS | WARN | FAIL | skipped
+review_verdict: pending
 review_warnings: []            # populated by multiexpert-review on WARN — list of short strings
 review_blockers: []            # populated by multiexpert-review on FAIL — list of short strings
 phase_coverage: [Phase 1, Phase 2, ...]
