@@ -35,9 +35,25 @@ jobs:
       - run: npm test
       - run: npm run build
 
-      - run: npm publish --access public
+      - name: Publish to npm (idempotent)
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          VERSION="${TAG#v}"
+          PKG=$(node -p "require('./package.json').name")
+          if npm view "${PKG}@${VERSION}" version >/dev/null 2>&1; then
+            echo "Version ${PKG}@${VERSION} already on npm — skipping publish."
+          else
+            npm publish --access public
+          fi
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
+        with:
+          generate_release_notes: true
+          make_latest: true
 
       - name: Publish per-plugin tags for plugin dependency resolution
         working-directory: .
@@ -50,31 +66,32 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           # actions/checkout fetches only the tag that triggered the workflow,
           # so sibling per-plugin tags from previous releases won't be known
-          # locally. Fetch all tags before the idempotency check to avoid a
-          # local "not found" / remote "already exists" mismatch.
-          git fetch --tags --quiet origin
+          # locally. Fetch all tags so the rev-parse existence check below
+          # matches the remote state.
+          echo "Fetching remote tags..."
+          git fetch --tags origin
           # Claude Code resolves plugin dependencies through tags of the form
-          # {plugin-name}--v{version}. Create each missing tag locally, then
-          # push all new tags in a single network round-trip.
-          tags_to_push=()
+          # {plugin-name}--v{version}. Push each tag independently so a failure
+          # on one plugin does not abort the rest, and every outcome is logged.
+          rc=0
           while IFS= read -r plugin; do
             per_plugin_tag="${plugin}--${TAG}"
             if git rev-parse -q --verify "refs/tags/${per_plugin_tag}" >/dev/null; then
-              echo "Tag ${per_plugin_tag} already exists, skipping"
+              echo "Tag ${per_plugin_tag} already exists locally — skipping."
               continue
             fi
-            git tag -a "${per_plugin_tag}" -m "Release ${plugin} ${VERSION} (unified release ${TAG})"
-            tags_to_push+=("${per_plugin_tag}")
+            echo "Creating ${per_plugin_tag}..."
+            if ! git tag -a "${per_plugin_tag}" -m "Release ${plugin} ${VERSION} (unified release ${TAG})"; then
+              echo "::error::Failed to create ${per_plugin_tag}" >&2
+              rc=1
+              continue
+            fi
+            echo "Pushing ${per_plugin_tag}..."
+            if git push origin "${per_plugin_tag}"; then
+              echo "Pushed ${per_plugin_tag}."
+            else
+              echo "::error::Failed to push ${per_plugin_tag}" >&2
+              rc=1
+            fi
           done < <(jq -r '.plugins[].name' .claude-plugin/marketplace.json)
-          if [ ${#tags_to_push[@]} -gt 0 ]; then
-            git push origin "${tags_to_push[@]}"
-            printf 'Pushed %s\n' "${tags_to_push[@]}"
-          else
-            echo "No new per-plugin tags to push"
-          fi
-
-      - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
-        with:
-          generate_release_notes: true
-          make_latest: true
+          exit "$rc"
