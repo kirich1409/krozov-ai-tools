@@ -75,11 +75,11 @@ simultaneously). Each agent works independently — never share one agent's find
 **What:** Analyze existing code, patterns, dependencies, and relevant modules related to the
 research topic.
 
-**How:** Launch an Explore subagent with instructions to use:
-- `ast-index search`, `ast-index class`, `ast-index usages` — find relevant code
-- `ast-index deps`, `ast-index dependents` — module relationships
-- `ast-index api` — public API surface of affected modules
-- `Read`, `Grep` — examine specific files and patterns
+**How:** Launch an Explore subagent with instructions to locate symbols, trace module
+relationships, and map public API surface area. Prefer a structured code-index MCP tool
+(for example `ast-index`) when available — it resolves classes, usages, dependencies, and
+API by symbol rather than text. Fall back to `Grep` + `Read` when no index is available;
+the skill must still produce a complete report in that mode.
 
 **Prompt template:**
 ```
@@ -92,7 +92,9 @@ Find and report:
 4. Module boundaries and layers that would be affected
 5. Any existing TODO/FIXME comments related to this topic
 
-Use ast-index for all symbol searches. Use Grep only for string literals and comments.
+Use a code-index tool (e.g. `ast-index search`/`class`/`usages`/`deps`/`dependents`/`api`)
+for symbol resolution when available. If no index is available, use `Grep` for text search
+and `Read` for targeted file inspection — report with the same structure either way.
 Be thorough — check build files, configuration, and test code too.
 
 Respond in the same language as the research topic description. Structure: overview, then findings grouped by category.
