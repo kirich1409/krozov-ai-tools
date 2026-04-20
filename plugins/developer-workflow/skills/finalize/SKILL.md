@@ -3,8 +3,8 @@ name: finalize
 description: >
   This skill should be used when the user wants a code-quality pass over the current branch —
   multi-round review-and-fix loop that polishes how the code is written, not what it does.
-  Runs code-reviewer, /simplify, pr-review-toolkit, and conditional expert reviews with /check
-  between rounds; exits PASS when no BLOCK findings remain or ESCALATE after max rounds.
+  Runs code-reviewer, /simplify, optional pr-review-toolkit trio, and conditional expert reviews
+  with /check between rounds; exits PASS when no BLOCK findings remain or ESCALATE after max rounds.
   Triggers: "finalize", "run code quality pass", "clean up the code", "prepare for review",
   "полируй код", "финализация", "доведи код", "почисти".
 ---
@@ -49,7 +49,7 @@ Each round runs four phases A → B → C → D sequentially. Between phases and
 Round N:
   Phase A  → code-reviewer          → fix BLOCK → /check → continue
   Phase B  → /simplify (auto-fixes) → /check               → continue
-  Phase C  → pr-review-toolkit trio (parallel) → fix BLOCK → /check → continue
+  Phase C  → pr-review-toolkit trio (parallel, if installed) → fix BLOCK → /check → continue
   Phase D  → expert reviews (conditional, parallel) → fix BLOCK → /check → continue
   Round end: did any BLOCK remain unfixed?
     yes → go to round N+1 (up to max_rounds total — default 3, see §Max round budget)
@@ -113,9 +113,15 @@ Revert the simplify commits (or the last commit if unambiguously from `/simplify
 
 ---
 
-## Phase C — PR review toolkit (parallel)
+## Phase C — PR review toolkit (parallel, optional)
 
-Invoke three agents from the `pr-review-toolkit` plugin in **parallel**:
+Phase C is a **soft-reference** to the `pr-review-toolkit` plugin (marketplace: `claude-plugins-official`). It is **not** declared as a hard dependency in `plugin.json` because that marketplace publishes its plugin entries without `version` fields, which makes semver resolution impossible for Claude Code.
+
+### Detect-and-use
+
+Before invoking Phase C, check whether the three agents are available (for example via the Task tool's agent registry). If any of the three is missing, **skip Phase C** for this round — log `phase: C, status: skipped, reason: pr-review-toolkit not installed` and continue to Phase D. Do not fail the round.
+
+If all three are available, invoke them in **parallel**:
 
 | Agent | Focus |
 |---|---|
@@ -123,7 +129,7 @@ Invoke three agents from the `pr-review-toolkit` plugin in **parallel**:
 | `pr-review-toolkit:silent-failure-hunter` | Empty catch blocks, swallowed errors, catches too broad, errors logged but not surfaced |
 | `pr-review-toolkit:type-design-analyzer` | Can invalid states be represented? Are invariants encoded in types? Missing nullability markers, unsafe unions |
 
-Each agent returns findings graded by the same 0–100 confidence rubric used by our `code-reviewer` (the plugin is hard-dep'd via `plugin.json`; agents inherit the convention through prompt sharing).
+Each agent returns findings graded by the same 0–100 confidence rubric used by our `code-reviewer`; agents inherit the convention through prompt sharing.
 
 ### Handling Phase C findings
 
@@ -184,7 +190,7 @@ Save `swarm-report/<slug>-finalize.md` on exit (PASS or ESCALATE):
 ### Round 1
 - Phase A (code-reviewer): verdict, N findings (K BLOCK, M WARN, L NIT). Fixes applied: X.
 - Phase B (/simplify): Y files changed, auto-fixed.
-- Phase C (pr-review-toolkit): breakdown per agent.
+- Phase C (pr-review-toolkit): breakdown per agent, or `skipped` if plugin not installed.
 - Phase D (experts): triggered: [security-expert, ...]; findings, fixes.
 - `/check` after round: PASS | FAIL (reason)
 
@@ -251,7 +257,7 @@ When escalating: state which phase escalated, what the unresolved findings are, 
 
 - **`feature-flow`** and **`bugfix-flow`** invoke this skill between `implement` and `acceptance`.
 - **Manual invocation** is useful for: pre-PR cleanup on a branch that didn't come through an orchestrator, periodic quality audit on an old branch that wasn't finalized, review of a branch before marking draft PR ready (even though orchestrators already do this automatically).
-- The skill assumes `code-reviewer` and `pr-review-toolkit` agents are installed. `code-reviewer` comes from `developer-workflow-experts` (sibling dependency). `pr-review-toolkit` comes from `claude-plugins-official` (hard dep in `plugin.json`).
+- The skill requires `code-reviewer` from `developer-workflow-experts` (sibling hard dependency). The `pr-review-toolkit` trio is optional: if the plugin is installed (from `claude-plugins-official`), Phase C runs; otherwise Phase C is skipped with a log entry and the round continues through Phases D and beyond.
 
 ---
 
@@ -259,6 +265,7 @@ When escalating: state which phase escalated, what the unresolved findings are, 
 
 - Hard deps (declared in `plugins/developer-workflow/.claude-plugin/plugin.json`):
   - `developer-workflow-experts` — for `code-reviewer`, `security-expert`, `performance-expert`, `architecture-expert`
+- Optional soft-ref (install separately, Phase C auto-skips when absent):
   - `pr-review-toolkit` (marketplace: `claude-plugins-official`) — for `pr-test-analyzer`, `silent-failure-hunter`, `type-design-analyzer`
 - Built-in skills:
   - `/simplify` — Claude Code's built-in reuse/quality/efficiency pass

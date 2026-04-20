@@ -19,7 +19,7 @@ Quality is split into three stages, each answering a different question:
 well?) → **acceptance** (does the feature solve the user's problem?). `implement` runs a
 2-gate Quality Loop: mechanical checks via `/check` (build/lint/typecheck/tests) and intent
 check. `finalize` runs a multi-round review-and-fix loop (code-reviewer → /simplify →
-pr-review-toolkit trio → conditional expert reviews) with `/check` between each fix. Key
+optional pr-review-toolkit trio → conditional expert reviews) with `/check` between each fix. Key
 principle: the author of the code never reviews their own code — `finalize` Phase A
 launches a separate `code-reviewer` agent that receives only the task description, plan,
 and git diff, without any implementation context. Receipt-based gating ensures no stage
@@ -64,7 +64,7 @@ IDEA / FEATURE REQUEST
   | [finalize] ---- Code-quality pass (3-round loop)│
   |   |  |-- Phase A: code-reviewer               │
   |   |  |-- Phase B: /simplify                    │
-  |   |  |-- Phase C: pr-review-toolkit trio       │
+  |   |  |-- Phase C: pr-review-toolkit trio (opt) │
   |   |  '-- Phase D: experts (conditional)        │
   |   |        Artifact: <slug>-finalize.md        │
   |   v                                            │
@@ -164,7 +164,7 @@ After implement PASSes both gates, orchestrator invokes `/finalize`:
 Round N  (max 3 rounds):
   Phase A  code-reviewer       -> fix BLOCK -> /check
   Phase B  /simplify (auto-fix)                -> /check
-  Phase C  pr-review-toolkit trio (parallel)  -> fix BLOCK -> /check
+  Phase C  pr-review-toolkit trio (parallel, optional) -> fix BLOCK -> /check
   Phase D  experts (conditional, parallel)    -> fix BLOCK -> /check
   end round: any BLOCK? yes -> next round. no -> PASS, exit.
 ```
@@ -173,7 +173,7 @@ Round N  (max 3 rounds):
 |---|---|---|
 | A | `code-reviewer` (from `developer-workflow-experts`) | Plan conformance, CLAUDE.md, bugs — confidence 0/25/50/75/100 rubric |
 | B | `/simplify` (built-in) | Reuse / quality / efficiency with auto-fix |
-| C | `pr-review-toolkit:pr-test-analyzer`, `silent-failure-hunter`, `type-design-analyzer` (parallel) | Test quality, silent failures, type design invariants |
+| C | `pr-review-toolkit:pr-test-analyzer`, `silent-failure-hunter`, `type-design-analyzer` (parallel, optional soft-ref — skipped if plugin not installed) | Test quality, silent failures, type design invariants |
 | D | `security-expert`, `performance-expert`, `architecture-expert` (conditional, parallel) | Domain-specific deep review |
 
 ### Phase D trigger table
@@ -410,7 +410,7 @@ research/debug ──→ implement ──→ acceptance ──→ create-pr ─�
 
 **Finalize loop:**
 - Runs after `implement` passes both gates, before `acceptance`
-- Four phases per round: code-reviewer → /simplify → pr-review-toolkit trio → conditional expert reviews
+- Four phases per round: code-reviewer → /simplify → optional pr-review-toolkit trio → conditional expert reviews
 - `/check` invoked between fixes
 - Max 3 rounds; PASS when no BLOCK remains; ESCALATE otherwise
 

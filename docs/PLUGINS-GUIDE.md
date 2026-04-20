@@ -344,7 +344,7 @@ flowchart LR
 | Skill | Команда | Назначение |
 |-------|---------|------------|
 | check | `/check` | Mechanical-check runner (build + lint + typecheck + tests, fail-fast) с автодетектом стека. Используется `implement`, `finalize` и любым code-modifying скиллом |
-| finalize | `/finalize` | Multi-phase review-and-fix loop между `implement` и `acceptance`: code-reviewer → `/simplify` → pr-review-toolkit trio → условные expert reviews, `/check` между фиксами |
+| finalize | `/finalize` | Multi-phase review-and-fix loop между `implement` и `acceptance`: code-reviewer → `/simplify` → опциональная pr-review-toolkit trio (skip, если плагин не установлен) → условные expert reviews, `/check` между фиксами |
 
 #### Skills: Testing / QA
 
@@ -537,7 +537,7 @@ flowchart LR
 |-------|------------|
 | A | `code-reviewer` — независимое ревью diff, фикс BLOCK-findings |
 | B | `/simplify` — авто-рефакторинг на упрощение |
-| C | pr-review-toolkit trio (параллельно) — фикс BLOCK |
+| C | pr-review-toolkit trio (параллельно, опционально — skip, если плагин не установлен) — фикс BLOCK |
 | D | Experts (условно, параллельно) — architecture / security / performance / ux; фикс BLOCK |
 
 Лимит: 3 раунда; после 3 — escalate to user (`ESCALATE (3 rounds)` в оркестраторе).
