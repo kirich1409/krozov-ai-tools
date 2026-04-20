@@ -76,10 +76,10 @@ simultaneously). Each agent works independently — never share one agent's find
 research topic.
 
 **How:** Launch an Explore subagent with instructions to locate symbols, trace module
-relationships, and map public API surface area. Prefer a structured code-index MCP tool
-(for example `ast-index`) when available — it resolves classes, usages, dependencies, and
-API by symbol rather than text. Fall back to `Grep` + `Read` when no index is available;
-the skill must still produce a complete report in that mode.
+relationships, and map public API surface area. Prefer a structured code-index tool when
+available — one that resolves classes, usages, dependencies, and API by symbol rather than
+text. Fall back to `Grep` + `Read` when no index is available; the skill must still produce
+a complete report in that mode. See the project README for any recommended index tooling.
 
 **Prompt template:**
 ```
@@ -92,9 +92,10 @@ Find and report:
 4. Module boundaries and layers that would be affected
 5. Any existing TODO/FIXME comments related to this topic
 
-Use a code-index tool (e.g. `ast-index search`/`class`/`usages`/`deps`/`dependents`/`api`)
-for symbol resolution when available. If no index is available, use `Grep` for text search
-and `Read` for targeted file inspection — report with the same structure either way.
+Use a code-index tool for symbol resolution when one is available in the environment —
+look up classes, usages, dependencies, dependents, and public API surface by symbol rather
+than by text. If no index is available, use `Grep` for text search and `Read` for targeted
+file inspection; produce the same report structure either way.
 Be thorough — check build files, configuration, and test code too.
 
 Respond in the same language as the research topic description. Structure: overview, then findings grouped by category.
