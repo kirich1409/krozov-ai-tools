@@ -44,8 +44,10 @@ jobs:
             echo "maven_mcp=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          # Pull request: diff PR base vs PR head.
-          CHANGED=$(git diff --name-only "$BASE_SHA" "$HEAD_SHA" -- \
+          # Pull request: three-dot diff (merge-base..head) so we see only
+          # commits introduced by the PR, not unrelated changes that landed
+          # on main between fork-point and head.
+          CHANGED=$(git diff --name-only "$BASE_SHA...$HEAD_SHA" -- \
             'plugins/maven-mcp/**' '.github/workflows/ci.yml')
           if [ -n "$CHANGED" ]; then
             echo "maven-mcp changed:"
