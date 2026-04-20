@@ -66,7 +66,7 @@ Four plugins that split the dev-workflow pipeline along coherent lines. `develop
 
 Lifecycle pipeline — research, decomposition, spec, multiexpert review, implementation, debugging, QA, PR workflow.
 
-**Skills (14):** `/research`, `/decompose-feature`, `/write-spec`, `/multiexpert-review`, `/implement`, `/debug`, `/write-tests`, `/generate-test-plan`, `/acceptance`, `/bug-hunt`, `/create-pr`, `/drive-to-merge`, `/feature-flow`, `/bugfix-flow`
+**Skills (17):** `/research`, `/decompose-feature`, `/write-spec`, `/design-options`, `/multiexpert-review`, `/generate-test-plan`, `/implement`, `/check`, `/write-tests`, `/debug`, `/finalize`, `/acceptance`, `/bug-hunt`, `/create-pr`, `/drive-to-merge`, `/feature-flow`, `/bugfix-flow`
 
 **Agent:** `manual-tester`
 
