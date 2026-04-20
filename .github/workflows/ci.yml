@@ -15,11 +15,12 @@ jobs:
       - name: Validate marketplace and plugin configs
         run: bash scripts/validate.sh
 
+  # The build job is registered as a required status check (build (20),
+  # build (22)) by the repo ruleset. It must therefore always run and report
+  # success - but heavy work (npm ci, lint, test, build) is gated by a
+  # paths filter so PRs that don't touch maven-mcp finish in seconds.
   build:
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: plugins/maven-mcp
     strategy:
       matrix:
         node-version: [20, 22]
@@ -27,7 +28,21 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Detect maven-mcp changes
+        id: changes
+        uses: dorny/paths-filter@v3
+        with:
+          filters: |
+            maven_mcp:
+              - 'plugins/maven-mcp/**'
+              - '.github/workflows/ci.yml'
+
+      - name: Skip - no maven-mcp changes
+        if: github.event_name == 'pull_request' && steps.changes.outputs.maven_mcp != 'true'
+        run: echo "No changes under plugins/maven-mcp/ - skipping build."
+
       - name: Setup Node.js ${{ matrix.node-version }}
+        if: github.event_name != 'pull_request' || steps.changes.outputs.maven_mcp == 'true'
         uses: actions/setup-node@v4
         with:
           node-version: ${{ matrix.node-version }}
@@ -35,6 +50,8 @@ jobs:
           cache-dependency-path: plugins/maven-mcp/package-lock.json
 
       - name: Verify package.json version matches plugin.json version
+        if: github.event_name != 'pull_request' || steps.changes.outputs.maven_mcp == 'true'
+        working-directory: plugins/maven-mcp
         run: |
           set -euo pipefail
           PKG_VERSION=$(node -p 'require("./package.json").version')
@@ -45,7 +62,15 @@ jobs:
           fi
           echo "OK: version $PKG_VERSION"
 
-      - run: npm ci
-      - run: npm run lint
-      - run: npm test
-      - run: npm run build
+      - if: github.event_name != 'pull_request' || steps.changes.outputs.maven_mcp == 'true'
+        working-directory: plugins/maven-mcp
+        run: npm ci
+      - if: github.event_name != 'pull_request' || steps.changes.outputs.maven_mcp == 'true'
+        working-directory: plugins/maven-mcp
+        run: npm run lint
+      - if: github.event_name != 'pull_request' || steps.changes.outputs.maven_mcp == 'true'
+        working-directory: plugins/maven-mcp
+        run: npm test
+      - if: github.event_name != 'pull_request' || steps.changes.outputs.maven_mcp == 'true'
+        working-directory: plugins/maven-mcp
+        run: npm run build
