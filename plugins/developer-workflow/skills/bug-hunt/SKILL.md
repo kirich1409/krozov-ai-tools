@@ -38,8 +38,27 @@ Ask or infer from context:
 - **Web app** — need a URL
 
 If the user says "the app is already running" or provides a device/URL, use it directly.
-Otherwise, follow the same launch logic as `acceptance` Step 2 (build, install, start
-dev server, etc.).
+Otherwise, follow the standard app-launch sequence:
+
+1. Build the app with the project's default tooling (Gradle, Xcode, `npm run dev`, etc.)
+2. Install on the target device / simulator, or start the dev server for web
+3. Verify the process is reachable (device is visible to the automation MCP, URL responds)
+4. If any step fails, surface the error to the user and stop — do not explore a half-launched app
+
+This mirrors `acceptance`'s launch logic so the two skills behave identically; kept inline
+to avoid silent coupling to that skill's step numbering.
+
+### 1.1.1 Session identifier
+
+Generate a short session ID used for `BUG-[SESSION_ID]-[n]` / `OBSERVATION-[SESSION_ID]-[n]`
+and for the persistent artifact path:
+
+```
+<SESSION_ID> = <YYYY-MM-DD>-<short-target-slug>
+```
+
+Example: `2026-04-20-payments-flow`, `2026-04-20-full-app`. The artifact path (see Step 3) is
+`./swarm-report/bug-hunt-<SESSION_ID>.md`.
 
 ### 1.2 Focus area (optional)
 
@@ -70,6 +89,12 @@ If they say "quick check" or "just the settings screen", use Quick. If they say 
 
 Spawn the `manual-tester` agent with an exploratory prompt. The prompt structure differs from
 `acceptance` — instead of a spec and test plan, it provides heuristics and exploration rules.
+
+**MCP prerequisite (QA-execution exception, see `developer-workflow/CLAUDE.md`):** bug-hunt
+requires real device/browser automation via the `mobile` MCP (mobile targets) or `playwright`
+MCP (web targets). If the required MCP server is not installed or enabled, **stop with a
+clear install/enable message** — do not attempt to continue without automation. Graceful
+degradation is impossible when real interaction is required.
 
 ```
 You are performing exploratory testing — there is no specification to verify against.
@@ -152,13 +177,17 @@ even in exploratory mode).
 
 ## Step 3: Collect and Present Exploration Report
 
-When the manual-tester agent completes, process its output into a structured report.
+When the manual-tester agent completes, process its output into a structured report and
+persist it to `./swarm-report/bug-hunt-<SESSION_ID>.md` (the path registered in Step 1.1.1).
+This file is what `Re-exploration After Fixes` re-reads to verify previously reported bugs
+— the report is not scroll-ephemeral.
 
 ### Report Format
 
 ```
 ## Bug Hunting Report
 
+**Session ID:** [SESSION_ID from Step 1.1.1]
 **Date:** [date]
 **App:** [name, version, or URL]
 **Device / Browser:** [device name + OS version, or browser + viewport]
@@ -222,7 +251,11 @@ on a specific area the team is concerned about, or moving on to spec-based verif
 
 When the user fixes reported bugs and wants to check again:
 
-1. Re-launch with the same focus area (or the area where bugs were found)
-2. The agent verifies previously reported bugs are fixed
-3. The agent continues exploring adjacent areas for regressions
-4. Updated report replaces or appends to the previous one
+1. Load the prior report from `./swarm-report/bug-hunt-<SESSION_ID>.md` and extract the list
+   of previously reported bugs (by BUG-ID)
+2. Re-launch with the same focus area (or the area where bugs were found)
+3. The agent re-verifies each previously reported bug and marks it `Fixed` / `Still present` /
+   `Cannot reproduce` in the new report
+4. The agent continues exploring adjacent areas for regressions
+5. Write the updated report to a new `bug-hunt-<SESSION_ID>-run<N>.md` alongside the original
+   so both are preserved for audit
