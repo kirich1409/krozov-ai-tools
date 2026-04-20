@@ -46,7 +46,7 @@ Finalize   -> escalate         (ESCALATE after 3 rounds; user picks non-implemen
 Acceptance -> PR               (VERIFIED — bug gone)
 Acceptance -> Implement        (FAILED — bug still reproduces or new bugs)
 Acceptance -> Debug            (FAILED — fix didn't address root cause)
-PR         -> Merge            (TERMINAL — no further transitions)
+PR         -> Merged           (TERMINAL — no further transitions)
 PR         -> Implement        (review feedback requires code changes)
 PR         -> escalate         (drive-to-merge blocker — DISCUSSION on P0/P1,
                                 unresolvable rebase, repeated same-signature CI failure)
@@ -240,7 +240,7 @@ gate always requires explicit confirmation.
 | Plan | Debug | Plan-review FAIL — plan needs more diagnostic context | 1 |
 | Finalize | Implement | ESCALATE — user routes back to fix root issues | 1 |
 | Acceptance | Implement | Bug still reproduces or new bugs | 2 |
-| Acceptance | Debug | Fix didn't address root cause (after 2 failed implementations) | 1 |
+| Acceptance | Debug | Fix didn't address root cause (after 2 failed implementations), or acceptance finds a complex new bug that needs renewed diagnosis | 1 |
 | PR | Implement | Review feedback requires code changes | 2 |
 
 Each backward transition:

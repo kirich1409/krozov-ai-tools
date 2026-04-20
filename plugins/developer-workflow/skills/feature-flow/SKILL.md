@@ -62,7 +62,7 @@ Acceptance     -> TestPlan         (FAILED — add Regression TC for new bugs)
 Acceptance     -> Debug            (FAILED — unclear root cause)
 Debug          -> Implement        (root cause diagnosed — fix follows; forward recovery
                                      edge, not counted against any backward cap)
-PR             -> Merge            (TERMINAL — no further transitions)
+PR             -> Merged           (TERMINAL — no further transitions)
 PR             -> Implement        (review feedback requires code changes)
 PR             -> escalate         (drive-to-merge blocker — DISCUSSION on P0/P1,
                                      unresolvable rebase, repeated same-signature CI failure)
@@ -376,6 +376,38 @@ Wait for `swarm-report/<slug>-acceptance.md`.
   [Test Plan Regeneration](#test-plan-regeneration)), then continue with Implement.
 - PARTIAL (P2/P3) → ask user: fix now or ship as-is
 - Out-of-scope bugs → create issues, don't block
+
+---
+
+### 2.4 Debug (recovery stage)
+
+Entered only as a recovery edge from Acceptance when the failure cause is unclear (see
+the route-by-result list above — "FAILED (P0/P1, unclear cause) → Stage: Acceptance → Debug").
+This stage mirrors `bugfix-flow` Phase 1 but is scoped to diagnosing the acceptance
+regression, not the original feature work.
+
+**Context passing (MANDATORY):** pass the failing acceptance report
+(`swarm-report/<slug>-acceptance.md`), the original plan
+(`swarm-report/<slug>-plan.md` if PlanReview ran), and any reproduction steps
+`manual-tester` recorded.
+
+Invoke `developer-workflow:debug` with the collected context.
+
+Wait for `swarm-report/<slug>-debug.md`. Same convention as bugfix-flow —
+the file includes a **Reproduction Steps** section, is persistent state, and
+survives context compaction. Re-read it before any downstream action.
+
+**Route by status:**
+- **Diagnosed, simple fix** → **Stage: Debug → Implement.** Pass `<slug>-debug.md` as
+  the anchor so the next Implement retry acts on the root cause, not the symptom.
+- **Diagnosed, complex fix** (multiple files, architectural impact) → surface to the
+  user; feature-flow does not have a mid-pipeline Plan stage, so a complex acceptance
+  regression is escalated rather than looped through Plan.
+- **Not Reproducible** → report to user, ask for more info. Stop.
+- **Escalated** → report findings, stop.
+
+The `Acceptance → Debug` backward cap is 1 (see
+[Backward Transitions](#backward-transitions-strict-limits)); if exhausted, escalate.
 
 ---
 
