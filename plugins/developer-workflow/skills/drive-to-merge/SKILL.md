@@ -282,36 +282,69 @@ Never output only a category without a proposal. The value of this skill is the 
 
 ### 2.4 Decision table (the gate)
 
-Render in session:
+Render in session as a **prioritized list**, not a table. One section per priority bucket present in the round, ordered most critical first. Each item is one short paragraph: bold headline = the gist; then prose with author, location, brief context, and the action — no bullet labels, no `→` arrows, no `Reviewer:` / `Action:` / `Verdict:` fields. Reads like a human issue note, not a form.
 
 ```
-Round N — review decision table
+Round N — review proposals
 
-| # | Pri | Cat     | Act      | Author | Location          | Proposal (concrete)                                         | Delegate    |
-|---|-----|---------|----------|--------|-------------------|--------------------------------------------------------------|-------------|
-| 1 | P0  | BLOCK   | FIX      | @alice | api/User.kt:42    | edit: guard `userId` null, see snippet below                 | implement   |
-| 2 | P1  | IMPORT  | FIX      | @bob   | api/Repo.kt:88    | delegate: refactor Flow cancellation, see instruction below  | implement   |
-| 3 | P2  | IMPORT  | NEEDS_CL | @bob   | api/Repo.kt:91    | ask thread: "Is this required for initial release, or v2?"   | —           |
-| 4 | P3  | NIT     | FIX      | @alice | ui/Screen.kt:12   | edit: rename `tmp` → `pendingUser`                           | implement   |
-| 5 | P4  | PRAISE  | NO_ACT   | @alice | —                 | dismiss: "Thanks — appreciated."                             | —           |
-| 6 | P4  | OUT_SC  | NO_ACT   | @carol | —                 | dismiss: "Valid concern, out of scope for this PR." + issue? | —           |
+## P0 — Blocking
 
-Concrete snippets / instructions are listed under the table with their row number.
+1. **Crash: userId is nullable, used as non-null on .length.** @alice, api/User.kt:42.
+   Reproducible from the diff. Guard with a safe call:
+
+       - val length = userId.length
+       + val length = userId?.length ?: 0
+
+## P1 — Important
+
+2. **Flow.collect leaks without a cancellation guard on rotate.** @bob,
+   api/Repo.kt:88 (same pattern at :120). Delegate to `implement`: переписать
+   оба места на `repeatOnLifecycle(STARTED)`, ничего больше не трогать.
+
+## P2 — Suggestion
+
+3. **Уточнить scope для v1 vs v2.** @bob, api/Repo.kt:91. Ревьюер спросил, нужно
+   ли это для initial release. Ответить в треде: "Targeting v2 — opening a
+   follow-up issue. Does that work?"
+
+## P3 — Nit
+
+4. **Локальная переменная `tmp` непонятна.** @alice, ui/Screen.kt:12.
+   Переименовать `tmp` → `pendingUser`.
+
+## P4 — Praise / Out-of-scope / NoAction
+
+5. **PRAISE.** @alice. Reply: "Thanks — appreciated." Резолв.
+
+6. **OUT_OF_SCOPE.** @carol, api/Repo.kt:200. Reply: "Valid concern, out of scope
+   for this PR. Follow-up issue если скажешь." Резолв.
+
+## Blockers
+
+нет.
+
+## Summary
+
+6 пунктов: 3 правки, 1 делегирование, 2 dismiss, 1 уточнение.
 ```
 
-Follow the table with:
+**Format rules:**
 
-1. Inline snippets (for edit rows) and full instructions (for delegate rows).
-2. Explicit blockers — DISCUSSION items that need the user to decide.
-3. A **summary line:** `Proposing N actions: K edits, L delegates, M dismisses, P clarifications. Q items need your decision (see blockers).`
+- Sections in order P0 → P1 → P2 → P3 → P4. Skip empty buckets.
+- Numbering is **continuous** across sections (1, 2, 3 …) — gate-команды (`approve`, `skip 1,4`, `stop`) ссылаются на эти номера.
+- Each item: `**Bold headline.**` (one sentence про суть) + `@author, file:line.` + 1–2 sentences context and action. Snippet inline indented when relevant (≤15 lines).
+- Quote the reviewer verbatim only when paraphrase loses meaning. Иначе перевести в суть и пропустить кавычки.
+- No labels, no `→`, no category/actionability/delegate columns — приоритет уже сказан секцией; что делать — последним предложением.
+- `## Blockers` section всегда выводится последней (одно слово «нет.» если пусто) — это то, что останавливает раунд для пользователя.
+- `## Summary` — одна строка с разбивкой по типам действий.
 
 **Gate behaviour:**
 
-- Default mode: stop here. Tell the user: `reply "approve" to execute all rows, "skip 1,4" to drop rows, or "stop" to end the round without acting.` Wait for input.
+- Default mode: stop here. Tell the user: `reply "approve" to execute all items, "skip 1,4" to drop items by number, or "stop" to end the round without acting.` Wait for input. Numbering is global and continuous across sections — no letters, no per-section restart.
 - `--auto`: skip waiting; proceed to Phase 3.
-- `--dry-run`: print the table and stop for good.
+- `--dry-run`: print the list and stop for good.
 
-Blockers (DISCUSSION) are always surfaced — `--auto` does not swallow them. If any P0 item is DISCUSSION, stop and ask regardless of mode.
+Blockers are always surfaced — `--auto` does not swallow them. If any P0 item is DISCUSSION, stop and ask regardless of mode.
 
 ### 2.5 Round outcome
 
