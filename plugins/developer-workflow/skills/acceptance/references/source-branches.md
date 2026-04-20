@@ -15,10 +15,10 @@ description, GitHub/Linear issue. Read all provided sources.
 `non_functional`, `acceptance_criteria_ids`, `design.figma`. These drive the conditional
 triggers in Step 3 plus two invariant guards on the base plan:
 
-- `ui ∈ surfaces` forces `manual-tester` into the fan-out when a scenario source exists,
-  even if Step 0 detected a non-UI project (hybrid products with both UI and non-UI
-  surfaces).
-- `surfaces` set and does not contain `ui` on a UI-detected project means the spec
+- `surfaces` contains `ui` forces `manual-tester` into the fan-out when a scenario source
+  exists, even if Step 0 detected a non-UI project (hybrid products with both UI and
+  non-UI surfaces).
+- `surfaces` is set but does not contain `ui` on a UI-detected project means the spec
   explicitly excludes UI — skip `manual-tester` even if `has_ui_surface` is true, and note
   this in the Check Plan section of the receipt.
 
@@ -64,23 +64,30 @@ mount-receipt at `swarm-report/<slug>-test-plan.md` following the canonical form
 `phase_coverage` from the permanent file's phase headings; omit the field if coverage
 cannot be determined reliably. Pass the permanent file to `manual-tester`.
 
-### Branch 3 — Inline test plan or spec available (`test_plan_source: on-the-fly`)
+### Branch 3 — Inline test plan, spec, or `debug.md` available (`test_plan_source: on-the-fly`)
 
 **Condition:** Branches 1 and 2 did not fire **and** the invocation provides a test plan
-inline, a spec source, or both.
+inline, a spec source, `swarm-report/<slug>-debug.md`, or any combination of these.
+`debug.md` is treated as a spec-like source for bug-fix verification when no receipt or
+permanent test plan exists, so this branch also covers the standalone "debug-only" case.
 
-Three modes:
+Four modes:
 
-- **Test plan only (no spec)** — execute as-is; verdict depends on TC pass/fail.
-- **Test plan + spec** — execute the plan, cross-reference against the spec, flag obvious
-  gaps to the user ("spec mentions X but the test plan doesn't cover it — add a TC?").
+- **Test plan only (no spec / no debug.md)** — execute as-is; verdict depends on TC
+  pass/fail.
+- **Test plan + spec and/or debug.md** — execute the plan, cross-reference against the
+  spec or reproduction steps, flag obvious gaps to the user ("spec/debug mentions X but
+  the test plan doesn't cover it — add a TC?").
 - **Spec only (no test plan)** — generate a test plan from the spec: identify testable
   flows, write TC-prefixed cases with tiers/steps/expected results, present for approval,
   adjust per feedback.
+- **`debug.md` only (no test plan, no spec)** — derive E2E from the inverted reproduction
+  steps (Step 2 owns the inversion); record `test_plan_source: on-the-fly`. No on-the-fly
+  TC generation beyond what Step 2 already produces.
 
 ### Branch 4 — Nothing available (`test_plan_source: absent`)
 
-**Condition:** no receipt, no permanent file, no inline test plan, no spec source, no
+**Condition:** no receipt, no permanent file, no inline test plan, no spec source, and no
 `swarm-report/<slug>-debug.md` (bug-fix path).
 
 Proceed to SKILL.md §Step 1.5 Source-Missing Gate. Do not run any checks.

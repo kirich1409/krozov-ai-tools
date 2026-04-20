@@ -83,7 +83,9 @@ Probe artifacts in a single batched Read call set:
 - `swarm-report/<slug>-debug.md` (bug-fix reproduction)
 
 The selected source fires one of four branches — `test_plan_source: receipt | mounted |
-on-the-fly | absent`. Full branch semantics, mount-receipt overrides, and spec frontmatter
+on-the-fly | absent`. If `swarm-report/<slug>-debug.md` is the only available verification
+source, it qualifies Branch 3 (`on-the-fly`) — bug-fix verification treats `debug.md` as a
+spec-like input. Full branch semantics, mount-receipt overrides, and spec frontmatter
 consumers (including the `surfaces` invariant guards) live in
 [`references/source-branches.md`](references/source-branches.md). Record the selected
 branch as `test_plan_source` in the receipt.
