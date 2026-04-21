@@ -43,7 +43,14 @@ function parseGitHubUrl(url: string): GitHubRepo | null {
 export function extractGitHubRepo(pomXml: string): GitHubRepo | null {
   // Strip XML comments first so a commented-out <scm>/<url> cannot poison
   // the match (e.g. `<!-- <url>https://github.com/wrong/repo</url> -->`).
-  const xml = pomXml.replace(/<!--[\s\S]*?-->/g, "");
+  // Loop to handle smuggled forms like `<!<!----->-- evil -->` where a fresh
+  // `<!--` only surfaces after the inner comment is stripped.
+  let xml = pomXml;
+  let prev: string;
+  do {
+    prev = xml;
+    xml = xml.replace(/<!--[\s\S]*?-->/g, "");
+  } while (xml !== prev);
 
   // Extract <scm> block
   const scmMatch = xml.match(/<scm>([\s\S]*?)<\/scm>/);

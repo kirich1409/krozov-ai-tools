@@ -164,4 +164,17 @@ describe("extractGitHubRepo", () => {
       </project>`;
     expect(extractGitHubRepo(pom)).toBeNull();
   });
+
+  it("strips smuggled nested comments (looped sanitization)", () => {
+    // After the outer <!-- … --> is removed in pass 1, a fresh <!-- --> appears
+    // that also has to be stripped before any <scm> probe can be fooled.
+    const pom = `
+      <project>
+        <!<!----->-- <scm><url>https://github.com/evil/repo</url></scm> -->
+        <scm>
+          <url>https://github.com/correct/repo</url>
+        </scm>
+      </project>`;
+    expect(extractGitHubRepo(pom)).toEqual({ owner: "correct", repo: "repo" });
+  });
 });

@@ -102,4 +102,17 @@ describe("fetchWithRetry", () => {
     expect(res.status).toBe(503);
     expect(fetchMock).toHaveBeenCalledTimes(3);
   });
+
+  it("rejects non-http(s) URLs without issuing a network request", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(fetchWithRetry("file:///etc/passwd")).rejects.toThrow(
+      /unsupported URL protocol "file:"/,
+    );
+    await expect(fetchWithRetry("data:text/plain,hi")).rejects.toThrow(
+      /unsupported URL protocol "data:"/,
+    );
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
 });

@@ -34,6 +34,17 @@ export async function fetchWithRetry(
   url: string,
   options: FetchOptions = {},
 ): Promise<Response> {
+  // Validate the URL at the entry point. Many callers pass a URL that was
+  // ultimately derived from file content (e.g. <scm><url> in a pom.xml);
+  // restrict to http(s) so a malicious POM cannot point us at `file:`,
+  // `data:`, or other non-network schemes.
+  const parsed = new URL(url);
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+    throw new Error(
+      `fetchWithRetry: unsupported URL protocol "${parsed.protocol}"`,
+    );
+  }
+
   const { timeoutMs = 10_000, retries = 1, headers, ...rest } = options;
   const mergedHeaders: Record<string, string> = {
     "User-Agent": USER_AGENT,
