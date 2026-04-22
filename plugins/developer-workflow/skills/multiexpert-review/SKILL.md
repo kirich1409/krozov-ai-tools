@@ -29,6 +29,8 @@ The review follows the Panel of LLM Evaluators protocol:
 3. **Confidence-weighted synthesis** — the orchestrator aggregates results, weighting by domain relevance
 4. **Explicit uncertainty** — disagreements between agents surface as "requires decision", not silently resolved
 
+Each reviewing agent must check the artifact against the `## Non-negotiables` sections in applicable `CLAUDE.md` files (project root, global, plugin-specific) before forming their opinion. Any proposed approach that violates a non-negotiable is automatically a blocker — critical severity, confidence 100, not subject to the reporting filter or trade-off discussion.
+
 ## Engine invariants (not overridable by profiles)
 
 Profiles MUST NOT declare these — they are engine constants:

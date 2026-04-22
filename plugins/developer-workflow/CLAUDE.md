@@ -1,5 +1,12 @@
 # developer-workflow (core)
 
+## Non-negotiables
+
+Rules that are not open for discussion. Violating these is an error, not a judgment call.
+
+- **Non-QA skills must not hardcode MCP tool names.** They must run (with reduced capability) when an MCP server is absent. Exception: QA-execution skills (`manual-tester`, live parts of `acceptance`, `bug-hunt`) that require real device/browser automation may fail fast with an install/enable message — graceful degradation is impossible there.
+- **Tier-3 hard-dep escalation requires explicit user approval per change.** Proposing is allowed; editing `plugin.json` `dependencies` or `.mcp.json` without explicit go-ahead is not.
+
 ## Structure
 
 ```

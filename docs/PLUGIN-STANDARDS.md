@@ -4,6 +4,14 @@
 
 Проверка — ручная по чек-листу ниже, автоматическая через `validate.sh` (см. корень репо), и отдельная проверка через `plugin-dev:plugin-validator` agent перед каждым релизом.
 
+## Non-negotiables convention
+
+Each plugin that has a `CLAUDE.md` should include a `## Non-negotiables` section as its first section. This section lists hard rules specific to that plugin — rules whose violation is always an error, not a judgment call. Format: one bullet per rule, rule + why-one-liner. No trade-off discussion.
+
+Review and validation skills (`code-reviewer`, `finalize`, `multiexpert-review`) treat any violation of a `## Non-negotiables` rule as a blocker (critical severity, confidence 100).
+
+Plugins with no plugin-specific invariants beyond the project root `CLAUDE.md` and global `~/.claude/CLAUDE.md` do not need a `CLAUDE.md` at all.
+
 ## References
 
 - [Plugins reference](https://code.claude.com/docs/en/plugins-reference) — schema `plugin.json`, namespacing, caching
