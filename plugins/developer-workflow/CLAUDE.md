@@ -45,9 +45,9 @@ Skills in this plugin delegate to engineer agents (kotlin-engineer / compose-dev
 - Pipeline orchestration rules (task profiling, Research Consortium, Quality Loop gates, State Machine, receipt-based gating) ship with this plugin at [`docs/ORCHESTRATION.md`](docs/ORCHESTRATION.md) — skills and the core feature-flow/bugfix-flow orchestrators read from there.
 - Quality Loop gates are defined in `docs/ORCHESTRATION.md`, not in any individual skill.
 
-## Skills roster (17)
+## Skills roster (18)
 
-- Planning/research: `research`, `decompose-feature`, `write-spec`, `multiexpert-review`, `design-options` (optional pre-multiexpert-review stage — generates 2-3 architectural alternatives for high-arch-risk tasks)
+- Planning/research: `research`, `clarify` (lightweight Q&A pit-stop — locks requirements between Research and Decompose), `decompose-feature`, `write-spec`, `multiexpert-review`, `design-options` (optional pre-multiexpert-review stage — generates 2-3 architectural alternatives for high-arch-risk tasks)
 - Implementation: `implement`, `write-tests`, `debug`
 - Verification utility: `check` — reusable mechanical-check runner (build + lint + typecheck + tests), invoked by `implement`, `finalize`, and any code-modifying skill
 - Code-quality pass: `finalize` — multi-round review-and-fix loop (code-reviewer → /simplify → optional pr-review-toolkit trio → expert reviews) that runs between `implement` and `acceptance`. The `pr-review-toolkit` trio is a soft-reference: installed → Phase C runs; absent → Phase C is skipped with a log entry.

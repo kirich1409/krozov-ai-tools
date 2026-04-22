@@ -35,13 +35,20 @@ It only manages transitions, passes context between stages, and reports summarie
 ```
 Setup          -> Research         (unknown APIs, libraries, or architectural decisions)
 Setup          -> Implement        (trivial/simple task — skip research/planning)
-Research       -> Decompose        (large feature — split into tasks)
-Research       -> PlanReview       (complex single-task — needs multiexpert review)
-Research       -> DesignOptions    (high-arch-risk single-task — explore alternatives first)
+Research       -> Clarify         (after research — always, unless skip conditions fire)
+Research       -> Decompose        (skip-clarify path — trivial task or --no-clarify)
+Research       -> PlanReview       (skip-clarify path — trivial task or --no-clarify)
+Research       -> DesignOptions    (skip-clarify path — trivial task or --no-clarify)
+Research       -> TestPlan         (skip-clarify path — trivial task or --no-clarify)
+Research       -> Implement        (skip-clarify path — trivial task or --no-clarify)
+Clarify        -> Decompose        (large feature — split into tasks)
+Clarify        -> PlanReview       (complex single-task — needs multiexpert review)
+Clarify        -> DesignOptions    (high-arch-risk single-task — explore alternatives first)
+Clarify        -> TestPlan         (simple single-task, test-plan stage not skipped)
+Clarify        -> Implement        (simple single-task, test-plan stage skipped)
+Clarify        -> Research         (gap exposed during Q&A — cap 1)
 DesignOptions  -> PlanReview       (user picked an option)
 DesignOptions  -> Research         (options exposed missing requirements — re-research)
-Research       -> TestPlan         (simple single-task, test-plan stage not skipped)
-Research       -> Implement        (simple single-task, test-plan stage skipped)
 Decompose      -> PlanReview       (complex decomposition — needs review)
 Decompose      -> TestPlan         (straightforward tasks, test-plan stage not skipped)
 Decompose      -> Implement        (straightforward tasks, test-plan stage skipped)
@@ -75,6 +82,7 @@ reached, the orchestrator **escalates** instead of looping again.
 
 **Decision criteria for skipping stages:**
 - **Skip Research:** task is well-understood, no external APIs, no unfamiliar libraries
+- **Skip Clarify:** task is trivial, single-file change, user passed `--no-clarify`, research report already contains complete acceptance criteria
 - **Skip Decompose:** task is a single logical unit, no independent sub-parts
 - **Skip PlanReview:** change is straightforward, touches 1-3 files, no architectural impact
 - **Skip TestPlan (+ TestPlanReview):** see [TestPlan Stage Skip Detection](#testplan-stage-skip-detection) — default-on stage, skipped only when a detector condition fires.
@@ -118,6 +126,29 @@ Wait for `swarm-report/<slug>-research.md`.
 
 Skip if the task is well-understood and doesn't touch external APIs, unfamiliar libraries,
 or architectural decisions.
+
+### 1.1a Clarify (default-on)
+
+After research completes, invoke `developer-workflow:clarify` with:
+- Slug
+- Research artifact path: `swarm-report/<slug>-research.md`
+- Design options path (optional): `swarm-report/<slug>-design-options.md` if it already exists
+
+Wait for `swarm-report/<slug>-clarify.md`.
+
+**Skip conditions (any one fires → skip Clarify):**
+- Task is trivial (same criteria as Research skip)
+- Single-file change
+- `--no-clarify` flag passed by user
+- Research report already contains a complete "Requirements" section with acceptance criteria
+- User explicitly said "no questions" / "don't ask"
+
+When skipping: announce `Stage: Research → (Clarify skipped) → <next>` with the skip reason.
+
+When running: announce `Stage: Research → Clarify`.
+
+**Pass `swarm-report/<slug>-clarify.md`** as additional context to all downstream stages:
+Decompose, PlanReview, DesignOptions, TestPlan, and Implement. Downstream stages treat locked requirements as binding constraints.
 
 ### 1.2 Decompose (optional)
 
@@ -454,6 +485,7 @@ always remains).
 
 | From | To | Trigger | Max |
 |------|----|---------|-----|
+| Clarify | Research | gap exposed during Q&A | 1 |
 | PlanReview | Research | FAIL — knowledge gaps | 2 |
 | TestPlanReview | TestPlan | FAIL — test-plan revise loop | 3 |
 | Finalize | Implement | ESCALATE — user routes back to fix root issues | 1 |
