@@ -230,8 +230,14 @@ See [`references/spec-template.md`](references/spec-template.md) for the full te
 
 ### 4.1 Present draft to user
 
-Share the draft spec with the user. Invite them to review it — read through it,
-check if anything is missing, wrong, or needs adjustment.
+Do NOT paste the full spec into chat — the spec file is the artifact; chat is for
+navigation. Instead, present a compact summary:
+- Spec title and one-sentence goal
+- 3–5 key acceptance criteria (by AC-N id and a short label)
+- Any open questions that remain unresolved
+
+If there are open questions, ask exactly ONE of them now. After the user responds,
+loop back for the next open question if any remain.
 
 ### 4.2 Self-review while user reads
 
@@ -292,6 +298,11 @@ Save the approved spec to `docs/specs/YYYY-MM-DD-<slug>.md`, flip its
 frontmatter `status` from `draft` to `approved`, retire the state file, and
 confirm to the user. Do not auto-invoke any downstream skill — the user
 decides when to proceed.
+
+After saving, confirm to the user in one sentence: spec saved to
+`docs/specs/YYYY-MM-DD-<slug>.md`, status: approved. Suggest the next step
+(e.g. `/generate-test-plan` or `/implement`).
+No inline content — the file is the artifact; chat is just a status ping.
 
 See [`references/output-layout.md`](references/output-layout.md) for the full
 save procedure, path conventions, confirmation message, and hand-off rules.

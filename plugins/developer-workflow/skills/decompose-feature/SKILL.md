@@ -286,11 +286,14 @@ format below.
 
 Update the state file status to `done`.
 
-Present the decomposition to the user with a brief summary of:
-- Total number of tasks and wave count
-- Complexity breakdown (how many S/M/L)
-- Tasks flagged for research
-- Number of open questions that need user decision
+After saving, post a chat summary — enough to approve the decomposition without opening the file:
+
+1. One sentence: feature name, N tasks across W waves.
+2. 3–5 bullets: key tasks per wave (name + complexity only), research-flagged tasks, any cross-cutting constraints. If N > 10 tasks: name the first wave in full, summarise remaining waves as "Wave K: N tasks (complexity range)".
+3. If any open questions block next steps: ask exactly ONE now. State which question it is out of N total. Save the rest — present one-by-one as each is answered.
+4. One line: proposed next step with command (e.g. `/write-spec` or `/implement`).
+
+Hard limit: ≤30 lines. No full task tables, no dependency graphs, no source citations.
 
 ---
 

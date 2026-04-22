@@ -158,3 +158,18 @@ What needs to change and where — NOT the implementation, just the direction
 ## Status
 Diagnosed / Escalated / Not Reproducible
 ```
+
+### Chat output
+
+After saving, post a chat summary (≤15 lines):
+
+1. One sentence: what the bug is and what causes it (Root Cause in one line).
+2. Bullets (max 4):
+   - Symptom (one line — what the user observed)
+   - Root cause location: file:line or component
+   - Fix direction (one line — what needs to change, not how)
+   - Any side effects or adjacent code at risk (one line, only if relevant)
+3. If reproduction requires specific steps or environment: ONE question to confirm.
+4. One line: "Recommended next step: implement the fix via `/implement`" (or `/bugfix-flow` if in standalone context).
+
+Do NOT post the full investigation log or hypothesis list in chat — those are in the file.

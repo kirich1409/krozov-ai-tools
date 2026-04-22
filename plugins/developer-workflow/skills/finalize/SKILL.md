@@ -228,6 +228,23 @@ Findings that the user explicitly decided to accept (e.g., during escalation). N
 - <hash> <message>
 ```
 
+### Chat summary on exit
+
+After saving the report, post a chat summary (≤20 lines):
+
+**PASS exit:**
+- One sentence: "Finalize: PASS after N round(s). Code is ready for acceptance."
+- Bullets: N findings fixed (by category: security X, quality Y, style Z). If 0 findings: state that.
+- One line: "Next step: `/acceptance`"
+
+**ESCALATE exit:**
+- One sentence: "Finalize: ESCALATE after N round(s). X unresolved BLOCK(s) require decision."  
+- Bullets (max 5): unresolved BLOCKs — one bullet per BLOCK with category + one-line description. If >5 BLOCKs: list top 5 by severity.
+- ONE question: which BLOCK to resolve first, or ask user to choose: accept risk / loop to implement / re-scope.
+- One line: options — "Accept risks and proceed to `/acceptance`" OR "Return to `/implement` with new task".
+
+Do NOT paste the report table into chat. The file is for reference only.
+
 ---
 
 ## Scope rules

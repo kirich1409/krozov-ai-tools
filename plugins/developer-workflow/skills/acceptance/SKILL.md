@@ -369,6 +369,25 @@ template in [`references/aggregation.md`](references/aggregation.md) §Receipt f
 Routing for downstream orchestrators (VERIFIED / FAILED / PARTIAL branches) lives in the
 same reference §Routing.
 
+After saving the receipt, post a chat summary (≤20 lines):
+
+**VERIFIED:**
+- One sentence: "Acceptance: VERIFIED. N checks passed."
+- Bullets (max 3): which checks ran (code, build, manual-test, etc.), any that were skipped and why.
+- One line: "Next step: `/create-pr`" (or `/drive-to-merge` if PR already exists).
+
+**FAILED:**
+- One sentence: "Acceptance: FAILED. N check(s) failed."
+- Bullets (max 5): failed checks — one bullet per failure with check name + one-line description of what failed.
+- ONE question: ask if user wants to fix and re-run, or ship as-is accepting the risk.
+
+**PARTIAL:**
+- One sentence: "Acceptance: PARTIAL. N passed, M inconclusive."
+- Bullets: list inconclusive checks and why.
+- ONE question: proceed to PR or re-run inconclusive checks?
+
+Do NOT paste acceptance receipt tables into chat. The file is for audit trail only.
+
 ---
 
 ## Re-verification Loop

@@ -349,10 +349,19 @@ Save the final research report to `./swarm-report/<slug>-research.md`.
 
 Update the state file status to `done`.
 
-Present the report to the user with a brief summary of:
-- How many expert tracks ran
-- Key recommendation (one sentence)
-- Number of open questions that need user decision
+After saving, post a chat summary. The summary must be self-contained — the user
+should be able to make a decision without opening the file. Format:
+
+1. One sentence: topic, how many tracks ran, overall recommendation.
+2. 3–5 bullets: key findings, blockers, constraints discovered — pick the most decision-relevant ones. No sub-lists, no source citations.
+3. If any open questions block next steps: ask exactly ONE question now. State
+   which question it is out of N total (e.g. "Question 1 of 3:"). Save the rest
+   to the report — present subsequent questions one-by-one only after the user
+   answers the current one.
+4. One line: suggested next step with command (e.g. `/decompose-feature` or `/implement`).
+
+Hard limit: ≤30 lines in chat. No tables, no source lists, no inline markdown citations.
+The swarm-report file is for downstream pipeline stages and compaction recovery — not for the user.
 
 ### Suggest next action
 
@@ -428,6 +437,7 @@ In all cases, the artifact location and format are the same — downstream stage
 |----------|------|---------|
 | Research report | `./swarm-report/<slug>-research.md` | Final synthesized findings — the receipt for the next pipeline stage |
 | State file | `./swarm-report/research-<slug>-state.md` | Compaction-resilient progress tracking during investigation |
+| Chat summary | — | ≤30-line user-facing output posted after the file is saved |
 
 The research report is the primary deliverable. The state file is operational and can be
 deleted after the research is complete.

@@ -295,7 +295,7 @@ Per `profile.source_routing`:
 |--------|------------------|
 | **Plan Mode** | `EnterPlanMode` with issues list |
 | **File** | Edit the file directly (add `## Issues to Resolve` or restructure inline) |
-| **Conversation** | Present issues and work through inline with user |
+| **Conversation** | Present issues and work through inline with user — surface the highest-severity item first, ask ONE question per round. Do not dump the full findings list — work through it item by item. |
 
 Profiles may override or mark actions as `N/A` for sources they don't support.
 
@@ -311,7 +311,9 @@ If `profile.receipt` is absent — skip receipt writing.
 ### Verdict handling
 
 - **PASS** — confirm artifact is ready; done.
-- **CONDITIONAL** — present improvements; ask user; fix per `source_routing` if confirmed.
+- **CONDITIONAL** — present improvements in chat as bullets (max 5). If there are more than
+  5 improvement items, group them by category. Ask exactly ONE question if user decision is
+  needed. Fix per `source_routing` if confirmed.
 - **WARN** — pipeline continues; engine records warnings in receipt; no revise-loop.
 - **FAIL** — fix per `source_routing` without asking; auto re-run review on same agents + same profile; update state file with cycle N and new verdict. After cycle 3 still FAIL → escalate to user.
 

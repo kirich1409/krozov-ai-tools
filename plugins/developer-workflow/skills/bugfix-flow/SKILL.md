@@ -233,6 +233,21 @@ gate always requires explicit confirmation.
 
 ---
 
+## Stage result relay
+
+When a lifecycle skill completes, **do not add a wrapper summary** on top of the skill's own
+chat output. The skill's ≤30-line chat summary IS the user-facing result for that stage.
+
+The orchestrator's job at each transition:
+1. Read the skill's receipt from `swarm-report/` (for gating and state tracking)
+2. Decide the next step based on verdict/status in the receipt
+3. If the next step requires user input — ask ONE question (if the skill didn't already ask one)
+4. Otherwise — proceed to the next stage and announce it in one line: "Starting `<skill-name>`..."
+
+Do NOT re-summarize what the skill already told the user.
+
+---
+
 ## Backward Transitions (STRICT limits)
 
 | From | To | Trigger | Max |
