@@ -80,6 +80,8 @@ The agent returns a structured verdict: PASS / WARN / FAIL with findings scored 
 
 ### Handling findings
 
+Non-negotiables violations (flagged by `code-reviewer` from the `## Non-negotiables` sections in applicable `CLAUDE.md` files) are always BLOCK regardless of any confidence threshold — they cannot be moved to "acknowledged risks".
+
 | Severity × confidence | Action |
 |---|---|
 | critical ≥ 75 | Fix immediately. After fix, re-run `/check`. If `/check` PASSes and the finding is resolved → BLOCK cleared. If the fix does not converge, the finding stays BLOCK — the round ends without exiting PASS; counted against the 3-round budget. Do not silently downgrade a critical finding to "acknowledged risk". |

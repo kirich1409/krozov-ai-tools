@@ -33,7 +33,7 @@ describe("GitHubClient", () => {
       const [url, init] = (fetch as ReturnType<typeof vi.fn>).mock.calls[0];
       expect(url).toBe("https://api.github.com/repos/owner/repo/releases?per_page=100");
       expect(init.headers["Accept"]).toBe("application/vnd.github.v3+json");
-      expect(init.headers["User-Agent"]).toBe("maven-central-mcp");
+      expect(init.headers["User-Agent"]).toMatch(/^maven-central-mcp\//);
     });
 
     it("returns empty array on non-ok response", async () => {
@@ -154,7 +154,33 @@ describe("GitHubClient", () => {
       const result = await client.fetchChangelog("owner", "repo");
 
       expect(result).toBeNull();
-      expect(fetch).toHaveBeenCalledTimes(3);
+      // 3 filenames × 2 attempts each (one retry on network error).
+      expect(fetch).toHaveBeenCalledTimes(6);
+    });
+
+    it("falls back to download_url when the file exceeds the inline size limit", async () => {
+      const raw = "# Large Changelog\n".repeat(100_000);
+      let callCount = 0;
+      mockFetch(async (url: string) => {
+        callCount++;
+        if (url.endsWith("/contents/CHANGELOG.md")) {
+          return new Response(JSON.stringify({
+            content: "",
+            size: 2_000_000,
+            download_url: "https://raw.githubusercontent.com/owner/repo/main/CHANGELOG.md",
+          }), { status: 200 });
+        }
+        if (url.startsWith("https://raw.githubusercontent.com/")) {
+          return new Response(raw, { status: 200 });
+        }
+        return new Response("unexpected", { status: 500 });
+      });
+
+      const client = new GitHubClient();
+      const result = await client.fetchChangelog("owner", "repo");
+
+      expect(result).toBe(raw);
+      expect(callCount).toBe(2);
     });
   });
 

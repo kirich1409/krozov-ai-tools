@@ -24,7 +24,12 @@ flowchart TD
 
     needs_research -->|No| impl
     needs_research -->|Yes| research[/research/]
-    research --> needs_decompose{Multi-task?}
+    research --> needs_clarify{Skip clarify?<br/>see Clarify skip conditions}
+    needs_clarify -->|Skip| needs_decompose{Multi-task?}
+    needs_clarify -->|Run| clarify[/clarify/]
+    clarify --> clarify_result{Gap found?}
+    clarify_result -->|Research gap| research
+    clarify_result -->|OK| needs_decompose{Multi-task?}
 
     needs_decompose -->|No, simple| needs_plan{Complex single task?}
     needs_decompose -->|Yes| decompose[/decompose-feature/]
@@ -81,6 +86,7 @@ flowchart TD
     merge_gate -->|Stop| blocked([Blocker surfaced])
 
     style research fill:#e1f5fe
+    style clarify fill:#e1f5fe
     style decompose fill:#e1f5fe
     style design_opts fill:#e1f5fe
     style plan_review fill:#e1f5fe
@@ -114,6 +120,7 @@ flowchart TD
 
 | From → To | Max | After limit |
 |-----------|-----|-------------|
+| Clarify → Research | 1 | Escalate |
 | PlanReview → Research | 2 | Escalate |
 | TestPlanReview → TestPlan | 3 | Escalate |
 | Finalize → Implement | 1 | Escalate |

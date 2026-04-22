@@ -1,4 +1,5 @@
 import type { MavenRepository } from "../maven/repository.js";
+import type { MavenMetadata } from "../maven/types.js";
 import type { UpgradeType } from "../version/types.js";
 import { scanDependencies } from "../dependencies/scan.js";
 import { findProjectRoot } from "../project/find-project-root.js";
@@ -48,7 +49,7 @@ export async function auditProjectDependenciesHandler(
   const depsWithoutVersion = scan.dependencies.filter((d) => d.version === null);
 
   // Memoize resolveAll per GA to avoid redundant metadata fetches for duplicate deps
-  const metadataCache = new Map<string, ReturnType<typeof resolveAll>>();
+  const metadataCache = new Map<string, Promise<MavenMetadata>>();
 
   const versionResults = await Promise.all(
     depsWithVersion.map(async (dep) => {

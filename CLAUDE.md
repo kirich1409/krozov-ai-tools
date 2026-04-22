@@ -2,6 +2,14 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Non-negotiables
+
+Rules that are not open for discussion. Violating these is an error, not a judgment call.
+
+- **Never run `npm publish` locally.** Publishing is exclusively via GitHub Actions — prevents partial releases and version skew.
+- **All 8 version locations must stay in sync.** A version bump touches all `plugin.json` files, `package.json`, and `marketplace.json` simultaneously — see Publishing for the list.
+- **Critical or Major violations of PLUGIN-STANDARDS.md block the release.** Fix first, release later.
+
 ## Project
 
 Monorepo for Claude Code plugins by krozov. Contains six plugins:

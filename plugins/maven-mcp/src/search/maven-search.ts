@@ -1,3 +1,5 @@
+import { fetchWithRetry } from "../http/client.js";
+
 const SEARCH_API = "https://search.maven.org/solrsearch/select";
 
 interface SolrDoc {
@@ -27,7 +29,7 @@ export async function searchMavenCentral(
 ): Promise<SearchArtifact[]> {
   try {
     const url = `${SEARCH_API}?q=${encodeURIComponent(query)}&rows=${limit}&wt=json`;
-    const response = await fetch(url, { signal: AbortSignal.timeout(10_000) });
+    const response = await fetchWithRetry(url, { timeoutMs: 10_000 });
     if (!response.ok) return [];
     const data = (await response.json()) as SolrResponse;
     return data.response.docs.map((doc) => ({

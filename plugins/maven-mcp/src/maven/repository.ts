@@ -1,4 +1,5 @@
 import type { MavenMetadata } from "./types.js";
+import { fetchWithRetry } from "../http/client.js";
 
 export interface MavenRepository {
   readonly name: string;
@@ -22,7 +23,7 @@ export class HttpMavenRepository implements MavenRepository {
 
   async fetchMetadata(groupId: string, artifactId: string): Promise<MavenMetadata> {
     const url = this.buildMetadataUrl(groupId, artifactId);
-    const response = await fetch(url, { signal: AbortSignal.timeout(10_000) });
+    const response = await fetchWithRetry(url, { timeoutMs: 10_000 });
     if (!response.ok) {
       throw new Error(`Metadata fetch failed from ${this.name}: ${response.status} ${response.statusText}`);
     }

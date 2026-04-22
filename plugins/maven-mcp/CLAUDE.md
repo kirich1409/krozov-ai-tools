@@ -2,6 +2,12 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in `plugins/maven-mcp/`.
 
+## Non-negotiables
+
+Rules that are not open for discussion. Violating these is an error, not a judgment call.
+
+- **No XML parser dependency.** All XML parsing is regex-based — avoids a heavyweight dependency for the small subset of XML used in Maven metadata and POM files.
+
 ## Project
 
 MCP server for Maven dependency intelligence. Provides tools to query artifact versions from Maven repositories (Maven Central, Google Maven, custom repos). Distributed as npm package, runs via `npx @krozov/maven-central-mcp`.

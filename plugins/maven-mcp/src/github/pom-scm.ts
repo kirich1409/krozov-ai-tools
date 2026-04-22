@@ -41,8 +41,19 @@ function parseGitHubUrl(url: string): GitHubRepo | null {
  * 4. Root <url> (outside <scm>)
  */
 export function extractGitHubRepo(pomXml: string): GitHubRepo | null {
+  // Strip XML comments first so a commented-out <scm>/<url> cannot poison
+  // the match (e.g. `<!-- <url>https://github.com/wrong/repo</url> -->`).
+  // Loop to handle smuggled forms like `<!<!----->-- evil -->` where a fresh
+  // `<!--` only surfaces after the inner comment is stripped.
+  let xml = pomXml;
+  let prev: string;
+  do {
+    prev = xml;
+    xml = xml.replace(/<!--[\s\S]*?-->/g, "");
+  } while (xml !== prev);
+
   // Extract <scm> block
-  const scmMatch = pomXml.match(/<scm>([\s\S]*?)<\/scm>/);
+  const scmMatch = xml.match(/<scm>([\s\S]*?)<\/scm>/);
 
   if (scmMatch) {
     const scmBlock = scmMatch[1];
@@ -73,7 +84,7 @@ export function extractGitHubRepo(pomXml: string): GitHubRepo | null {
 
   // Fallback: root <url> outside <scm>
   // Remove <scm> block first to avoid matching URLs inside it
-  const withoutScm = pomXml.replace(/<scm>[\s\S]*?<\/scm>/, "");
+  const withoutScm = xml.replace(/<scm>[\s\S]*?<\/scm>/, "");
   const rootUrl = withoutScm.match(/<url>\s*(.*?)\s*<\/url>/);
   if (rootUrl) {
     return parseGitHubUrl(rootUrl[1]);

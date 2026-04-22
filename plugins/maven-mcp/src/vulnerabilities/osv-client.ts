@@ -1,3 +1,5 @@
+import { fetchWithRetry } from "../http/client.js";
+
 const OSV_API = "https://api.osv.dev/v1/querybatch";
 
 interface DependencyRef {
@@ -104,11 +106,11 @@ export async function queryOsvBatch(deps: DependencyRef[]): Promise<DependencyVu
   }));
 
   try {
-    const response = await fetch(OSV_API, {
+    const response = await fetchWithRetry(OSV_API, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ queries }),
-      signal: AbortSignal.timeout(15_000),
+      timeoutMs: 15_000,
     });
 
     if (!response.ok) {

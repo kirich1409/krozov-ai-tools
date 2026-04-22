@@ -139,4 +139,86 @@ describe("resolveAll", () => {
     // Nexus + Google kept, Maven Central excluded (proxy target)
     expect(result.versions).toEqual(["1.0.0", "2.0.0"]);
   });
+
+  it("sorts merged versions by semver, not by repo order", async () => {
+    // Repo A returns [3.0.0, 1.0.0] (non-chronological), Repo B returns [2.0.0].
+    // Central is excluded because A is custom, so merged is just [3.0.0, 1.0.0, 2.0.0].
+    // After semver sort: [1.0.0, 2.0.0, 3.0.0].
+    const repoA = mockRepo("custom-a", ["3.0.0", "1.0.0"]);
+    const repoB = mockRepo("custom-b", ["2.0.0"]);
+    const result = await resolveAll([repoA, repoB], "io.ktor", "ktor-core");
+    expect(result.versions).toEqual(["1.0.0", "2.0.0", "3.0.0"]);
+  });
+
+  it("picks semver-max latest from advertised values across repos", async () => {
+    // Repo A advertises latest=1.5.0, Repo B advertises latest=2.0.0.
+    // Even if A is listed first, the max by semver wins.
+    const repoA: MavenRepository = {
+      name: "repo-a",
+      url: "https://a.example.com",
+      fetchMetadata: vi.fn().mockResolvedValue({
+        groupId: "io.ktor", artifactId: "ktor-core",
+        versions: ["1.0.0", "1.5.0"], latest: "1.5.0", release: "1.5.0",
+      } as MavenMetadata),
+    };
+    const repoB: MavenRepository = {
+      name: "repo-b",
+      url: "https://b.example.com",
+      fetchMetadata: vi.fn().mockResolvedValue({
+        groupId: "io.ktor", artifactId: "ktor-core",
+        versions: ["1.5.0", "2.0.0"], latest: "2.0.0", release: "2.0.0",
+      } as MavenMetadata),
+    };
+    const result = await resolveAll([repoA, repoB], "io.ktor", "ktor-core");
+    expect(result.latest).toBe("2.0.0");
+    expect(result.release).toBe("2.0.0");
+  });
+
+  it("does not return a stale advertised latest from a lagging proxy", async () => {
+    // Custom repo advertises latest=1.5.0 with only older versions.
+    // Maven Central is excluded (custom repo present), so latest must be 1.5.0 —
+    // this exact regression would have been masked by the old positional picker.
+    const proxy: MavenRepository = {
+      name: "proxy",
+      url: "https://proxy.example.com",
+      fetchMetadata: vi.fn().mockResolvedValue({
+        groupId: "io.ktor", artifactId: "ktor-core",
+        versions: ["1.0.0", "1.5.0"], latest: "1.5.0", release: "1.5.0",
+      } as MavenMetadata),
+    };
+    const result = await resolveAll([proxy], "io.ktor", "ktor-core");
+    expect(result.latest).toBe("1.5.0");
+    expect(result.release).toBe("1.5.0");
+  });
+
+  it("orders pre-releases before corresponding stable", async () => {
+    const repo = mockRepo("r", ["2.0.0", "2.0.0-beta-1", "2.0.0-rc-1", "1.9.0"]);
+    const result = await resolveAll([repo], "io.ktor", "ktor-core");
+    expect(result.versions).toEqual([
+      "1.9.0", "2.0.0-beta-1", "2.0.0-rc-1", "2.0.0",
+    ]);
+    // release should be stable (2.0.0), not the last array entry by position.
+    expect(result.release).toBe("2.0.0");
+  });
+
+  it("picks semver-max lastUpdated across repos", async () => {
+    const repoA: MavenRepository = {
+      name: "repo-a",
+      url: "https://a.example.com",
+      fetchMetadata: vi.fn().mockResolvedValue({
+        groupId: "io.ktor", artifactId: "ktor-core",
+        versions: ["1.0.0"], lastUpdated: "20240101000000",
+      } as MavenMetadata),
+    };
+    const repoB: MavenRepository = {
+      name: "repo-b",
+      url: "https://b.example.com",
+      fetchMetadata: vi.fn().mockResolvedValue({
+        groupId: "io.ktor", artifactId: "ktor-core",
+        versions: ["2.0.0"], lastUpdated: "20260301000000",
+      } as MavenMetadata),
+    };
+    const result = await resolveAll([repoA, repoB], "io.ktor", "ktor-core");
+    expect(result.lastUpdated).toBe("20260301000000");
+  });
 });

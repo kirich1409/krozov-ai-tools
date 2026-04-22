@@ -62,7 +62,10 @@ Include these paths in the agent's context handoff prompt. This prevents drift f
 Allowed transitions between stages. Forward is default; backward transitions are explicit recovery paths.
 
 ```
-Research ──→ Plan
+Research ──→ Clarify        (lock requirements before decomposition — default-on after Research)
+Research ──→ Plan           (skip-clarify path — --no-clarify, requirements already locked, or user opted out)
+Clarify  ──→ Plan           (locked requirements ready — proceed to decompose/plan)
+Clarify  ──→ Research       (gap exposed during Q&A — cap 1)
 Plan ──→ TestPlan           (test-plan stage not skipped)
 Plan ──→ Implement          (test-plan stage skipped: skip-detector conditions or --skip-test-plan)
 Plan ──→ Research           (multiexpert review reveals gaps or missing context)
@@ -91,6 +94,7 @@ Each stage produces an artifact in `swarm-report/`. The next stage reads it befo
 | Stage | Artifact |
 |-------|----------|
 | Research | `<slug>-research.md` |
+| Clarify | `<slug>-clarify.md` |
 | Plan | `<slug>-plan.md` |
 | TestPlan | `docs/testplans/<slug>-test-plan.md` (permanent, source of truth) + `<slug>-test-plan.md` (receipt: `status`, `permanent_path`, `source_spec`, `review_verdict`, `phase_coverage`). Created by `generate-test-plan` when invoked from the orchestrator with a slug; read by `multiexpert-review` (test-plan profile) and `acceptance`. |
 | TestPlanReview | `<slug>-test-plan.md` receipt updated in place: `review_verdict` set to PASS / WARN / FAIL, `status` advances Draft → Ready on PASS/WARN. |
@@ -100,6 +104,11 @@ Each stage produces an artifact in `swarm-report/`. The next stage reads it befo
 | PR | `<slug>-pr.md` (PR URL, description, reviewers) |
 
 If a stage artifact is missing — the previous stage did not complete. Do not skip ahead.
+
+**Exception — optional stage (Clarify):** this stage may be skipped by the orchestrator
+without producing an artifact. A missing `<slug>-clarify.md` means the stage was skipped,
+not incomplete. The orchestrator must announce the skip explicitly; downstream stages
+proceed normally.
 
 ## Quality Pipeline
 

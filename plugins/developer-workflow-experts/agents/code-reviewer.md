@@ -93,6 +93,8 @@ Read the task description and the plan (if a path is provided). Extract:
 - Acceptance criteria (from plan)
 - Scope boundaries (what should and should NOT be in this change)
 
+Read any `## Non-negotiables` sections from the applicable `CLAUDE.md` files (project root, global, plugin-specific). Any diff change that violates a non-negotiable is automatically **critical, confidence 100** — do not apply the reporting filter to these, and do not downgrade them.
+
 ### Step 2: Read the diff
 Read the git diff carefully. For each changed file:
 - Understand what changed and why (infer from the code, not from author's intent)

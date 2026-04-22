@@ -15,10 +15,11 @@ import { scanProjectDependenciesHandler } from "./tools/scan-project-dependencie
 import { getDependencyVulnerabilitiesHandler } from "./tools/get-dependency-vulnerabilities.js";
 import { searchArtifactsHandler } from "./tools/search-artifacts.js";
 import { auditProjectDependenciesHandler } from "./tools/audit-project-dependencies.js";
+import { PACKAGE_VERSION } from "./version.js";
 
 const server = new McpServer({
   name: "maven-central-mcp",
-  version: "0.2.6",
+  version: PACKAGE_VERSION,
 });
 
 let cachedRepos: MavenRepository[] | null = null;

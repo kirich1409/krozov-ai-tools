@@ -8,6 +8,8 @@ function unescapeEntities(text: string): string {
 }
 
 function stripTags(text: string): string {
+  // Loop to handle smuggled forms like `<<script>script>` where the inner tag
+  // only becomes visible to the regex after the outer one is stripped.
   let result = text;
   let prev: string;
   do {

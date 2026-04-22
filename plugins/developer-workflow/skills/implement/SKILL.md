@@ -107,7 +107,7 @@ After code is written, run the Quality Loop defined in [`docs/ORCHESTRATION.md`]
 
 Summary for this skill's callers:
 - Gate 1 invokes `/check` (mechanical: build + lint + typecheck + tests)
-- Gate 2 is the intent check — re-read task + plan, verify the diff addresses them; scope creep or drift → fix or flag
+- Gate 2 is the intent check — re-read task + plan, verify the diff addresses them; scope creep or drift → fix or flag; also verify no `## Non-negotiables` rule from applicable `CLAUDE.md` files is violated — a violation is treated as DRIFT and triggers a fix cycle
 - A gate failure triggers a fix cycle; total loop is capped per ORCHESTRATION.md
 
 Do not duplicate gate details here — read ORCHESTRATION.md before executing. If ORCHESTRATION.md is missing, escalate rather than guessing the current rules.
