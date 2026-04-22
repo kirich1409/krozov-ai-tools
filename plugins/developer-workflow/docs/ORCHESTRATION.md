@@ -105,6 +105,11 @@ Each stage produces an artifact in `swarm-report/`. The next stage reads it befo
 
 If a stage artifact is missing — the previous stage did not complete. Do not skip ahead.
 
+**Exception — optional stages (Clarify, DesignOptions):** these stages may be skipped by
+the orchestrator without producing an artifact. A missing `<slug>-clarify.md` or
+`<slug>-design-options.md` means the stage was skipped, not incomplete. The orchestrator
+must announce the skip explicitly; downstream stages proceed normally.
+
 ## Quality Pipeline
 
 Three stages cover the full quality picture. Each stage answers a different question.

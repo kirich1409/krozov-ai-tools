@@ -83,9 +83,14 @@ For every extracted item, assign one of three dispositions:
 
 Sort items by impact × uncertainty: high-impact, high-uncertainty items first.
 
-Keep the question list to **5-7 items maximum** for round 1. If more items exist:
-- Lower-priority items go to round 2 only if the user keeps engaging after round 1
-- Items that cannot fit in 2 rounds become non-blocking open questions in the artifact
+Keep the list as short as possible — aim for the minimum set that unblocks decomposition.
+If many questions surface, that is usually a sign Research was too shallow, not that all
+questions must be asked. Ruthlessly cut low-impact items; record them as non-blocking open
+questions in the artifact without asking.
+
+Separate remaining items into two buckets:
+- **Round 1** — high-impact items that must be resolved before decomposition
+- **Round 2 candidates** — lower-priority items and any new gaps opened by round 1 answers
 
 ### 1.5 Save state
 
@@ -118,17 +123,21 @@ Present all questions in a single message. Wait for the user's response before p
 ### 2.2 Accepting defaults
 
 If the user says "accept all defaults", "принимаю всё", or any equivalent phrasing:
-- Record every proposed default as a confirmed assumption in the artifact
-- Do not re-ask any of the defaulted items
+- Record every proposed default from round 1 as a confirmed assumption in the artifact
+- For round 2 candidates: auto-confirm those that have an obvious default; record the rest
+  as non-blocking open questions
+- Do not ask any further questions
 - Proceed directly to Phase 3
 
 ### 2.3 Round structure
 
-**Round 1:** present all prepared items (max 7). Record answers and any follow-up gaps they open.
+**Round 1:** present high-impact items from the round 1 bucket. Record answers and note any
+new gaps they open (add those to the round 2 candidates bucket).
 
-**Round 2 (optional):** only if round 1 answers opened new genuine gaps — for example, the user
-chose an alternative that implies a constraint not previously known. Announce explicitly:
-"Round 2 of 2:" before presenting questions. Max 3 new questions.
+**Round 2 (optional):** run only if the round 2 candidates bucket is non-empty after round 1.
+Candidates come from two sources: lower-priority items carried over from Phase 1.4, and new
+gaps opened by round 1 answers. Announce explicitly: "Round 2 of 2:" before presenting.
+Keep it short — fewer questions, not more.
 
 **Hard cap:** after 2 rounds, record any remaining items as non-blocking open questions.
 Do NOT ask a third round under any circumstances.
@@ -209,8 +218,8 @@ high-impact items remain as open questions due to the round cap or a failed back
 
 ### 3.2 Clean up state file
 
-Update `swarm-report/clarify-<slug>-state.md` status to `done`, then delete the file.
-It is operational only and must not persist after the artifact is saved.
+Delete `swarm-report/clarify-<slug>-state.md`. It is operational only and must not persist
+after the artifact is saved.
 
 ### 3.3 Post chat summary
 
@@ -245,7 +254,10 @@ phases run identically to the inline invocation. The output path is always
 
 **Decompose, PlanReview, TestPlan:** feature-flow passes `swarm-report/<slug>-clarify.md`
 as an additional input to all three stages. They must treat locked requirements as binding
-constraints — a plan that contradicts an AC is a defect, not an open question.
+constraints — a plan that contradicts an AC is a defect, not an open question. When the
+artifact has `status: partial`, downstream stages should surface the open questions to the
+user before committing to a decomposition or plan — partial clarification is better than
+none, but the gaps are real.
 
 **multiexpert-review on PlanReview:** receives the clarify artifact alongside the plan.
 Ambiguity in the plan that is contradicted by a locked AC is a FAIL finding — "unclear
