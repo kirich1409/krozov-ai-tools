@@ -47,8 +47,13 @@ Skip Clarify entirely when any of the following is true:
 - **Requirements already locked** — the research artifact contains a "Requirements" section
   with acceptance criteria already answered in full
 
-When skipping: announce the skip reason in one line. Do NOT write an artifact. Proceed
-immediately to the next stage.
+When skipping: announce the skip reason in one line. Do NOT write an artifact. Return
+control to the caller; in feature-flow, the caller then proceeds immediately to the next
+stage.
+
+If the skip reason is **Requirements already locked**, downstream stages (Decompose,
+PlanReview, TestPlan) must treat the research artifact's `Requirements` section as the
+binding source of locked requirements — equivalent to a Clarify artifact for this run.
 
 ---
 

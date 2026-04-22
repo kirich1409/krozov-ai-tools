@@ -82,7 +82,7 @@ reached, the orchestrator **escalates** instead of looping again.
 
 **Decision criteria for skipping stages:**
 - **Skip Research:** task is well-understood, no external APIs, no unfamiliar libraries
-- **Skip Clarify:** task is trivial, single-file change, user passed `--no-clarify`, research report already contains complete acceptance criteria
+- **Skip Clarify:** task is single-file or obviously scoped, user passed `--no-clarify`, requirements are already locked (research contains complete ACs), or user explicitly opted out
 - **Skip Decompose:** task is a single logical unit, no independent sub-parts
 - **Skip PlanReview:** change is straightforward, touches 1-3 files, no architectural impact
 - **Skip TestPlan (+ TestPlanReview):** see [TestPlan Stage Skip Detection](#testplan-stage-skip-detection) — default-on stage, skipped only when a detector condition fires.
@@ -134,7 +134,7 @@ After research completes, invoke `developer-workflow:clarify` with:
 - Research artifact path: `swarm-report/<slug>-research.md`
 - Design options path (optional): `swarm-report/<slug>-design-options.md` if it already exists
 
-Wait for `swarm-report/<slug>-clarify.md`.
+If Clarify runs, wait for `swarm-report/<slug>-clarify.md`.
 
 **Skip conditions (any one fires → skip Clarify):**
 - Single-file change or obviously scoped change with no architectural decisions
@@ -151,8 +151,10 @@ downstream stages: Decompose, PlanReview, DesignOptions, TestPlan, and Implement
 stages treat locked requirements as binding constraints.
 
 **If Clarify was skipped:** pass an explicit note — `(clarify: skipped — <reason>)` — so
-downstream stages know requirements are not locked and must not attempt to read a
-non-existent artifact.
+downstream stages do not attempt to read a non-existent artifact. If the skip reason is
+"requirements already locked", downstream stages must treat the research artifact's
+`Requirements` section as the binding constraints. For all other skip reasons, downstream
+stages should assume requirements are not locked.
 
 ### 1.2 Decompose (optional)
 
