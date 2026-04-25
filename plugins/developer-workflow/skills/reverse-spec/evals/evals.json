@@ -1,0 +1,203 @@
+{
+  "skill_name": "reverse-spec",
+  "evals": [
+    {
+      "id": 1,
+      "name": "eval-path-input-complex-screen",
+      "prompt": "Сделай reverse-spec на фичу авторизации в FrameIO. Код UI лежит в features/auth/ (AuthScreen, AuthComponent, AuthState, DefaultAuthComponent, AuthUseCase, AuthKoin). OAuth-движок — в модуле oauth/. Это самодостаточная фича с несколькими состояниями, интеграциями и навигацией — нужна полная спека для возможной перереализации на другом стеке.",
+      "expected_output": "Полная спека в auth-spec.md. Содержит все 12 секций шаблона (включая явные N/A). Тело стек-нейтрально (Compose/Decompose/Koin/Ktor не упоминаются вне Code Map/§10). Code Map с path:line granularity. §11 Open Questions не пустая. Покрывает PKCE, token storage, token refresh, process-death recovery.",
+      "principle": "path input — полный путь, сложная фича, проверка покрытия и tech-abstraction",
+      "files": [],
+      "assertions": [
+        {
+          "text": "spec_has_all_12_sections — auth-spec.md содержит все 12 секций шаблона (Overview, User-facing behavior, UI description, Data & integrations, States, Analytics & logging, Localization & accessibility, Navigation, Platform capabilities, Tech-specific constraints, Open questions, Code map)",
+          "type": "structural"
+        },
+        {
+          "text": "body_is_tech_agnostic — тело спеки (секции 1-9, 11) не упоминает Jetpack Compose, Decompose, Koin, Ktor Client, kotlinx.serialization; эти упоминания допустимы только в §10 (load-bearing) или §12 (code map)",
+          "type": "quality"
+        },
+        {
+          "text": "code_map_uses_line_ranges — Code Map (§13) содержит записи формата path:line или path:start-end, а не только путей к файлам",
+          "type": "quality"
+        },
+        {
+          "text": "open_questions_has_entries — §11 Open Questions содержит ≥3 записи (в non-interactive прогоне без интервью реально незакрытых вопросов всегда остаётся несколько; пустой §11 = спекуляция)",
+          "type": "quality"
+        },
+        {
+          "text": "covers_oauth_flow_end_to_end — спека описывает PKCE challenge/verifier, authorization URL, redirect + code exchange, access/refresh token storage, token refresh path",
+          "type": "coverage"
+        },
+        {
+          "text": "covers_process_death_recovery — спека упоминает сохранение/восстановление OAuth state при смерти процесса (недавний commit в проекте про это)",
+          "type": "coverage"
+        },
+        {
+          "text": "coverage_report_has_both_passes — coverage-report.md содержит Pass 1 (code → spec) и Pass 2 (spec → code) с конкретными числами покрытия",
+          "type": "process"
+        },
+        {
+          "text": "state_file_has_phase_checklist — state-file.md содержит чеклист фаз (Phase 0-5) с отметками выполнения и зафиксированными findings из Phase 1/2",
+          "type": "process"
+        },
+        {
+          "text": "no_code_identifiers_in_body — в секциях 1-9 и 11 отсутствуют имена из кодовой базы: OAuthClient, OAuthTokens, OAuthResult, OAuthException, AuthState, AuthComponent, AuthUseCase, TokenStorage, OAuthBrowser, FrameClient, StateFlow, а также любые другие CamelCase-идентификаторы классов/типов/методов из features/auth и oauth модулей",
+          "type": "quality"
+        },
+        {
+          "text": "section_12_known_defects_present — спека содержит §12 Known defects с заголовком-соответствием и либо ≥1 записью, либо явным N/A",
+          "type": "structural"
+        },
+        {
+          "text": "section_12_entries_structured — каждая запись в §12 содержит все 4 поля: what / class / evidence (path:line) / consequence",
+          "type": "quality"
+        },
+        {
+          "text": "defect_koin_not_wired — §12 содержит запись про authFeatureKoinModule / AuthUseCase DI wiring (crash на login tap)",
+          "type": "correctness"
+        },
+        {
+          "text": "defect_sign_up_dead_link — §12 содержит запись про dead link на accounts.frame.io/welcome (no registered deep-link handler)",
+          "type": "correctness"
+        },
+        {
+          "text": "defect_hardcoded_cancel — §12 содержит запись про hardcoded 'Cancel' (localization gap)",
+          "type": "correctness"
+        },
+        {
+          "text": "section_13_is_code_map — в переименованной §13 лежит Code Map с path:line записями",
+          "type": "structural"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "name": "eval-prose-input-discovery",
+      "prompt": "В проекте FrameIO есть экран авторизации — не помню точно как называется класс, но это фича где юзер логинится через OAuth. Собери по коду спеку чтобы я потом мог эту фичу переписать на другом стеке.",
+      "expected_output": "Skill сначала находит фичу через discovery-pass, документирует кандидаты в state-file, затем делает полную спеку на правильный target (features/auth). Все структурные/качественные требования как в eval 1.",
+      "principle": "prose input — проверка discovery-pass и подтверждения перед анализом",
+      "files": [],
+      "assertions": [
+        {
+          "text": "state_file_documents_discovery — state-file.md содержит явную секцию с 1+ кандидатами из Phase 0.1, с evidence (имена файлов/классов, ключевые слова-совпадения) для каждого",
+          "type": "process"
+        },
+        {
+          "text": "discovery_landed_on_features_auth — итоговый target — features/auth/ (либо явный пакет dev.androidbroadcast.frameio.features.auth)",
+          "type": "correctness"
+        },
+        {
+          "text": "spec_has_all_12_sections — auth-spec.md содержит все 12 секций шаблона",
+          "type": "structural"
+        },
+        {
+          "text": "body_is_tech_agnostic — тело не упоминает Compose/Decompose/Koin/Ktor кроме §10 и §12",
+          "type": "quality"
+        },
+        {
+          "text": "code_map_uses_line_ranges — Code Map с path:line granularity",
+          "type": "quality"
+        },
+        {
+          "text": "open_questions_has_entries — §11 ≥3 записи",
+          "type": "quality"
+        },
+        {
+          "text": "no_code_identifiers_in_body — в секциях 1-9 и 11 отсутствуют имена из кодовой базы (CamelCase-классы/типы/методы из features/auth и oauth модулей; имена sealed-class кейсов вроде Authenticated/Unauthenticated/Error)",
+          "type": "quality"
+        },
+        {
+          "text": "section_12_known_defects_present — спека содержит §12 Known defects (или явный N/A)",
+          "type": "structural"
+        },
+        {
+          "text": "section_12_entries_structured — каждая запись §12 содержит what / class / evidence (path:line) / consequence",
+          "type": "quality"
+        },
+        {
+          "text": "defect_sign_up_dead_link — §12 упоминает dead link на accounts.frame.io/welcome",
+          "type": "correctness"
+        },
+        {
+          "text": "section_13_is_code_map — §13 = Code Map с path:line",
+          "type": "structural"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "name": "eval-load-bearing-tech",
+      "prompt": "Сделай reverse-spec на OAuth-часть авторизации в FrameIO (oauth/ модуль). Там PKCE и специфика под платформы (Android Chrome Custom Tabs, iOS ASWebAuthenticationSession, Desktop — локальный redirect server). Это важно сохранить на любой другой реализации, потому что иначе безопасность/UX OAuth потеряется.",
+      "expected_output": "Спека корректно идентифицирует PKCE и platform browser integration как load-bearing, помещает их в §10 с capability-first phrasing. В теле не упоминаются Ktor/Koin/kotlinx.serialization — только capability-level требования. coverage-report.md явно перечисляет 4-question test для каждой рассмотренной технологии.",
+      "principle": "load-bearing technology — проверка tech-abstraction.md heuristic на практике",
+      "files": [],
+      "assertions": [
+        {
+          "text": "pkce_classified_load_bearing — PKCE явно описан как load-bearing и помещён в §10 Tech-specific constraints",
+          "type": "correctness"
+        },
+        {
+          "text": "platform_browser_classified_load_bearing — Chrome Custom Tabs / ASWebAuthenticationSession / desktop local redirect server в §10 с указанием, что конкретные механизмы важны для security+UX OAuth",
+          "type": "correctness"
+        },
+        {
+          "text": "ktor_not_in_body — Ktor не упоминается в теле спеки (секции 1-9, 11) — только в code map или вообще отсутствует",
+          "type": "quality"
+        },
+        {
+          "text": "koin_not_in_body — Koin не упоминается в теле спеки (только code map или отсутствует)",
+          "type": "quality"
+        },
+        {
+          "text": "kotlinx_serialization_not_in_body — kotlinx.serialization не упоминается в теле (только code map или отсутствует)",
+          "type": "quality"
+        },
+        {
+          "text": "secure_storage_abstracted — Settings-библиотека абстрагирована до capability 'platform secure storage' / 'защищённое хранилище', а не прямая ссылка на `Settings`/`multiplatform-settings` в теле",
+          "type": "quality"
+        },
+        {
+          "text": "four_question_test_documented — coverage-report.md содержит явные ответы на 4-question test (behavior dependency, integration rework, unique capability, cost/licensing) для каждой рассмотренной технологии",
+          "type": "process"
+        },
+        {
+          "text": "capability_first_phrasing — §10 записи используют паттерн '[capability] — currently provided by [tech], any equivalent is acceptable that preserves [property]' или эквивалентный",
+          "type": "quality"
+        },
+        {
+          "text": "spec_has_all_12_sections — oauth-spec.md содержит все 12 секций шаблона",
+          "type": "structural"
+        },
+        {
+          "text": "no_code_identifiers_in_body — в секциях 1-9 и 11 отсутствуют имена из кодовой базы: OAuthClient, OAuthTokens, OAuthResult, OAuthException, OAuthBrowser, PKCEGenerator, TokenStorage, OAuthStateStorage, AuthorizationUrlBuilder и другие CamelCase-типы из oauth модуля; состояния описаны в бизнес-терминах, а не именами sealed-class кейсов",
+          "type": "quality"
+        },
+        {
+          "text": "section_12_known_defects_present — спека содержит §12 Known defects (или явный N/A)",
+          "type": "structural"
+        },
+        {
+          "text": "section_12_entries_structured — каждая запись §12 содержит what / class / evidence (path:line) / consequence",
+          "type": "quality"
+        },
+        {
+          "text": "defect_weak_prng — §12 содержит запись про слабый PRNG (kotlin.random.Random вместо SecureRandom) для PKCE state или code_verifier",
+          "type": "correctness"
+        },
+        {
+          "text": "defect_nonsecure_token_storage — §12 содержит запись про токены в non-encrypted storage (multiplatform-settings) как security weakness",
+          "type": "correctness"
+        },
+        {
+          "text": "defect_process_death_asymmetry — §12 отмечает что process-death recovery только на Android (iOS/Desktop теряют in-flight auth)",
+          "type": "correctness"
+        },
+        {
+          "text": "section_13_is_code_map — §13 = Code Map с path:line",
+          "type": "structural"
+        }
+      ]
+    }
+  ]
+}
