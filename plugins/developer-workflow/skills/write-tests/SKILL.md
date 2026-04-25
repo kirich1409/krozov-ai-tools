@@ -304,6 +304,23 @@ If tests still fail after 3 attempts — produce a Coverage Diagnosis (see Phase
 that summarises what was attempted in each round and what the specific technical obstacle is.
 Stop and include the diagnosis in the final report.
 
+### 5.4 Commit and push (Regression Mode only)
+
+**Regression Mode only — skip in Normal Mode.**
+
+After all tests pass (Phase 5.1 green), commit the generated test file(s) and push to the
+current branch. Normal Mode leaves file management to the user; Regression Mode is invoked
+by `bugfix-flow` which expects the test to land as a commit on the PR branch automatically.
+
+```bash
+git add <test-file-paths>
+git commit -m "Add regression test: <one-line description of the scenario covered>"
+git push
+```
+
+The commit message should name the bug scenario, not just say "add test" — it becomes part
+of the permanent history explaining why this test exists.
+
 ---
 
 ## Phase 6: Report
