@@ -228,10 +228,14 @@ Steps:
    Proceed to Phase 5.1 (full test suite).
 5. **If GREEN on buggy code** → the test does NOT capture the regression. It is ineffective.
    Restore: `git reset HEAD -- . && git checkout -- .`
-   Report to the caller: "Regression test passes on the original buggy code — it does not
-   verify the fix. The test should be rewritten or deleted."
-   Do NOT continue to Phase 5.1 — return this finding to `bugfix-flow` as a Production Bug
-   so the test is revised or removed before Finalize.
+   Before returning to the caller, produce a Coverage Diagnosis (see Phase 6.5) that explains:
+   - What the test asserts and why that assertion passes even without the fix
+   - What aspect of the bug the test missed (wrong entry point, wrong layer, assertion
+     on a side effect rather than the cause, etc.)
+   - What would need to change for the test to actually catch the regression
+   Report to `bugfix-flow` as a Production Bug, attaching the diagnosis so the next
+   Implement invocation has a concrete direction.
+   Do NOT continue to Phase 5.1.
 
 **Conflict handling:** if `git revert` produces a merge conflict, accept the buggy side
 (`--theirs`) to ensure the working tree contains the original broken code:
@@ -295,8 +299,9 @@ For test bugs:
 2. Re-run the tests
 3. Repeat up to 3 times total
 
-If tests still fail after 3 attempts — stop and report the failing tests with details
-in the final report.
+If tests still fail after 3 attempts — produce a Coverage Diagnosis (see Phase 6.5)
+that summarises what was attempted in each round and what the specific technical obstacle is.
+Stop and include the diagnosis in the final report.
 
 ---
 
@@ -366,6 +371,43 @@ Target: {file/module path}
 ### 2. {short description}
 ...
 ```
+
+### 6.5 Coverage Diagnosis (Regression Mode — when test could not be completed)
+
+**Regression Mode only.** Produce this section when the regression test failed for any
+reason: ineffective test (GREEN on buggy code in Phase 5.0), tests still failing after
+3 fix attempts (Phase 5.3), or test could not be written at all.
+
+The diagnosis must answer three questions concisely:
+1. **What was tried** — what assertion / test approach was used
+2. **What blocked it** — the specific technical obstacle (not just "test failed"); e.g.:
+   - "The assertion targets the return value, but the bug is in a side effect on a
+     non-injectable static field"
+   - "The reproduction requires two threads interleaving; TestCoroutineDispatcher
+     serialises all work on one thread, preventing the race"
+   - "The affected code path is guarded by a native method with no test double"
+3. **What would make it testable** — what change to the code or test setup would
+   allow a reliable regression test in the future
+
+Save to `swarm-report/<slug>-regression-coverage.md`:
+
+```markdown
+# Regression Coverage Diagnosis: {bug slug}
+
+Date: {YYYY-MM-DD}
+Status: INEFFECTIVE | FAILED | NOT_ATTEMPTED
+
+## What was tried
+{test approach and assertion used, or why no test was written}
+
+## Technical obstacle
+{specific reason — concrete, not generic}
+
+## To make testable
+{what would need to change in code or test setup}
+```
+
+Reference this file in the PR body and in the report to `bugfix-flow`.
 
 ---
 

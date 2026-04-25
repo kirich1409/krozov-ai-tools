@@ -175,13 +175,25 @@ After the draft PR is created, evaluate whether a focused regression test is war
 **If no condition holds** → proceed directly to write-tests:
 **Stage: Implement → RegressionTest**
 
-**If conditions 1–4 hold** → stop and ask the user one question before proceeding:
+**If conditions 1–4 hold** → before asking the user, produce a 2–3 sentence diagnosis
+explaining specifically why automated test coverage is impractical for this particular bug.
+Base it on the root cause in `swarm-report/<slug>-debug.md`. The diagnosis should name
+the concrete obstacle — not just the condition label. Examples:
 
-> "A regression test for this fix may be impractical: [state the condition that fired].
-> Should I skip test coverage for this bug?"
+> "The bug is in `BluetoothManager.connect()` which relies on hardware adapter state.
+> A unit test cannot reproduce this because the adapter is not injectable and has no
+> test double in the current codebase."
 
-- User confirms skip → record the condition and confirmation in the draft PR body:
-  `Regression test coverage: skipped — <condition that fired> (user confirmed).`
+> "The crash occurs in a race between `onStop()` and a coroutine completing on the main
+> dispatcher. TestCoroutineDispatcher serialises all coroutines, so the interleaving that
+> triggers the bug never happens in tests."
+
+Then ask the user:
+
+> "[Diagnosis]. Should I skip regression test coverage for this bug, or write a test anyway?"
+
+- User confirms skip → record diagnosis and confirmation in the draft PR body:
+  `Regression test coverage: skipped — <diagnosis> (user confirmed).`
   **Stage: Implement → Finalize (regression test skipped — user confirmed)**
 - User wants a test despite the condition → proceed to write-tests:
   **Stage: Implement → RegressionTest**
@@ -210,11 +222,12 @@ Invoke `developer-workflow:write-tests` with:
 **Route by result:**
 - **Tests pass** → **Stage: RegressionTest → Finalize**
 - **Tests fail after 3 fix attempts** (write-tests `Phase 5.3` exhausted) → **Stop Point.**
-  Ask user to choose:
-  (a) Delete the failing test and continue to Finalize — document as "regression test
-      attempted but not viable" in the PR body
-  (b) Mark test `@Ignore`/`@Disabled` with a TODO linking to a follow-up issue, then
-      continue to Finalize
+  write-tests returns a `Coverage Diagnosis` (see `write-tests` Phase 6.5) — surface it to
+  the user before asking them to choose:
+  (a) Delete the failing test and continue to Finalize — record the diagnosis in the PR body
+      under "Regression test coverage: attempted but not viable — [diagnosis]"
+  (b) Mark test `@Ignore`/`@Disabled` with a TODO linking to a follow-up issue — record
+      diagnosis in the PR body; continue to Finalize
   (c) Route back to Implement to address the underlying issue before re-attempting the test
   Do NOT continue to Finalize with a failing test in the branch — it will break CI for
   everyone and undermines the purpose of regression coverage.
