@@ -44,12 +44,12 @@ Implement  -> Finalize         (skip conditions 1–5 hold + user confirmed — 
 RegressionTest -> Finalize
 RegressionTest -> Implement    (write-tests Production Bug OR user chose route-back at Stop Point — see Phase 2.2)
 Finalize   -> Acceptance       (PASS — no BLOCKs remain)
-Acceptance -> Escalated        (cap exhausted on Acceptance→Implement or Acceptance→Debug)
 Finalize   -> Implement        (ESCALATE after 3 rounds; user routes back)
 Finalize   -> Escalated        (ESCALATE after 3 rounds; user picks non-implement path)
 Acceptance -> PR               (VERIFIED — bug gone)
 Acceptance -> Implement        (FAILED — bug still reproduces or new bugs)
 Acceptance -> Debug            (FAILED — fix didn't address root cause)
+Acceptance -> Escalated        (cap exhausted on Acceptance→Implement or Acceptance→Debug)
 PR         -> Merged           (TERMINAL — no further transitions)
 PR         -> Implement        (review feedback requires code changes)
 PR         -> Escalated        (drive-to-merge blocker — DISCUSSION on P0/P1,
@@ -238,9 +238,11 @@ returning. The test appears as a separate commit on the PR branch.
   everyone and undermines the purpose of regression coverage.
 - **write-tests reports an Ineffective Test** (`write-tests` Phase 5.0 — test was GREEN on
   reverted/buggy code, meaning it does not catch the regression) → the test design is wrong,
-  not the fix. Route **RegressionTest → Implement** (max 1 time — see Backward Transitions).
-  Pass the Coverage Diagnosis as the anchor so the next Implement invocation understands
-  the root cause was not yet addressed by the current test design.
+  not the fix. This typically means the production code is not structured to expose the
+  regression at the test boundary (e.g., logic buried in a non-injectable dependency).
+  Route **RegressionTest → Implement** (max 1 time — see Backward Transitions) so Implement
+  can introduce the testability gap alongside the fix. Pass the Coverage Diagnosis as the
+  anchor describing what structural change is needed.
 - **write-tests reports a Production Bug** (`write-tests` Phase 5.2 — a test exposed a real
   bug in the production code that was not caught by the fix) → the fix is incomplete; route
   **RegressionTest → Implement** (max 1 time, shared cap — see Backward Transitions). Pass
