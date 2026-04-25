@@ -62,6 +62,8 @@ Acceptance  -> Cleanup         (VERIFIED)
 Acceptance  -> Migrate         (FAILED — regression, cause known; cap 3)
 Acceptance  -> Debug           (FAILED — regression, cause unclear; cap 1)
 Debug       -> Migrate         (root cause diagnosed)
+Debug       -> Stop            (Not Reproducible — report to user, ask for more info; TERMINAL)
+Debug       -> Escalated       (Escalated — findings reported, user decision required; TERMINAL)
 Cleanup     -> Acceptance      (missed usage found during deletion; cap 2)
 Cleanup     -> PR              (all old-tech artifacts removed, rebuild green)
 PR          -> Merged          (TERMINAL — no further transitions)
@@ -326,11 +328,16 @@ the final merge.
 
 ---
 
-## PR Strategy
+## PR Strategy (advisory)
 
-**Never do a large migration in a single PR.** One huge PR is hard to review, hard to roll
-back, and hides regressions until it's too late. Break migrations into small, independently
-mergeable PRs — each one green on its own.
+This section is a guide for how to split `implement` work into reviewable PRs. It is not a
+workflow prescription — the state machine has one `PR` state that covers all PRs for the
+migration. The split decisions are made in Phase 2 (Plan) and written into `migration-plan.md`.
+
+**Recommendation:** avoid doing a large migration in a single PR. One huge PR is hard to review,
+hard to roll back, and hides regressions until it's too late.
+
+Typical split pattern:
 
 | PR | Contents | Why separate |
 |----|----------|-------------|
@@ -340,7 +347,6 @@ mergeable PRs — each one green on its own.
 | **Bridge cleanup** | Remove `*Compat.kt` / `*Bridge.kt`, old implementations, old Gradle deps | Clearly separated; easy to verify nothing still references the old code |
 
 For each migration PR: all Snapshot tests must be green before it merges.
-The PR breakdown is determined in Phase 2 (Plan) and written into `migration-plan.md`.
 
 ---
 

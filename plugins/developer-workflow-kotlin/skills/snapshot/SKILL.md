@@ -17,7 +17,9 @@ acceptance criteria for the `code-migration` acceptance phase.
 
 **Orchestrator mode** (called from `developer-workflow-kotlin:code-migration`):
 - Reads targets and categories from `swarm-report/<slug>-migration-plan.md`
-- Writes `swarm-report/<slug>-behavior-spec.md`
+- Writes a single `swarm-report/<slug>-behavior-spec.md` containing all targets (one `##` section
+  per target); the slug comes from the orchestrator's migration slug. Multiple targets in one file
+  prevents slug collision and keeps the acceptance contract as a single reviewable artifact.
 
 **Standalone mode** (user invokes directly):
 - If the user has not specified what to snapshot, ask ONE question:
@@ -89,7 +91,7 @@ using this template:
 
 ```markdown
 # Behavior Specification: [TargetName]
-FROM: [technology] → TO: [technology]
+FROM: [technology] → TO: [technology]   <!-- omit TO: in standalone mode when target technology is unknown -->
 
 ## Public Interface
 | Method / Property | Inputs | Output / Side Effect | Notes |
@@ -126,11 +128,16 @@ Present the completed spec to the user using this prompt:
 > - Are there any quirks you want to mark as bugs to fix (rather than preserve)?
 > - Are there behaviors that should intentionally change after migration?
 >
-> Reply 'confirmed' to proceed, or point out anything to correct."
+> Confirm when ready to proceed, or point out anything to correct."
 
-**Do not return control until the user replies 'confirmed' or provides corrections.**
+**Do not return control until the user gives a clear affirmative** — any of: "confirmed", "yes",
+"ok", "looks good", "подтверждаю", "хорошо", "готово", or equivalent in the language they are
+communicating in. A correction ("fix X" or "add Y") is not an affirmative — update the spec and
+re-present it.
 
 If the user provides corrections: update the spec and re-present it. Repeat until confirmed.
 
-The confirmation is the shared contract for the migration. After confirmation, the spec is final
-and any changes require an explicit new snapshot or user override.
+The confirmation is the shared contract for the migration. After confirmation, the spec is final —
+any further changes require an explicit new snapshot invocation or user override. In orchestrator
+mode, the skill signals readiness by returning with the confirmed `behavior-spec.md` written to
+disk; the orchestrator treats file presence + return as the completion signal.
