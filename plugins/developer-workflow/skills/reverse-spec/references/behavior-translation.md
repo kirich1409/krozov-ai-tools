@@ -225,7 +225,15 @@ Spec:
 Library name drops. What stays: storage medium (key-value, here non-encrypted — flagged
 in §12), serialisation format, startup behavior.
 
-### 12. Defect observation → §9 Known defects entry
+### 12. Defect observation → §9 Known defects (behavior bug) OR hygiene artefact
+
+This recipe has two forks because Phase 4.0 must distinguish **behavior defects**
+(go to §9) from **implementation hygiene findings** (go to a separate
+`<slug>-hygiene.md` file). The classification rule lives in
+`analysis-checklist.md` §14; the hard line is: *if removing the finding does not
+change what the user observes when they use the feature, it is hygiene, not §9*.
+
+#### Fork A — Behavior defect (§9)
 
 Code:
 
@@ -237,23 +245,54 @@ Code:
 State file entry:
 
 > Phase 1 finding: DI module `authFeatureKoinModule` defined but never loaded.
-> Classification (Phase 4.0): confirmed defect — reproducible crash path.
+> Classification (Phase 4.0): behavior defect — sign-in tap crashes (observable
+> user consequence).
 
 §9 entry in the spec:
 
 > | Sign-in tap crashes on first use | crash | `AuthKoin.kt:12-18` defines the DI
 > module for the authorization use case but no call site loads it (verified by
-> grepping `InitKoin`, `AppModule`, and all platform DI modules) | Tapping the primary
-> action on the sign-in screen throws a dependency-resolution error and the app
-> crashes |
+> grepping `InitKoin`, `AppModule`, and all platform DI modules) | Tapping the
+> primary action on the sign-in screen throws a dependency-resolution error and
+> the app crashes |
 
-Note how the translation shifts framing from **code structure** ("`authFeatureKoinModule()`
-is not loaded") to **user consequence** ("sign-in tap crashes"). The code pointer stays
-as evidence; it does not become the subject of the sentence. That way a reimplementer
-on SwiftUI or web reads the entry and immediately knows "make sure the equivalent of
-'authorization use case' is wired into whatever dependency system we end up using" —
-rather than "match Koin's module-loading contract", which is a meaningless instruction
-on another stack.
+The translation shifts framing from **code structure** ("`authFeatureKoinModule()`
+is not loaded") to **observable user consequence** ("sign-in tap crashes"). The
+code pointer stays as evidence; it does not become the subject of the sentence. A
+reimplementer on SwiftUI or web reads the entry and knows "make sure the
+authorization use case is wired into whatever dependency system we end up using" —
+not "match Koin's module-loading contract", which is meaningless on another stack.
+
+#### Fork B — Implementation hygiene (separate artefact, NOT §9)
+
+Code:
+
+> `AuthScreen.kt:171` — `Text(text = "Cancel")`, a literal string instead of a
+> resource lookup. All other strings on the screen go through the resource
+> mechanism with keys in `strings.xml`.
+
+State file entry:
+
+> Phase 1 finding: "Cancel" hardcoded; rest of screen uses resources.
+> Classification (Phase 4.0): hygiene — feature behaves correctly today; the
+> problem only manifests when the project adds a non-English locale.
+
+`<slug>-hygiene.md` entry:
+
+> | Hardcoded "Cancel" label | localization-readiness | `AuthScreen.kt:171` —
+> literal string, not a resource lookup; rest of screen uses resources |
+> When the project ships a non-English locale, this single label will remain
+> English |
+
+The same code-finding could *not* go into §9 because the feature presently
+behaves correctly — the user sees "Cancel" in English alongside other English
+strings. Removing the finding (replacing the literal with a resource lookup)
+does not change what the user sees today. It is hygiene.
+
+Same fork applies to: weak PRNG for security values (feature flow completes;
+risk is secret strength), plaintext token storage (feature works; risk is
+device-compromise threat model), log leakage of sensitive data (feature works;
+risk is log exposure). All hygiene, not §9.
 
 ### 13. Internal navigation graph → named transitions
 

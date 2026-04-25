@@ -185,6 +185,20 @@ If the project already uses a different convention (`docs/specs/`, `specs/`, `do
 etc.), match it — consistency with the repo beats the skill's default. Announce the
 chosen path before writing.
 
+### 0.6 Project-overview check
+
+Check for a project-overview document at `docs/project-overview.md` (alternates:
+`docs/PROJECT.md`, `docs/overview.md`, `PROJECT.md`). If found, read it and reference
+it from the feature spec instead of duplicating project-wide context. If not found,
+offer to draft one and wait for user review before proceeding (or proceed without it
+if the user declines, noting the gap as `[OQ-N]`).
+
+Full protocol — when to check, what the overview contains, how the feature spec
+short-circuits when an overview exists, update discipline — in
+`references/project-overview-protocol.md`.
+
+Override: *"пропусти project-overview"* skips this phase entirely.
+
 ---
 
 ## Phase 1: Static Analysis
@@ -364,9 +378,11 @@ Template structure — product first, tech at the end, defined in full at
   Navigation, L10n & a11y, Analytics.
 - **Part B (§§8-9) Product decisions & risks** — Open Questions (body uses `[OQ-N]`
   cross-refs), Known Defects.
-- **Part C (§§10-12) Technical integration** — Data & integrations (8 subsections:
-  network ops / persistence / platform events / flags / services / contracts /
-  collaborators / domain model), Platform capabilities, Tech-specific constraints.
+- **Part C (§§10-12.5) Technical integration** — Data & integrations (8
+  subsections: network ops / persistence / platform events at capability level /
+  flags / services / contracts / collaborators at business level / domain model),
+  Platform capabilities, Tech-specific constraints, External references (links to
+  provider docs / RFCs).
 - **Part D (§13) Appendix** — Code map (the only place code identifiers are
   allowed).
 
@@ -450,6 +466,19 @@ The spec already lives at `docs/spec/<slug>.md`. Final steps:
   no longer needed.
 - Offer to commit: *"Спека сохранена в `docs/spec/<slug>.md`. Закоммитить?"*. Do not
   commit without explicit confirmation.
+- **Hygiene artefact (optional).** If the analysis surfaced implementation-level
+  concerns that did not qualify for §9 Known Defects (hardcoded strings, weak PRNG
+  for security values, plaintext token storage, log leakage, code-style issues),
+  save them to `docs/spec/<slug>-hygiene.md` per `references/analysis-checklist.md`
+  §14. Mention the artefact in the handoff: *"Также сохранил implementation-hygiene
+  findings в `docs/spec/<slug>-hygiene.md` (N items) — это backlog для команды,
+  поведения фичи не касается."* If no hygiene findings exist, mention briefly
+  (*"Hygiene artefact: не понадобился."*) and do not create the file.
+- **Project overview update flag.** If Phase 0.6 surfaced discrepancies between the
+  observed code and the existing project-overview document, mention them once:
+  *"В `docs/project-overview.md` поле <X> может быть устаревшим — наблюдаемое <Y>.
+  Обновлять не стал — вне scope текущей фичи."*. The skill never silently edits
+  the project overview.
 - If the user intends to use this spec for reimplementation on another stack, mention
   that `write-spec` and `decompose-feature` can take this spec as input for the new
   implementation.

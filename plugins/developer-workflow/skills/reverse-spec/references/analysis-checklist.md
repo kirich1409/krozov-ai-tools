@@ -284,32 +284,88 @@ Examples:
 - An error case is routed to a generic "Unknown error" screen — is that intentional
   grouping, or incomplete error handling?
 
-**Confirmed defect** (→ §9 Known defects in current implementation)
-The code demonstrably does something wrong. A rebuild must not reproduce it. Each
-entry requires three pieces of evidence:
+**Behavior defect** (→ §9 Known defects in current implementation)
+The code makes the **feature do something wrong as a feature** — the user observes
+incorrect behavior, the feature crashes, a control silently does nothing it should
+do, the wrong data is shown, an unreachable state is hit. A rebuild must not
+reproduce it. Each entry requires three pieces of evidence:
 1. Code pointer showing the defective state (path:line).
-2. Defect class (crash, unreachable code, security weakness, dead link, localization
-   gap, data loss, race condition, other).
-3. User-observable consequence or risk.
+2. Defect class (`crash`, `unreachable state`, `dead UI control`, `wrong-data shown`,
+   `silent failure`, `lost user action`, `incorrect state transition`, `other`).
+3. **Observable user consequence** — what the user sees or what intended outcome
+   is missed.
 
 Examples:
-- A use-case is wired into a dependency graph module that is never loaded → login tap
-  throws at runtime → **crash**.
+- A use-case is wired into a dependency graph module that is never loaded → login
+  tap throws at runtime → **crash**, user cannot sign in.
 - A link points to a URL with no registered handler → tap silently no-ops →
-  **dead link**.
-- Tokens are stored in plain KV storage → risk of credential theft if device is
-  compromised → **security weakness**.
-- A single label is hard-coded where the rest of the screen uses localized resources
-  → the label never translates → **localization gap**.
-- Non-cryptographic `Random` is used where security requires `SecureRandom` →
-  predictable values → **security weakness**.
+  **dead UI control**, user has no way to start sign-up from the app.
+- All non-network OAuth errors collapse into one "Unknown error" copy, including
+  the case where the provider explicitly returned `error=access_denied` → user who
+  *chose* to deny consent sees an error implying brokenness → **wrong-data shown**.
 
-**Hard line:** if you cannot produce all three pieces of evidence, the finding is not a
-defect — demote to §8 Open Questions. "Looks wrong" is not a defect report.
+**Implementation hygiene finding** (→ separate `<slug>-hygiene.md` artefact, NOT
+in §9)
+The code does something concerning at the *implementation* level, but the feature
+itself behaves as intended (or its behavior is unaffected). These are valuable
+findings for the engineering team, but they are not what §9 is for. They go into
+a separate hygiene artefact alongside the spec.
 
-The distinction matters because §9 is actionable: a reimplementer explicitly avoids
-these patterns; the original team can use §9 as a backlog. A §9 entry carries more
-authority than a §8 entry, which is why it has a higher evidence bar.
+Examples:
+- A single label is hard-coded where the rest of the screen uses localized
+  resources. Feature still behaves correctly today; problem manifests only when
+  the project ships another locale. → **hygiene** (localization-readiness).
+- Tokens are stored in plaintext key-value storage. Feature works; the risk is
+  about device-compromise threat models, not about feature behavior. →
+  **hygiene** (security posture).
+- Non-cryptographic `Random` for security-sensitive values like CSRF state or PKCE
+  verifier. Feature flow completes successfully; the problem is the strength of
+  the secret, not the feature behavior. → **hygiene** (security posture).
+- Logging of full redirect URL containing the OAuth `code`. Feature works; risk is
+  log exposure of a transient secret. → **hygiene** (security posture).
+- Mixed code conventions, dead code, copy-pasted blocks. → **hygiene**
+  (maintainability).
+
+**Hard line for §9 vs hygiene:** if removing the finding does not change *what the
+user observes when they use the feature*, it is hygiene, not §9. §9 is about
+behavior; hygiene is about how the code is written.
+
+**Hard line for §9 vs §8:** if you cannot produce all three pieces of evidence
+(code pointer, defect class, observable user consequence), the finding is not a
+behavior defect — demote to §8 Open Questions or to hygiene. "Looks wrong" is not
+a defect report.
+
+The distinction matters because each artefact has a different audience and
+different action: §9 binds the reimplementer to *not reproduce* a behavior; hygiene
+informs the original team's backlog without affecting the spec; §8 surfaces
+unknowns for clarification.
+
+## Hygiene artefact format
+
+When hygiene findings exist, save them to `<slug>-hygiene.md` next to the spec
+(`docs/spec/<slug>.md` → `docs/spec/<slug>-hygiene.md`). Format:
+
+```markdown
+# Implementation hygiene findings — <feature name>
+
+> Related spec: `<slug>.md`
+> Source: extracted during reverse-engineering at <commit-sha>
+
+These findings are about **how the current code is written**, not about what the
+feature does. The feature spec describes intent; this document tracks
+implementation-level concerns the engineering team may want to act on as a
+backlog.
+
+## Findings
+
+| What | Class | Evidence | Why it matters |
+| --- | --- | --- | --- |
+| Hardcoded "Cancel" label | localization-readiness | `AuthScreen.kt:171` — literal string instead of resource lookup | When the project adds a non-English locale, this single label will remain English |
+| Non-cryptographic `Random` for OAuth `state` and PKCE `code_verifier` | security posture | `OAuthClient.kt:180-185`, `PKCEGenerator.kt:14-19` | Predictable secrets reduce CSRF protection strength and weaken PKCE benefit |
+```
+
+If no hygiene findings exist, do not create the file. Mention in handoff:
+*"Hygiene artefact: not produced — no implementation-level concerns identified."*
 
 ---
 

@@ -94,23 +94,54 @@ behavior — §5.3 covers back-stack preservation, not process death.
 
 ## 3. UI description
 
-Tech-agnostic description of layout and components. Describe the *role* of each
-element, not its implementation. Allowed vocabulary: *primary action button*, *list*,
-*modal*, *input field*, *secondary link*, *toolbar*, *bottom sheet*, *spinner*,
-*avatar*. Forbidden vocabulary: `Button`, `LazyColumn`, `Box`, `Scaffold`, `UITableView`,
-`<Dialog>`, `Composable`, `Fragment`, `View`, `MaterialCard`, any component library name.
+This section describes the UI **only as much as needed to understand the feature** —
+not as a re-implementation of the design. A spec is not a substitute for design
+artefacts; the design source (Figma, screenshots, mockups) is authoritative for any
+pixel- or layout-level detail.
 
-For each screen / surface:
-- **Layout:** top-to-bottom or visual structure in prose; a labelled ASCII sketch is
-  welcome when it clarifies
-- **Components:** list with role and behavior ("primary action button labelled 'Confirm';
-  disabled until all required fields valid")
-- **Interactive states:** default, hover/focus, pressed, disabled, loading
-- **Transitions:** what animates, how, and why (if product-meaningful)
+### 3.1 Design source
 
-If a design source (Figma, screenshots) is available, link it here and note that the
-design source is authoritative for pixel-level details. The spec carries behavior and
-copy; the design source carries visuals.
+State the source of authoritative visuals:
+
+- **Figma:** `<link>` (file id, page name, frames included)
+- **Screenshots:** `<paths>` if attached
+- **Mockups:** `<links / paths>`
+
+If no design source exists, mark `Design source: none — describe with text below`. This
+is the only case where the §3.2 textual description below should attempt a substitute
+for visuals. With a design source, §3.2 is intentionally minimal.
+
+### 3.2 What the spec adds beyond the design source
+
+The spec carries information the design source does not, or that the reimplementer
+needs to interpret the design correctly:
+
+- **Component roles** — what each interactive element *does*, named in role terms
+  (*primary action button*, *secondary link*, *list*, *modal*, *input field*, etc.).
+  Forbidden: framework / toolkit names (`Button`, `LazyColumn`, `Composable`,
+  `UITableView`, `<Dialog>`, `MaterialCard`, etc.).
+- **Functional layout differences across screen sizes** — only when the feature
+  *behaves* differently (different actions available, different content visible),
+  not for purely visual responsive reflows. If the only difference between
+  compact / medium / expanded is decorative arrangement, the design source covers it
+  — do not duplicate.
+- **Interactive states** — default, focus, pressed, disabled, loading, error — only
+  when the design source lacks a state and behavior would otherwise be ambiguous.
+- **Transitions** — what animates, only when the *product meaning* of the animation
+  matters (e.g., crossfade between modes signalling state change). Decorative
+  motion belongs in the design source.
+
+### 3.3 Visual fidelity rule
+
+Pixel-perfect fidelity (exact margins, font sizes, colors) is the design source's
+responsibility, not the spec's. Hex colors, dp values, exact icon SVGs do not belong
+in the body. The exception: a single value that carries product meaning (the brand
+red, an accessibility-critical contrast ratio) — call it out and explain why it
+matters.
+
+If you find yourself describing the screen in detail because no design source exists,
+flag it as `[OQ-N] Missing design source` in §8 — the question for the user is whether
+to commission designs before reimplementation, not whether the spec should fill in.
 
 ## 4. States
 
@@ -239,35 +270,71 @@ entry here.
 
 ## 9. Known defects in current implementation (do not reproduce)
 
-Dedicated section for **confirmed bugs** — places where the current code does something
-that is clearly wrong, not something whose intent is unclear. A reimplementation must
-**not** reproduce these. The spec body above describes the feature as it is *intended*
-to work; this section flags where the current code deviates from that intent.
+This section is for **behavior bugs** — places where the feature does not do what it
+*should* do as a feature: it crashes, it shows the wrong thing, it silently fails to
+take an action the user expects, it reaches an unreachable state. A reimplementation
+must not reproduce these.
+
+Implementation-level concerns (a hardcoded string that bypasses i18n, plaintext
+storage of credentials, a non-cryptographic PRNG) are **not** in scope for §9 —
+they describe how the current code is written, not how the feature behaves. Those
+findings live in a separate `<slug>-hygiene.md` artefact alongside the spec
+(see `references/anti-patterns.md` and `references/analysis-checklist.md` §14 for the
+classification rule).
+
+### What counts as a §9 entry
+
+A finding belongs here only if **all three** are true:
+
+1. **It changes what the user observes.** The feature does X when it should do Y, or
+   crashes, or silently fails. Pure code-quality issues that do not surface
+   externally are not §9 material.
+2. **It is reproducible from code analysis alone, without speculation.** You can
+   point to the exact path and line that produces the wrong behavior.
+3. **It contradicts the feature's intent** as described in §§1-7 of this spec. If
+   the intent is unknown, the finding belongs in §8 Open Questions, not here.
 
 Each entry has four fields:
 
-- **What** — one-line description of the observable defect.
-- **Class** — one of: `crash`, `unreachable code`, `security weakness`, `dead link`,
-  `localization gap`, `data loss`, `race condition`, `other` (name it).
-- **Evidence** — `path:line` pointer plus short quote / scenario showing the defect.
-- **Consequence** — what the user would observe or what risk this creates.
+- **What** — one-line description of the observable misbehavior.
+- **Class** — one of: `crash`, `unreachable state`, `dead UI control`, `wrong-data
+  shown`, `silent failure`, `lost user action`, `incorrect state transition`,
+  `other` (name it).
+- **Evidence** — `path:line` pointer plus short quote / scenario showing the bug.
+- **Consequence** — what the user observes or what intended outcome is missed.
 
-Do not put ambiguous findings here. If you are not certain it is a defect (e.g., a
-retry count of 3 with unclear rationale), it belongs in §8 Open Questions, not here.
-Pass 2 of coverage verification requires every §9 entry to have direct evidence plus
-a stated reason it counts as a defect; speculation and "this looks wrong" do not
-survive that gate.
+Do not include ambiguous findings. If you are not certain it is a defect (e.g., a
+retry count of 3 with unclear rationale), it belongs in §8 Open Questions. Pass 2 of
+coverage verification requires every §9 entry to have direct evidence plus a stated
+behavior consequence; speculation and "this looks wrong" do not survive that gate.
 
-When §9 has no entries, write `N/A — no confirmed defects identified.` The absence
-of the section reads as oversight; explicit `N/A` is the correct signal.
+When §9 has no entries, write `N/A — no confirmed behavior defects identified.` The
+absence of the section reads as oversight; explicit `N/A` is the correct signal.
 
 ### Example entries
 
 | What | Class | Evidence | Consequence |
 | --- | --- | --- | --- |
-| Sign-in tap crashes on first use | crash | `AuthKoin.kt:12-18` defines the use-case module but no call site loads it — grepped `InitKoin`, `AppModule`, all `platformKoinModule.*.kt` | Tapping the primary action on the sign-in screen throws `NoBeanDefFoundException` and the app crashes |
-| Sign-up link does nothing | dead link | `DefaultAuthComponent.kt:32` opens `https://accounts.frame.io/welcome` via `deepLinkProcessor.open(...)`; no matcher is registered for that URL | The secondary link silently no-ops when tapped |
-| Non-cryptographic randomness used for PKCE state | security weakness | `PKCEGenerator.kt:14` uses `kotlin.random.Random`, not `SecureRandom` / `Security.randomBytes` | Predictable CSRF `state` weakens OAuth protection against cross-site request forgery |
+| Sign-in tap crashes on first use | crash | `AuthKoin.kt:12-18` defines the use-case module but no call site loads it — grepped `InitKoin`, `AppModule`, all `platformKoinModule.*.kt` | Tapping the primary action on the sign-in screen throws an unresolved-dependency error and the app crashes |
+| Sign-up link does nothing | dead UI control | `DefaultAuthComponent.kt:32` opens `https://accounts.frame.io/welcome` via the deep-link processor; no matcher is registered for that URL anywhere in the repo | The secondary link silently no-ops when tapped — the user has no way to start sign-up from inside the app |
+| Generic error shown when the OAuth provider explicitly denied access | wrong-data shown | `AuthUseCase.kt:46-53` maps every non-network OAuth failure (including provider `error=access_denied`) to the same "Unknown error" copy | The user who chose to deny consent on the provider screen is shown an error message implying something is broken, when in fact the system worked correctly |
+
+### What goes in `<slug>-hygiene.md` instead
+
+If you find any of the following, capture them in the hygiene artefact, not in §9:
+
+- Hardcoded strings that bypass localization
+- Non-cryptographic randomness for security-sensitive values
+- Tokens or secrets stored without encryption
+- Logging of sensitive data
+- Code-style inconsistencies (mixed conventions, dead code, copy-pasted blocks)
+- Missing input validation that does not yet manifest as a behavior bug
+- Test gaps
+
+These are valuable findings for the engineering team, but they are about *how* the
+code is written. The feature spec describes *what the feature does*. Mixing the two
+makes the spec less useful for product readers and dilutes the defect signal for
+reimplementers.
 
 <!-- ============================================================ -->
 <!-- Part C — Technical integration (§§10-12)                       -->
@@ -322,12 +389,28 @@ What the feature reads and writes to local storage.
 
 ### 10.3 Platform events and push
 
-- Platform events consumed (deep-link intents, app-lifecycle callbacks, OS-delivered
-  push payloads) — topic / URL pattern / event name as delivered by the platform.
-- Platform-level side effects the feature triggers (system toasts, haptics, audio,
-  clipboard writes, notifications, system vibration) — user-visible ones.
-- Feature-to-feature events (in-app event bus, cross-module signals) — name + payload
-  role + meaning. Analytics events go in §7, not here.
+Describe the **capability** the feature requires from the platform, not the specific
+mechanism the current code uses to obtain it. Implementation specifics — port
+numbers, intent filters, callback registration patterns, event-bus libraries — are
+the reimplementer's choice, not part of the contract.
+
+- **Platform events the feature reacts to** — what kind of external event causes the
+  feature to act, and what it does with the payload. Examples:
+  - "Application receives an OAuth redirect from the system browser and continues
+    the sign-in flow with the returned authorization code." *(not "intent-filter on
+    `adobe+...://authorize` triggers `OAuthRedirectActivity` which posts to ...")*
+  - "Application receives a notification of type `payment.required` and opens the
+    confirm screen with the order ID from the payload."
+- **Side effects the feature produces on the platform** — the *user-visible* outcome,
+  named at capability level. Examples:
+  - "Open external URL in the system browser."
+  - "Vibrate the device on payment confirmation."
+  - "Trigger a system notification with copy '...'"
+- **Feature-to-feature signals** — name and meaning of in-app signals other features
+  observe, not the bus library used. Analytics events live in §7, not here.
+
+If the only thing to say about platform events is "user taps a deep link and the
+feature opens", that one line is enough. Resist enumerating mechanism.
 
 ### 10.4 Flags and remote config
 
@@ -364,73 +447,88 @@ the wire contract, not the contract.
 
 ### 10.7 Collaborators and consumers
 
-Where this feature touches the rest of the application and the surrounding system. A
-reimplementation must preserve these boundaries — they define what the host app owes
-this feature, what other features can rely on it for, and what state must hold before
-and after the feature runs.
+Where this feature touches the rest of the application — at the **business** and
+**capability** level, not at the implementation level. The reimplementer needs to
+know *what kind* of host service this feature requires, not *which concrete class*
+the current code happens to call.
 
-The section has three parts: the **boundary** (who talks to whom), **preconditions**
-(what must be true before the feature operates), and **postconditions** (what the
-feature guarantees when it completes). All three are aspects of the same integration
-contract.
+If the project has a top-level overview document (see Phase 0.5 in SKILL.md), prefer
+references to it over inline enumeration. "This feature relies on the project's
+standard authenticated HTTP client (see project-overview.md §X)" beats listing every
+service the code touches.
 
 #### Boundary
 
-**Collaborators** — what this feature requires from the host app or other features.
+**Collaborators** — what kind of host functionality this feature requires.
 
-| Collaborator | Role | What the feature uses from it |
-| --- | --- | --- |
-| *<name, in business terms>* | configuration / service / state source | <concrete operations called, values read, streams subscribed to> |
+| Collaborator (business name) | Capability used |
+| --- | --- |
+| *<role, in business terms>* | <what the feature relies on this collaborator for, named at the level of behavior — "validates payment input", "delivers OAuth result back to the app", "renders authenticated user session", not "calls `validate(input)` on `PaymentValidator`"> |
 
-Types of collaborators to enumerate:
+Types of collaborators worth naming:
 
-- **Configuration sources** — values the host supplies at boot time (API hosts,
-  client IDs, feature flags, scopes). Constants hard-coded in the feature's own code
-  are not collaborators; values that come from outside it are.
-- **Services** — in-app modules the feature calls into (deep-link processor, shared
-  networking client, analytics dispatcher, navigation stack).
-- **Shared state sources** — observable streams / stores the feature reads from.
+- **Configuration sources** — what values the host must supply (provider host names,
+  API keys, feature flags, supported scopes). Do not name DI containers or factory
+  functions — name the values needed.
+- **Services and capabilities** — what host capabilities the feature consumes
+  (in-app navigation, an HTTP client that adds auth headers, deep-link routing).
+  Name the *capability* (e.g., "an authenticated HTTP client that attaches the
+  current bearer token"); name the SDK or class only when load-bearing per
+  `tech-abstraction.md`.
+- **Shared state** — what app-wide state streams the feature reads from (current
+  authenticated session, current locale, current theme).
 
-**Consumers** — what the rest of the app observes or depends on from this feature.
+**Consumers** — what other features observe or depend on from this feature.
 
-| Consumer | What it uses | Contract |
-| --- | --- | --- |
-| *<name>* | <output / stream / shared state / navigation arg> | <guarantee the feature provides> |
+| Consumer | What they consume |
+| --- | --- |
+| *<feature or surface>* | <what this feature provides to them — named at observable level> |
 
-Types of consumers to enumerate:
+Types of consumers worth naming:
 
-- Downstream screens that receive arguments on successful completion.
-- Other features that subscribe to state the feature writes (e.g., auth-state stream
-  consumed by every authenticated screen).
-- Shared storage slots the feature writes that other features read (e.g., access token
-  in platform key-value storage — read by the networking layer for every outbound
-  request).
-- Events / signals emitted for other features to react to.
+- Downstream features that receive a navigation argument on successful completion.
+- Other features that observe shared state this feature owns (current session,
+  current user id).
+- Storage slots written by this feature that downstream consumers read (the
+  feature is the writer of "user is authenticated"; the rest of the app is the
+  reader).
 
 #### Preconditions
 
-Must be true for the feature to behave as specified. If any precondition is violated,
-the feature's behavior is undefined — this is the contract the host app must satisfy.
+Conditions on the **product / business state** that must hold for the feature to
+behave as specified. Implementation-level setup (manifest entries, intent filters,
+Info.plist registrations, DI graph wiring) is the responsibility of the reimplementer
+on their stack — those are *implementation* preconditions, not feature
+preconditions, and they belong in the platform's own setup docs, not in this spec.
 
-- Host app has performed the required OS-level registration (custom URL scheme
-  handlers, manifest entries, Info.plist entries).
-- External configuration passed in is valid and reachable.
-- Any prerequisite feature has completed (e.g., user consent screen ran before this
-  feature loads).
+Examples of *feature* preconditions:
+
+- "The user is on a build that has been provisioned with valid OAuth client
+  credentials for the target environment."
+- "A previous step (consent screen) has been completed before this feature loads."
+- "An identity provider is reachable; offline behavior is described in §4."
+
+If a "precondition" reads as a developer setup checklist, it is implementation —
+move it out of the spec, or note it as a one-line reference: "Platform-level setup
+(manifest, Info.plist, etc.) follows the host app's standard OAuth integration
+pattern; not specified here."
 
 #### Postconditions
 
-State the feature guarantees upon successful completion. Consumers (listed above)
-depend on these guarantees; changing them is a breaking contract change.
+What the feature guarantees about **product / business state** when it completes
+successfully — the contract downstream features depend on.
 
-- Persistent state written (tokens stored, user id cached, flags set).
-- Observable streams updated to specific values.
-- Navigation stack manipulated in a specific way (current screen removed / next
-  destination pushed / stack replaced).
+- "The user has an authenticated session readable by other features."
+- "The user's preferred language has been recorded."
+- "The current screen has been removed from the back-stack so 'back' does not
+  return to it."
 
-If the feature is a closed leaf with no cross-feature boundary (purely local utility,
-self-contained screen with no external effects), write `N/A — this feature has no
-collaborators or consumers beyond its own scope.` Explicit N/A only; do not omit.
+Avoid listing exact storage keys, observable stream names, or navigation graph
+IDs — those are implementation. Describe the *outcome*, not the bookkeeping.
+
+If the feature is a closed leaf with no cross-feature boundary, write `N/A — this
+feature has no collaborators or consumers beyond its own scope.` Explicit N/A only;
+do not omit.
 
 ### 10.8 Domain model & invariants
 Data entities the feature owns or meaningfully reasons about, and the rules that must
@@ -482,6 +580,34 @@ technology constraints`.
 <!-- Part D — Appendix (§13)                                        -->
 <!-- Skip if not modifying the current implementation.              -->
 <!-- ============================================================ -->
+
+## 12.5 External references
+
+Links to the authoritative documentation for every external system, protocol, or
+SDK the spec mentions. A reimplementer following the spec must be able to look up
+what every external thing actually does, not just see its name.
+
+For each item, provide:
+
+- **Subject** — the system / protocol / SDK / standard
+- **Link** — a URL to its primary documentation (provider docs page, RFC, spec)
+- **What we use from it** — the subset the feature relies on (one line)
+
+Examples:
+
+- **Adobe IMS OAuth** — [`developer.adobe.com/frameio/guides/Authentication`](https://developer.adobe.com/frameio/guides/Authentication/) — Authorization Code + PKCE flow with custom URL-scheme redirect.
+- **OAuth 2.0 Authorization Code Grant** — [RFC 6749 §4.1](https://datatracker.ietf.org/doc/html/rfc6749#section-4.1) — the base protocol.
+- **PKCE** — [RFC 7636](https://datatracker.ietf.org/doc/html/rfc7636) — extension for public clients; this feature uses S256 challenge method.
+- **OAuth 2.0 native apps** — [RFC 8252](https://datatracker.ietf.org/doc/html/rfc8252) — guidance for OAuth in native applications, including loopback redirect on desktop.
+- **Google ML Kit Face Detection** — [`developers.google.com/ml-kit/vision/face-detection`](https://developers.google.com/ml-kit/vision/face-detection) — on-device face detector.
+
+A reimplementer who follows a link should land on the canonical source — the
+provider's own documentation, the IETF datatracker, the standard's authoring body.
+Do not link to blog posts, tutorials, or third-party explanations.
+
+If the feature has no external dependencies worth linking, write `N/A — feature is
+self-contained, no external systems involved.` Otherwise, every external system
+named anywhere in the spec must appear here.
 
 ## 13. Code map (appendix — skip if not reimplementing on the current stack)
 
