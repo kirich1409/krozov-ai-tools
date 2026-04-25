@@ -219,9 +219,10 @@ Steps:
    # Swift — run single test
    swift test --filter Suite/testMethod
    ```
-4. **If RED** (test fails) → contract verified. Restore working tree:
+4. **If RED** (test fails) → contract verified. Restore tracked files to pre-revert state
+   while keeping the untracked test file intact (it has not been committed yet):
    ```bash
-   git reset HEAD -- . && git checkout -- . && git clean -fd
+   git reset --hard HEAD
    ```
    Record in `swarm-report/<slug>-implement.md` (append one line):
    `Regression contract: VERIFIED — test RED on revert of fix commits (<hash-1>…<hash-N>), GREEN with fix.`
@@ -314,7 +315,7 @@ by `bugfix-flow` which expects the test to land as a commit on the PR branch aut
 
 ```bash
 git add <test-file-paths>
-git commit -m "Add regression test: <one-line description of the scenario covered>"
+git commit -m "Add regression test: <scenario — subject line ≤72 chars total>"
 git push
 ```
 
