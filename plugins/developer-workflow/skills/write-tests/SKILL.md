@@ -26,6 +26,13 @@ The user provides one or more of:
 - A module or directory (`feature/auth`, `:core:network`, `Sources/Auth`, an Xcode target)
 - A vague reference ("the auth module", "this class", "the login view")
 
+**Regression Mode:** the caller may additionally pass a `regression-scenario` — a structured
+description of the bug's root cause, reproduction steps, and expected vs actual behavior
+(typically from `swarm-report/<slug>-debug.md`). When present, the skill enters **Regression
+Mode**: it skips the broad coverage sweep (Phase 1.4), uses the scenario as the sole test
+case (Phase 3.1), and skips the prioritization question (Phase 3.2). The output is one
+focused test that would fail on the original buggy code and passes with the fix applied.
+
 Resolve vague references using a code-index tool when one is available in the environment;
 fall back to `Grep` / `Glob` + `Read` otherwise. If the reference remains ambiguous after
 resolution, ask **one clarifying question** before proceeding.
@@ -58,6 +65,9 @@ Search for existing tests:
 - Check for `@Test` (JUnit / Swift Testing) or `XCTestCase` subclasses that exercise target functions
 
 ### 1.4 Identify untested code
+
+**Skip this phase in Regression Mode.** The test case comes from the `regression-scenario`,
+not from a coverage gap analysis.
 
 Compare the public API surface against existing test coverage:
 - Functions/classes with no test references → fully untested
@@ -93,6 +103,16 @@ Test Infrastructure Summary template.
 
 ### 3.1 Generate test cases
 
+**Regression Mode:** use the `regression-scenario` as the single test case. Derive:
+- **What to test:** the exact reproduction scenario — no broader sweep
+- **Test type:** unit (preferred); integration only if the reproduction requires real
+  collaborators (e.g., database + service interaction)
+- **Dependencies to mock/fake:** only those required for the specific scenario
+- **Pass/fail contract:** the test must fail on the original buggy code and pass with
+  the fix applied; document this expectation as a comment in the test body
+
+**Normal Mode:**
+
 For each untested or partially tested class/function, determine:
 
 - **What to test:** public API, edge cases, error paths, state transitions
@@ -101,6 +121,9 @@ For each untested or partially tested class/function, determine:
 - **Input scenarios:** happy path, boundary values, null/empty, error conditions
 
 ### 3.2 Prioritize
+
+**Skip this phase in Regression Mode** — a regression scenario is always a single focused
+test case; no prioritization is needed.
 
 If the target is large (more than 5 classes to test), ask the user which classes or areas
 to prioritize. Present the list with a brief note on each:

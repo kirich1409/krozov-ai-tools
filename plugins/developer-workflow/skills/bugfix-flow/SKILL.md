@@ -39,7 +39,9 @@ Debug      -> Implement        (simple fix — root cause diagnosed, fix is clea
 Debug      -> Report           (not reproducible or escalated)
 Plan       -> Implement
 Plan       -> Debug            (multiexpert review FAIL — need more diagnostic context)
-Implement  -> Finalize
+Implement  -> RegressionTest   (non-trivial fix in testable code — see Phase 2.2)
+Implement  -> Finalize         (trivial fix or regression test skipped — see Phase 2.2)
+RegressionTest -> Finalize
 Finalize   -> Acceptance       (PASS — no BLOCKs remain)
 Finalize   -> Implement        (ESCALATE after 3 rounds; user routes back)
 Finalize   -> escalate         (ESCALATE after 3 rounds; user picks non-implement path)
@@ -153,6 +155,45 @@ If a draft PR already exists for this branch (re-entry on rollback), `--draft` i
 
 ---
 
+## Phase 2.2: Regression Test (optional)
+
+After the draft PR is created, evaluate whether a focused regression test is warranted.
+
+**Write a regression test when ALL of these hold:**
+1. Root cause (from `debug.md`) is in business logic, data layer, domain, or non-trivial
+   conditional code — not a typo, string constant, config value, or build config change
+2. A test source set exists adjacent to the affected module (test infrastructure is present)
+3. The reproduction steps can be expressed as a unit or integration test without requiring
+   a fully running device or external server
+
+**Skip when ANY of these holds:**
+1. Root cause is a typo, wrong string constant, configuration value, or build config
+2. Bug is purely visual — layout, rendering, styling with no testable logic path
+3. Existing tests already cover the exact reproduction scenario
+4. No test infrastructure found for the affected module
+
+**Announce transition:**
+- Write test: **Stage: Implement → RegressionTest**
+- Skip: **Stage: Implement → Finalize (regression test skipped — [reason])**
+
+**When writing the test:**
+
+Invoke `developer-workflow:write-tests` with:
+- **Target**: the fixed file(s) listed in `swarm-report/<slug>-implement.md`
+- **Regression scenario** assembled from `swarm-report/<slug>-debug.md`:
+  - Root cause
+  - Reproduction steps (verbatim)
+  - Expected vs actual behavior
+  - Explicit instruction: "Regression Mode — write one focused test for this scenario.
+    Do not sweep for other coverage gaps in this file."
+
+Wait for the test file to be committed and the test suite to pass.
+
+After `write-tests` completes, continue to Phase 2.5 (Finalize) — the regression test
+is now part of the commit history and will be included in the finalize code-quality pass.
+
+---
+
 ## Phase 2.5: Finalize (code-quality pass)
 
 After `implement` passes its two gates (mechanical checks + intent check), invoke `developer-workflow:finalize` with:
@@ -174,12 +215,16 @@ Wait for `swarm-report/<slug>-finalize.md`.
 
 ## Phase 3: Acceptance
 
-Bugfix-flow has no formal TestPlan stage — reproduction steps in `debug.md` act as the
-implicit test case. For bugs in critical flows that need a formal structured plan
-(regression protection, external QA handoff), run `/generate-test-plan` manually **before**
-`/bugfix-flow`, using the **same slug** as the bugfix so the saved file lands at
-`docs/testplans/<slug>-test-plan.md`. `acceptance` Branch 2 mounts by exact slug match; if
-the plan was generated under a different filename, rename it to
+Bugfix-flow has no formal TestPlan stage. Code-level regression testing is handled by
+Phase 2.2 (`write-tests` Regression Mode) — a focused test that prevents the bug from
+re-occurring in the automated test suite. Acceptance verifies the user-facing symptom:
+that the original reproduction steps no longer trigger the bug.
+
+For bugs in critical flows that additionally need a formal structured QA plan
+(external QA handoff, multi-scenario regression coverage), run `/generate-test-plan`
+manually **before** `/bugfix-flow`, using the **same slug** as the bugfix so the saved
+file lands at `docs/testplans/<slug>-test-plan.md`. `acceptance` Branch 2 mounts by
+exact slug match; if the plan was generated under a different filename, rename it to
 `docs/testplans/<slug>-test-plan.md` before running `/bugfix-flow` (see
 `acceptance/references/source-branches.md` §Branch 2).
 
