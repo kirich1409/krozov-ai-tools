@@ -81,7 +81,7 @@ This is a starting structure — adapt to what the project actually has. Aim for
 
 ## When the skill consults the document
 
-In Phase 0.5 (between scope-lock and static analysis), the skill:
+In Phase 0.6 (between output-path resolution and static analysis), the skill:
 
 1. Looks for the overview at the default and alternative paths.
 2. If found:
@@ -136,13 +136,13 @@ de), the skill:
 The skill never silently edits the project overview. Updates are user-driven, like
 the document's initial creation.
 
-## When to skip Phase 0.5
+## When to skip Phase 0.6
 
 - The user explicitly says "пропусти project-overview" or "у меня одиночный спек".
 - The repo is a single-feature library (no cross-feature context to share).
 - The skill is being run for retrospective documentation of a feature in a repo
   that has no plans for additional features.
 
-In all other cases, run Phase 0.5. The overhead is a 30-second file lookup; the
+In all other cases, run Phase 0.6. The overhead is a 30-second file lookup; the
 upside is dramatic when 5+ feature specs eventually exist and would have repeated
 the same boilerplate five times.

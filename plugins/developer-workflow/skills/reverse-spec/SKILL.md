@@ -111,10 +111,9 @@ Then **propose** a boundary to the user in one line:
 
 - **In scope** — the files and symbols that clearly implement the feature itself.
 - **Direct dependencies** — modules the feature calls into (repositories, shared UI
-  kit, auth, analytics) that will be referenced, not redescribed. Every module that
-  lands on this list is later detailed in §10.7 Collaborators and consumers as a
-  contract point (with role, operations used, and any pre/postconditions it must
-  satisfy). Keep the list here high-level; the contract detail belongs to §10.7.
+  kit, auth, analytics) that will be referenced, not redescribed. Every module on
+  this list is later detailed in §10.7 Collaborators and consumers as a capability
+  contract. Keep the list here high-level; contract detail belongs to §10.7.
 - **Out of scope** — unrelated modules surfaced by the scout but not part of this
   feature.
 
@@ -433,13 +432,13 @@ draft is presented.
 ### Definition of Done
 
 The three passes above are mechanical checks. The spec is only ready to hand off when
-the full **Definition of Done** checklist passes — nine binary gates covering section
+the full **Definition of Done** checklist passes — eleven binary gates covering section
 presence, the three Pass results, Open Questions and Known Defects completeness, Code
 map coverage, header fill, and user review. See `references/definition-of-done.md`
 for the detailed gates, rationale, and the handoff-format rules.
 
 A half-satisfied checklist is not a ready spec — it is a progress report. Never
-declare the draft ready unless all nine gates pass.
+declare the draft ready unless all eleven gates pass.
 
 ---
 

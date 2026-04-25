@@ -4,14 +4,14 @@ What to extract from code before talking to the user. Work through this list in 
 each section maps to a spec section. Capture findings verbatim in the state file — exact
 numbers, exact strings, exact conditions.
 
-For every item, answer three questions:
+For every item, answer two questions:
 1. **What** — the observable fact or value in code.
 2. **Under what condition** — the trigger or branch that makes it apply.
-3. **Is it feature-specific or project-wide** — flag obvious project-convention cases
-   (e.g. a shared `ErrorBanner` component); defer hard judgments to Phase 2 (Convention
-   Mapping).
 
-When in doubt, record the raw observation and move on. Interpretation happens later.
+When in doubt, record the raw observation and move on. Classification (intended
+behavior / unknown intent / behavior defect / hygiene finding, and feature-specific
+vs project-wide) happens in Phase 2 (Convention Mapping) and Phase 4.0 (Translate),
+not here. Capture literally first.
 
 **Code identifiers in the state file: allowed and encouraged.** The state file names
 classes, methods, types, file paths, line numbers — that is what makes it a useful

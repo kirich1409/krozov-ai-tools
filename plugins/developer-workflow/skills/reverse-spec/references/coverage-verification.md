@@ -104,20 +104,23 @@ Valid evidence sources:
   the project, recorded in Phase 2 findings.
 - **Explicit Open Question** — the claim is marked "assumed" in section 8 of the spec.
 
-**Extra bar for §9 Known defects entries.** A claim that the current code has a bug is
-stronger than a regular spec claim and requires more than "I saw this in the code" as
-evidence. Every §9 entry must have:
+**Extra bar for §9 Known defects entries.** §9 carries behavior bugs only — the
+feature does not do what it should as a feature. The classification rule (behavior
+defect vs implementation hygiene vs open question) lives in
+`analysis-checklist.md` §14. Every §9 entry must have:
 
-- A concrete code pointer showing the defective behavior (path:line with a short quote
-  or condition).
-- A stated defect class (crash, unreachable code, security weakness, dead link,
-  localization gap, data loss, race condition, other).
-- A stated consequence (what user sees, what risk is created).
+- A concrete code pointer showing the defective behavior (path:line with a short
+  quote or condition).
+- A defect class from the §14 enumeration (`crash`, `unreachable state`, `dead UI
+  control`, `wrong-data shown`, `silent failure`, `lost user action`, `incorrect
+  state transition`, `other`).
+- An observable user consequence — what the user sees or what intended outcome is
+  missed.
 
-If any of those three are missing, the entry is not a confirmed defect — downgrade it
-to §8 Open Questions and let a later clarification round (or user review) decide.
-Speculation disguised as a defect report is worse than a plain open question, because
-it signals false confidence.
+If any of those three are missing, the entry is not a behavior defect — demote to
+§8 Open Questions or to the `<slug>-hygiene.md` artefact per §14. Speculation
+disguised as a defect report is worse than a plain open question, because it
+signals false confidence.
 
 If a claim has no evidence, it is speculation and must be removed or rewritten:
 
@@ -135,7 +138,7 @@ The biggest failure mode of a reverse-engineered spec is describing the current 
 instead of the feature. The first two passes catch coverage and grounding. Pass 3
 catches vocabulary.
 
-**Scan every sentence in the body (Sections 1–9 and 11)** for any token that exists
+**Scan every sentence in the body (Sections 1–8 and 10–11)** for any token that exists
 only because this codebase exists. The pattern list:
 
 - `CamelCase` or `PascalCase` words that are class / interface / type names
@@ -173,7 +176,7 @@ The scan output goes into the state file as a short report:
 > 0 leaks."*
 
 If the grep / search tool is available, this pass can be partially automated:
-`rg -n "\b[A-Z][a-zA-Z]+(Client|Service|Repository|ViewModel|Component|Use[Cc]ase|State|Storage|Config|Result|Exception)\b"` through sections 1–9 and 11 flags the majority of candidate leaks. Human judgment still required on each hit.
+`rg -n "\b[A-Z][a-zA-Z]+(Client|Service|Repository|ViewModel|Component|Use[Cc]ase|State|Storage|Config|Result|Exception)\b"` through sections 1–8 and 10–11 flags the majority of candidate leaks. Human judgment still required on each hit.
 
 ---
 

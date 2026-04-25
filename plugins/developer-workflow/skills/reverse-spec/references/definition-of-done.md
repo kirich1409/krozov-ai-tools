@@ -101,7 +101,7 @@ Two items bundled as the final gate:
 
 ## Handoff format
 
-When all nine items are checked, the skill produces a one-line ready signal in the
+When all eleven items are checked, the skill produces a one-line ready signal in the
 Phase 6 / Phase 7 handoff:
 
 > *"Spec ready — all DoD gates passed. Saved at `docs/spec/<slug>.md`."*

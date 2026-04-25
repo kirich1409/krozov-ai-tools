@@ -12,8 +12,8 @@ translated into behavior. This file is the translation table.
 
 ## The rule
 
-**The body of the spec (Sections 1–9 and 11) must not contain any name that only exists
-in the current codebase.** That includes:
+**The body of the spec (Sections 1–8 and 10–11) must not contain any name that only
+exists in the current codebase.** That includes:
 
 - Class, interface, struct, object, record, module names
 - Method / function / property names

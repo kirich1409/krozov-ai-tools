@@ -118,30 +118,24 @@ needs to interpret the design correctly:
 
 - **Component roles** — what each interactive element *does*, named in role terms
   (*primary action button*, *secondary link*, *list*, *modal*, *input field*, etc.).
-  Forbidden: framework / toolkit names (`Button`, `LazyColumn`, `Composable`,
-  `UITableView`, `<Dialog>`, `MaterialCard`, etc.).
+  Use role names, not framework / toolkit names — see SKILL.md Principle 1 and
+  `behavior-translation.md` recipes 1, 4, 10.
 - **Functional layout differences across screen sizes** — only when the feature
   *behaves* differently (different actions available, different content visible),
-  not for purely visual responsive reflows. If the only difference between
-  compact / medium / expanded is decorative arrangement, the design source covers it
-  — do not duplicate.
+  not for purely visual responsive reflows.
 - **Interactive states** — default, focus, pressed, disabled, loading, error — only
   when the design source lacks a state and behavior would otherwise be ambiguous.
 - **Transitions** — what animates, only when the *product meaning* of the animation
   matters (e.g., crossfade between modes signalling state change). Decorative
   motion belongs in the design source.
 
-### 3.3 Visual fidelity rule
+The single exception to "no pixels": a value that carries product meaning (brand
+red, accessibility-critical contrast ratio) — call it out and explain why.
 
-Pixel-perfect fidelity (exact margins, font sizes, colors) is the design source's
-responsibility, not the spec's. Hex colors, dp values, exact icon SVGs do not belong
-in the body. The exception: a single value that carries product meaning (the brand
-red, an accessibility-critical contrast ratio) — call it out and explain why it
-matters.
-
-If you find yourself describing the screen in detail because no design source exists,
-flag it as `[OQ-N] Missing design source` in §8 — the question for the user is whether
-to commission designs before reimplementation, not whether the spec should fill in.
+If you find yourself describing the screen in detail because no design source
+exists, flag it as `[OQ-N] Missing design source` in §8 — the question for the
+user is whether to commission designs before reimplementation, not whether the
+spec should fill in.
 
 ## 4. States
 
@@ -452,7 +446,7 @@ Where this feature touches the rest of the application — at the **business** a
 know *what kind* of host service this feature requires, not *which concrete class*
 the current code happens to call.
 
-If the project has a top-level overview document (see Phase 0.5 in SKILL.md), prefer
+If the project has a top-level overview document (see Phase 0.6 in SKILL.md), prefer
 references to it over inline enumeration. "This feature relies on the project's
 standard authenticated HTTP client (see project-overview.md §X)" beats listing every
 service the code touches.
@@ -576,11 +570,6 @@ licensing — and therefore must carry over to any reimplementation. Examples:
 If nothing in the feature is load-bearing-tech, this section is `N/A — no load-bearing
 technology constraints`.
 
-<!-- ============================================================ -->
-<!-- Part D — Appendix (§13)                                        -->
-<!-- Skip if not modifying the current implementation.              -->
-<!-- ============================================================ -->
-
 ## 12.5 External references
 
 Links to the authoritative documentation for every external system, protocol, or
@@ -608,6 +597,11 @@ Do not link to blog posts, tutorials, or third-party explanations.
 If the feature has no external dependencies worth linking, write `N/A — feature is
 self-contained, no external systems involved.` Otherwise, every external system
 named anywhere in the spec must appear here.
+
+<!-- ============================================================ -->
+<!-- Part D — Appendix (§13)                                        -->
+<!-- Skip if not modifying the current implementation.              -->
+<!-- ============================================================ -->
 
 ## 13. Code map (appendix — skip if not reimplementing on the current stack)
 
