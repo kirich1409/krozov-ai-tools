@@ -145,11 +145,7 @@ Wait for `swarm-report/<slug>-implement.md` + `swarm-report/<slug>-quality.md`.
 
 ### 2.1 Create draft PR (early)
 
-After `implement` returns a clean Quality Loop result and the branch has been pushed, invoke `developer-workflow:create-pr` with the `--draft` argument:
-
-> Stage: Implement → Finalize (draft PR created)
-
-The draft PR body references the debug artifact (root cause + reproduction steps) and the fix summary. Subsequent stages run against the pushed PR branch, keeping remote state in sync.
+After `implement` returns a clean Quality Loop result and the branch has been pushed, invoke `developer-workflow:create-pr` with the `--draft` argument. The draft PR body references the debug artifact (root cause + reproduction steps) and the fix summary. Subsequent stages run against the pushed PR branch, keeping remote state in sync.
 
 If a draft PR already exists for this branch (re-entry on rollback), `--draft` is idempotent — it refreshes the body instead of failing.
 
@@ -158,23 +154,25 @@ If a draft PR already exists for this branch (re-entry on rollback), `--draft` i
 ## Phase 2.2: Regression Test (optional)
 
 After the draft PR is created, evaluate whether a focused regression test is warranted.
+**Default: write the test.** Only skip with explicit user confirmation.
 
-**Write a regression test when ALL of these hold:**
-1. Root cause (from `debug.md`) is in business logic, data layer, domain, or non-trivial
-   conditional code — not a typo, string constant, config value, or build config change
-2. A test source set exists adjacent to the affected module (test infrastructure is present)
-3. The reproduction steps can be expressed as a unit or integration test without requiring
-   a fully running device or external server
-
-**Skip when ANY of these holds:**
-1. Root cause is a typo, wrong string constant, configuration value, or build config
+**Conditions that make regression testing technically impractical:**
+1. Root cause is a typo, wrong string constant, configuration value, or build config change
 2. Bug is purely visual — layout, rendering, styling with no testable logic path
 3. Existing tests already cover the exact reproduction scenario
 4. No test infrastructure found for the affected module
 
-**Announce transition:**
-- Write test: **Stage: Implement → RegressionTest**
-- Skip: **Stage: Implement → Finalize (regression test skipped — [reason])**
+**If no condition holds** → proceed directly to write-tests:
+**Stage: Implement → RegressionTest**
+
+**If any condition holds** → stop and ask the user one question before proceeding:
+
+> "A regression test for this fix may be impractical: [state the condition that fired].
+> Should I skip test coverage for this bug?"
+
+- User confirms skip → **Stage: Implement → Finalize (regression test skipped — user confirmed)**
+- User wants a test despite the condition → proceed to write-tests:
+  **Stage: Implement → RegressionTest**
 
 **When writing the test:**
 
@@ -187,10 +185,15 @@ Invoke `developer-workflow:write-tests` with:
   - Explicit instruction: "Regression Mode — write one focused test for this scenario.
     Do not sweep for other coverage gaps in this file."
 
-Wait for the test file to be committed and the test suite to pass.
-
-After `write-tests` completes, continue to Phase 2.5 (Finalize) — the regression test
-is now part of the commit history and will be included in the finalize code-quality pass.
+**Route by result:**
+- **Tests pass** → **Stage: RegressionTest → Finalize**
+- **Tests fail after 3 fix attempts** (write-tests `Phase 5.3` exhausted) → continue to
+  Finalize and log the failing test as a finding in the PR body; it will be visible to
+  reviewers as a known issue.
+- **write-tests reports a Production Bug** (test correctly fails on the fixed code — see
+  `write-tests` Phase 5.2) → the fix is incomplete; route
+  **RegressionTest → Implement** (max 1 time — see Backward Transitions). Pass the
+  failing test assertion as the anchor for the next Implement invocation.
 
 ---
 
@@ -298,6 +301,7 @@ Do NOT re-summarize what the skill already told the user.
 | From | To | Trigger | Max |
 |------|----|---------|-----|
 | Plan | Debug | Plan-review FAIL — plan needs more diagnostic context | 1 |
+| RegressionTest | Implement | write-tests found production bug — fix is incomplete | 1 |
 | Finalize | Implement | ESCALATE — user routes back to fix root issues | 1 |
 | Acceptance | Implement | Bug still reproduces or new bugs | 2 |
 | Acceptance | Debug | Fix didn't address root cause (after 2 failed implementations), or acceptance finds a complex new bug that needs renewed diagnosis | 1 |

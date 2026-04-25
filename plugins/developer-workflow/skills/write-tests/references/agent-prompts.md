@@ -13,6 +13,8 @@ Every delegation prompt must include:
 3. **Test cases to implement** — from Phase 3 plan
 4. **Existing test examples** — path to 1-2 representative test files for style reference
 5. **Test plan** — if one was found in Phase 1.5, include its path
+6. **Regression scenario** — in Regression Mode only: the structured bug description from
+   Phase 1.1 (`regression-scenario` input). Omit or set to "N/A" in normal mode.
 
 ## Prompt template for kotlin-engineer
 
@@ -25,6 +27,9 @@ Read these files:
 
 ## Test Infrastructure
 {Test Infrastructure Summary from Phase 2}
+
+## Regression scenario (Regression Mode only — omit or "N/A" otherwise)
+{regression_scenario: root cause + reproduction steps + expected vs actual behavior}
 
 ## Test cases to write
 {list of test cases from Phase 3}
@@ -43,6 +48,9 @@ Read this existing test for style and conventions: {path to example test}
 - Place test files in the correct test source set and package
 - Each test function tests exactly one behavior
 - Test names describe the behavior being verified, not the implementation
+- IF Regression Mode (regression scenario is set): write EXACTLY ONE test for the
+  regression scenario above — do NOT sweep for other coverage gaps; add a one-line
+  comment on the test function: `// Regression: verifies fix for [root cause]`
 
 Respond in the same language as the user's request.
 ```
@@ -59,6 +67,9 @@ Read these files:
 ## Test Infrastructure
 {Test Infrastructure Summary from Phase 2}
 
+## Regression scenario (Regression Mode only — omit or "N/A" otherwise)
+{regression_scenario: root cause + reproduction steps + expected vs actual behavior}
+
 ## Test cases to write
 {list of test cases from Phase 3}
 
@@ -71,6 +82,9 @@ Read this existing test for style and conventions: {path to example test}
 - Use semantic matchers (onNodeWithText, onNodeWithTag) over implementation details
 - Write complete, compilable test files — no TODOs, no placeholders
 - Follow the project's existing conventions exactly
+- IF Regression Mode (regression scenario is set): write EXACTLY ONE test for the
+  regression scenario above — do NOT sweep for other coverage gaps; add a one-line
+  comment on the test function: `// Regression: verifies fix for [root cause]`
 
 Respond in the same language as the user's request.
 ```
@@ -86,6 +100,9 @@ Read these files:
 
 ## Test Infrastructure
 {Test Infrastructure Summary from Phase 2}
+
+## Regression scenario (Regression Mode only — omit or "N/A" otherwise)
+{regression_scenario: root cause + reproduction steps + expected vs actual behavior}
 
 ## Test cases to write
 {list of test cases from Phase 3}
@@ -106,6 +123,9 @@ Read this existing test for style and conventions: {path to example test}
 - Place test files in the correct test target / Tests directory and module namespace
 - For async code use `async` tests and structured concurrency; avoid `DispatchSemaphore` hacks
 - Each test function tests exactly one behavior; names describe behavior, not implementation
+- IF Regression Mode (regression scenario is set): write EXACTLY ONE test for the
+  regression scenario above — do NOT sweep for other coverage gaps; add a one-line
+  comment on the test function: `// Regression: verifies fix for [root cause]`
 
 Respond in the same language as the user's request.
 ```
@@ -121,6 +141,9 @@ Read these files:
 
 ## Test Infrastructure
 {Test Infrastructure Summary from Phase 2}
+
+## Regression scenario (Regression Mode only — omit or "N/A" otherwise)
+{regression_scenario: root cause + reproduction steps + expected vs actual behavior}
 
 ## Test cases to write
 {list of test cases from Phase 3}
@@ -138,6 +161,9 @@ Read this existing test for style and conventions: {path to example test}
 - Prefer accessibility identifiers / labels over view-tree internals for queries
 - Write complete, compilable test files — no TODOs, no placeholders
 - Follow the project's existing conventions exactly
+- IF Regression Mode (regression scenario is set): write EXACTLY ONE test for the
+  regression scenario above — do NOT sweep for other coverage gaps; add a one-line
+  comment on the test function: `// Regression: verifies fix for [root cause]`
 
 Respond in the same language as the user's request.
 ```
