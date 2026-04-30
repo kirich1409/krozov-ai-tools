@@ -1,322 +1,97 @@
-# Swift Testing — DO / DON'T Reference
+# Swift Testing — Non-Obvious Rules
 
-Rules for writing correct, readable, and maintainable tests using Swift Testing framework and XCTest. Prefer Swift Testing for all new test code.
+This file lists only the testing rules a modern Claude model omits or gets wrong without a reminder. Generic syntax — `@Test`, `#expect`, `@Suite`, basic async tests, `#expect(throws:)`, `XCTAssertEqual` for XCTest, parameterized tests with `arguments:` — is **not** documented here; trust the model and [Apple's Testing docs](https://developer.apple.com/documentation/testing).
 
----
-
-## Swift Testing vs XCTest
-
-**When to use Swift Testing (`@Test`):**
-- All new test code (Swift 5.10+, Xcode 16+)
-- Parameterized tests — first-class support
-- Better diagnostics — `#expect` shows actual vs expected inline
-- Async tests — cleaner syntax
-- Parallel by default — faster test suites
-
-**When to use XCTest (`XCTestCase`):**
-- Project targets < Swift 5.10
-- UI tests (XCUITest) — Swift Testing does not support UI testing
-- Performance tests (`measure { }`) — XCTest-only feature
-- Existing test suites — don't migrate unless there's a reason
-
-**Mixing:** Swift Testing and XCTest can coexist in the same target. Don't mix in the same file.
+For project-config decisions: prefer Swift Testing for new code. UI tests stay XCUITest. Performance `measure {}` stays XCTest. Don't mix Swift Testing and XCTest in the same file.
 
 ---
 
-## @Test and @Suite
+## `@Suite` Test Isolation
 
-**DO:**
-- Use `@Test("descriptive name")` with human-readable descriptions:
+Each `@Test` in a `@Suite struct` gets a **fresh instance**. `init` and `deinit` replace XCTest's `setUp` / `tearDown`. There is **no shared mutable state between tests by design** — store dependencies as `let` properties on the suite and each test sees them re-initialized.
 
-```swift
-@Test("Empty cart shows zero total")
-func emptyCartTotal() {
-    let cart = Cart()
-    #expect(cart.total == 0)
-}
-```
-
-- Use `@Suite` to group related tests:
+The model occasionally tries to share state via `static var` for "performance" — that breaks parallel execution and creates flaky tests.
 
 ```swift
 @Suite("Order cancellation")
 struct OrderCancellationTests {
-    let repository = FakeOrderRepository()
+    let repository = FakeOrderRepository()  // re-created per @Test
     let service: OrderService
-
-    init() {
-        service = OrderService(repository: repository)
-    }
-
-    @Test("Pending order can be cancelled")
-    func cancelPending() async throws {
-        repository.stubbedOrders = [.sample(status: .pending)]
-        try await service.cancel(orderID: .sample)
-        #expect(repository.cancelledOrderIDs.contains(.sample))
-    }
-
-    @Test("Shipped order cannot be cancelled")
-    func cancelShipped() async throws {
-        repository.stubbedOrders = [.sample(status: .shipped(trackingNumber: "123"))]
-        await #expect(throws: OrderError.self) {
-            try await service.cancel(orderID: .sample)
-        }
-    }
+    init() { service = OrderService(repository: repository) }
 }
 ```
 
-- Use `init()` for shared setup — each `@Test` gets a fresh instance (no shared mutable state)
+## `#require` vs `#expect`
 
-**DON'T:**
-- Never use `setUp` / `tearDown` — those are XCTest concepts. Use `init` and `deinit`
-- Never share mutable state between tests — each test method gets its own `@Suite` instance
-- Never use empty test names: `@Test func test1()` — always describe the behavior
+- `#expect(condition)` → assertion that continues on failure (records and proceeds).
+- `try #require(condition)` → guard-equivalent: fails the test AND unwraps. Use it when subsequent code depends on the result.
 
----
-
-## #expect and #require
-
-**DO:**
-- Use `#expect` for assertions that should continue on failure:
+The model defaults to `#expect` everywhere and writes manual `guard` clauses with `Issue.record`. Use `#require` to compress that:
 
 ```swift
-#expect(order.status == .pending)
-#expect(orders.count == 3)
-#expect(name.contains("Swift"))
-#expect(items.isEmpty)
-```
-
-- Use `#require` when subsequent code depends on the assertion (like `guard`):
-
-```swift
-let order = try #require(orders.first) // Fails test if nil, unwraps if non-nil
+let order = try #require(orders.first)  // fails if nil, unwraps if non-nil
 #expect(order.status == .pending)
 ```
 
-- Use `#expect(throws:)` for error assertions:
+Never `try!` in tests — `try #require` is the correct unwrap.
+
+## Parallel-by-Default Isolation
+
+**Swift Testing runs tests in parallel by default.** Anything touching shared global state — Keychain, file system, `UserDefaults`, environment variables, singletons, network — will race.
+
+For tests that genuinely cannot parallelize: apply `.serialized` trait at the suite or test level.
 
 ```swift
-// Assert specific error type
-await #expect(throws: OrderError.self) {
-    try await service.cancel(orderID: .invalid)
-}
-
-// Assert specific error value (if Equatable)
-#expect(throws: OrderError.notFound(.sample)) {
-    try service.find(id: .sample)
-}
-
-// Assert no error thrown
-#expect(throws: Never.self) {
-    try service.validate(order: .sample())
-}
+@Suite("Keychain integration", .serialized)
+struct KeychainTests { /* ... */ }
 ```
 
-**DON'T:**
-- Never use XCTest assertions (`XCTAssertEqual`, `XCTAssertNil`) in Swift Testing — use `#expect`
-- Never use `try!` or force-unwrap in tests — use `try #require` to safely unwrap with a clear failure
+This is the most common gotcha when migrating from XCTest. The model is unaware unless told.
 
----
+## Fakes Over Mocks
 
-## Parameterized Tests
-
-**DO:**
-- Use parameterized tests to avoid copy-paste test methods:
+Default to hand-written fakes. The model reaches for mocking frameworks (Cuckoo, Mockingbird) by reflex; in Swift, hand-written fakes are usually clearer and don't need a framework.
 
 ```swift
-@Test("Order status display name", arguments: [
-    (OrderStatus.pending, "Pending"),
-    (OrderStatus.confirmed, "Confirmed"),
-    (OrderStatus.shipped(trackingNumber: "ABC"), "Shipped"),
-    (OrderStatus.delivered, "Delivered"),
-    (OrderStatus.cancelled, "Cancelled"),
-])
-func statusDisplayName(status: OrderStatus, expected: String) {
-    #expect(status.displayName == expected)
-}
-```
-
-- Use `zip` for paired arguments:
-
-```swift
-@Test("Parsing", arguments: zip(
-    ["1", "2", "3"],
-    [1, 2, 3]
-))
-func parsing(input: String, expected: Int) throws {
-    #expect(Int(input) == expected)
-}
-```
-
-**DON'T:**
-- Never use parameterized tests with huge argument lists (>20) — split into focused test suites
-- Never use parameterized tests when different arguments need different assertions — write separate tests
-
----
-
-## Traits
-
-**DO:**
-- Use `.disabled` for temporarily skipped tests (with a reason):
-
-```swift
-@Test("Feature X integration", .disabled("Waiting for API v2 deployment"))
-func featureXIntegration() async throws { ... }
-```
-
-- Use `.timeLimit` for tests that must complete quickly:
-
-```swift
-@Test("Cache lookup is fast", .timeLimit(.minutes(1)))
-func cacheLookup() async { ... }
-```
-
-- Use `.tags` to categorize tests:
-
-```swift
-extension Tag {
-    @Tag static var networking: Self
-    @Tag static var persistence: Self
-}
-
-@Test("Fetch orders from API", .tags(.networking))
-func fetchOrders() async throws { ... }
-```
-
-- Use `.enabled(if:)` for conditional tests:
-
-```swift
-@Test("Keychain storage", .enabled(if: ProcessInfo.processInfo.environment["CI"] == nil))
-func keychainStorage() { ... }
-```
-
-**DON'T:**
-- Never leave `.disabled` tests without a reason — stale disabled tests accumulate
-- Never use `.enabled(if:)` to skip flaky tests — fix the flakiness
-
----
-
-## Fakes vs Mocks
-
-**DO — prefer fakes:**
-
-```swift
-// Fake — explicit behavior, no framework, readable
 final class FakeAPIClient: APIClient, @unchecked Sendable {
     var responses: [String: Any] = [:]
     private(set) var requestedPaths: [String] = []
-
-    func get<T: Decodable>(_ path: String, as type: T.Type) async throws -> T {
+    func get<T: Decodable>(_ path: String, as: T.Type) async throws -> T {
         requestedPaths.append(path)
-        guard let response = responses[path] as? T else {
-            throw APIError.notFound
-        }
-        return response
+        guard let r = responses[path] as? T else { throw APIError.notFound }
+        return r
     }
 }
 ```
 
-**Why fakes over mocks:**
-- No framework dependency — works everywhere
-- Readable — the behavior is right there in the code
-- Flexible — easy to add custom behavior for edge cases
-- Compile-time safe — protocol changes break fakes at compile time
+Reach for mocks only when: (a) a protocol has many methods and the test cares about one interaction; (b) verifying exact call count or order IS the contract under test.
 
-**When mocks are acceptable:**
-- Protocol has many methods and the test only cares about one interaction
-- Verifying exact call count or call order is the test's purpose
-- But prefer restructuring code to not need call verification
+`@unchecked Sendable` on a fake is acceptable when the test is single-threaded; under Swift 6 strict concurrency consider an actor-backed fake or proper synchronization.
 
-**DON'T:**
-- Never use mocking frameworks as the default — reach for them only when fakes become impractical
-- Never verify implementation details (method call order, exact arguments) unless that IS the contract
+## AsyncSequence Test Bounds
 
----
-
-## Async Test Patterns
-
-**DO:**
-- Async tests are first-class in Swift Testing:
+Consuming an `AsyncSequence` in a test must be **bounded** — break after N items or apply `.timeLimit`. Without a bound, an unfinished sequence makes the test hang forever, not fail. The model often writes `for await x in sequence { ... }` without an exit condition.
 
 ```swift
-@Test("Orders load from repository")
-func ordersLoad() async throws {
-    let repository = FakeOrderRepository()
-    repository.stubbedOrders = [.sample()]
-    let model = OrderListModel(service: OrderService(repository: repository))
-
-    await model.loadOrders()
-
-    #expect(model.orders.count == 1)
-    #expect(!model.isLoading)
+for await orders in repository.observeOrders() {
+    received.append(orders)
+    if received.count >= 1 { break }  // ← required
 }
 ```
 
-- Test AsyncSequence consumption:
+Or use `.timeLimit(.minutes(1))` as a safety net.
+
+## Traits — `.disabled` Needs a Reason
+
+`.disabled` always takes a reason string — without it, disabled tests accumulate as silent dead code:
 
 ```swift
-@Test("Observe orders emits updates")
-func observeOrders() async {
-    let repository = FakeOrderRepository()
-    repository.stubbedOrders = [.sample()]
-
-    var received: [[Order]] = []
-    for await orders in repository.observeOrders() {
-        received.append(orders)
-        if received.count >= 1 { break } // Don't hang
-    }
-
-    #expect(received.count == 1)
-}
+@Test("Feature X integration", .disabled("Waiting for API v2 deployment"))
+func featureXIntegration() async throws { /* ... */ }
 ```
 
-- Test error cases:
+Never use `.enabled(if:)` to silence flaky tests. Fix the flake (controllable clock, bounded async, deterministic fakes), don't hide it.
 
-```swift
-@Test("Cancelled order throws when not pending")
-func cancelNonPending() async {
-    let repository = FakeOrderRepository()
-    repository.stubbedOrders = [.sample(status: .delivered)]
-    let service = OrderService(repository: repository)
+## No `Thread.sleep` / `usleep`
 
-    await #expect(throws: OrderError.self) {
-        try await service.cancel(orderID: .sample)
-    }
-}
-```
-
-**DON'T:**
-- Never use `Thread.sleep` to wait for async operations — the test should `await` directly
-- Never use `Task.sleep` as a synchronization mechanism in tests — restructure the code
-- Never leave tests that can hang indefinitely — use `.timeLimit` trait or bounded loops
-
----
-
-## Test Organization
-
-**DO:**
-- One test file per production type: `OrderService.swift` -> `OrderServiceTests.swift`
-- Use `@Suite` to group by behavior, not by method name
-- Create test helpers as extensions on domain types:
-
-```swift
-extension Order {
-    static func sample(
-        id: OrderID = .sample,
-        status: OrderStatus = .pending,
-        items: [OrderItem] = []
-    ) -> Order {
-        Order(id: id, items: items, status: status, createdAt: .now)
-    }
-}
-
-extension OrderID {
-    static let sample = OrderID(rawValue: "test-order-1")
-}
-```
-
-- Keep test helpers in a shared file (`TestHelpers.swift` or `Fixtures.swift`)
-
-**DON'T:**
-- Never put business logic in test helpers — they should only create test data
-- Never share mutable state between test files — each test must be independent
+Async tests must not wait via wall-clock sleep. Use `Task.sleep` only when a delay is genuinely needed; better, inject a controllable clock (`Clock` protocol or project-specific fake) so the test advances time deterministically.
