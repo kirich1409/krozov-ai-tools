@@ -97,6 +97,41 @@ See [`references/test-infrastructure-discovery.md`](references/test-infrastructu
 assertions, mocking, async, UI, DI, naming, placement, setup, assertion style) and the exact
 Test Infrastructure Summary template.
 
+### Framework detection (canonical algorithm)
+
+Engineer agents (`kotlin-engineer`, `compose-developer`, `swift-engineer`, `swiftui-developer`) follow this fixed order. Stop at the first step that yields a definite answer.
+
+1. **Inspect the build file** for test-framework dependencies.
+   - `build.gradle.kts` / `build.gradle` — JUnit 4/5, MockK, Mockito, `kotlin.test`, Kotest, `androidx.compose.ui:ui-test-junit4`, Paparazzi, Robolectric.
+   - `Package.swift` / `Podfile` / `*.xcodeproj` — XCTest, `swift-testing` (Apple), Quick / Nimble, ViewInspector, swift-snapshot-testing.
+   - `package.json` — Vitest, Jest, Mocha, Playwright.
+   - `pom.xml` — JUnit, Mockito, TestNG.
+   - `Cargo.toml` — built-in `#[test]`, `proptest`.
+2. **Inspect existing test files** in conventional locations: `src/test/`, `src/androidTest/`, `Tests/`, `spec/`, `__tests__/`.
+   - Identify framework, assertion library, mocking approach, naming convention, and arrange-act-assert / given-when-then style.
+3. **Match the existing project**, even when multiple frameworks coexist.
+   - In a mixed project, follow the framework already in use **in the module being modified**.
+   - Never introduce a new framework or style without explicit user approval.
+4. **Apply the platform default** only when no signal exists in the project.
+
+#### Platform defaults
+
+| Platform | Default |
+|---|---|
+| Android / Kotlin (JVM) | JUnit 5 + MockK |
+| Kotlin Multiplatform | `kotlin.test` (with `expect` / `actual` test doubles) |
+| Compose UI | `androidx.compose.ui:ui-test-junit4` |
+| iOS / Swift, toolchain ≥ 5.9 | `swift-testing` |
+| iOS / Swift, toolchain < 5.9 | XCTest |
+| SwiftUI | XCUITest, ViewInspector, or preview-based tests — match what is already in the project |
+| Web / JavaScript / TypeScript | Vitest (default); Jest if the project already pins Jest |
+
+#### Escalation rules
+
+- **More than one framework in existing tests** → engineer picks by majority of files in the affected module; if the split is even, asks one clarifying question before generating.
+- **Detected framework is unavailable in the toolchain** (e.g. `swift-testing` on toolchain < 5.9) → fall back to the older platform default; record the fallback in the Test Infrastructure Summary and in a header comment of the generated test.
+- **Required framework dependency is missing entirely** → engineer stops and asks the user before adding the dependency. `write-tests` does not auto-add dependencies.
+
 ---
 
 ## Phase 3: Plan Test Cases

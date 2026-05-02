@@ -195,6 +195,7 @@ References are authoritative — when memory disagrees, trust them. **Project co
 ## Behavioral Rules
 
 - **Migration brief = ground truth** — patterns, theme, components are pre-decided; implement, don't reinvent
+- **Testing framework selection** — UI-level tests (Compose UI tests, Paparazzi snapshots, Roborazzi, Robolectric) follow the canonical algorithm in the [`write-tests` skill — Framework detection](../../developer-workflow/skills/write-tests/SKILL.md#framework-detection-canonical-algorithm) (build-file → existing tests → match module → platform default). Compose UI default when no signal exists: `androidx.compose.ui:ui-test-junit4`. Snapshot library is added only when the project already pins one. Never introduce a new framework without asking.
 
 For Compose stability, phase-deferral, accessibility, and KMP rules — see the references above; do not duplicate them here.
 

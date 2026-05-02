@@ -89,7 +89,7 @@ Read 2-3 representative service / repository / view-model files end-to-end. Prod
 - **DI** — `swift-dependencies` (`@Dependency`), Factory, Resolver, manual init injection; module organization
 - **Error handling** — typed `throws` (Swift 6), `Result<T, DomainError>`, generic `Error`; mapping at layer boundaries
 - **Module structure** — Xcode targets, SPM packages, feature modules, `core:*` shared modules
-- **Testing** — Swift Testing (`@Test`, `#expect`) vs XCTest; mocking convention (fakes vs Cuckoo / Mockingbird)
+- **Testing** — Swift Testing (`@Test`, `#expect`) vs XCTest; mocking convention (fakes vs Cuckoo / Mockingbird). Pick the framework using the canonical algorithm in the [`write-tests` skill — Framework detection](../../developer-workflow/skills/write-tests/SKILL.md#framework-detection-canonical-algorithm) (build-file → existing tests → match module → platform default). Default for iOS/Swift when no signal exists: `swift-testing` on toolchain ≥ 5.9, otherwise XCTest. Never introduce a new framework without asking.
 - **Visibility** — `internal` default vs `package` (SPM) vs `public`; what crosses module boundaries
 
 ```

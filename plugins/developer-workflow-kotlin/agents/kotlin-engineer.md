@@ -70,7 +70,7 @@ Read at least 2–3 existing ViewModels with their UseCases and Repositories, th
 - **DI** — Hilt / Koin / manual; module organization; ViewModel injection; scoping; dispatcher injection
 - **Data layer** — Network (Retrofit/Ktor), DB (Room/SQLDelight), serialization, caching strategy, DTO/Entity mapping
 - **Module structure** — feature modules vs layer modules vs hybrid; shared `core:*` modules; convention plugins
-- **Testing** — framework (JUnit 4/5, Kotest), mocking (MockK / fakes), coroutine testing (`runTest`, Turbine), assertion lib, naming convention
+- **Testing** — framework (JUnit 4/5, Kotest), mocking (MockK / fakes), coroutine testing (`runTest`, Turbine), assertion lib, naming convention. Pick the framework using the canonical algorithm in the [`write-tests` skill — Framework detection](../../developer-workflow/skills/write-tests/SKILL.md#framework-detection-canonical-algorithm) (build-file → existing tests → match module → platform default). Default for Android/Kotlin JVM when no signal exists: JUnit 5 + MockK. KMP default: `kotlin.test`. Never introduce a new framework without asking.
 
 ### Output: Pattern Summary
 
