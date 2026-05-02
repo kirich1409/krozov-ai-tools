@@ -56,6 +56,8 @@ Group related test cases by feature area, screen, or workflow
 
 | Field | Value |
 |-------|-------|
+| **Type** | unit / integration / ui-instrumentation / ui-scenario / screenshot / e2e |
+| **Type rationale** | One short line — why this type catches the AC failure with the smallest scope |
 | **Priority** | P0 Critical / P1 High / P2 Medium / P3 Low |
 | **Tier** | Smoke / Feature / Regression |
 | **Preconditions** | What must be true before starting |
@@ -149,6 +151,8 @@ Example for a feature with two phases:
 #### TC-1: Successful login with valid credentials
 | Field | Value |
 |-------|-------|
+| **Type** | ui-instrumentation |
+| **Type rationale** | Single screen; assertions on visible state after a user action. Smaller scope (`unit`) cannot cover the screen-level state transition. |
 | **Priority** | P0 Critical |
 | **Tier** | Smoke |
 | **Preconditions** | User account exists, email is verified |
@@ -167,6 +171,8 @@ Example for a feature with two phases:
 #### TC-4: Request reset email from login screen
 | Field | Value |
 |-------|-------|
+| **Type** | ui-scenario |
+| **Type rationale** | Multi-screen journey (login → forgot → confirmation); cheaper to maintain as a re-runnable scripted scenario than a full e2e suite. |
 | **Priority** | P0 Critical |
 | **Tier** | Feature |
 | **Preconditions** | User account exists |
@@ -194,12 +200,16 @@ for non-interactive surfaces.
 
 ```markdown
 #### TC-[N]: [Short title]
+| **Type** | unit / integration |
+| **Type rationale** | Why this scope catches the AC failure with the smallest cost |
 | **Priority** | P0/P1/P2/P3 |
 | **Tier** | Smoke/Feature/Regression |
 | **Preconditions** | [state] |
 | **Scenario (Given/When/Then)** | Given X, When Y, Then Z |
 | **Source** | [Spec §section / inferred from code] |
 ```
+
+Non-UI features are typically `unit` or `integration`. UI types (`ui-instrumentation`, `ui-scenario`, `screenshot`, `e2e`) do not appear in the lightweight template — if a UI type is needed, switch back to the full TC template.
 
 Example:
 
