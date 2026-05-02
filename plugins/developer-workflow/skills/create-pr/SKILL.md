@@ -175,7 +175,7 @@ Body composition is mode-aware.
 
 ### 7.1 Section bank
 
-The body is composed from a catalog of optional sections: What changed, Why / motivation, Artifacts, How to test, Status, Screenshots / demo, Checklist, and a trailing Claude Code footer. Include only the sections that apply for the current mode and available artifacts.
+The body is composed from a catalog of optional sections: What changed, Why / motivation, Artifacts, How to test, **Release Notes** (when user-visible changes are detected), Status, Screenshots / demo, Checklist, and a trailing Claude Code footer. Include only the sections that apply for the current mode and available artifacts.
 
 See [`references/body-sections.md`](references/body-sections.md) for the full section-bank templates with example content and status-table formatting.
 
@@ -187,9 +187,33 @@ See [`references/body-sections.md`](references/body-sections.md) for the full se
 | Why / motivation | ✅ | ✅ | ✅ | ✅ |
 | Artifacts | ✅ (as they appear) | ✅ (keeps current) | ✅ | ✅ if exist |
 | How to test | from plan if exists | from test-plan if exists | full | ✅ |
+| Release Notes | placeholder + open question if user-facing | refresh from spec/test-plan if user-visible signals | final entry per detected changelog format | ✅ when user-visible |
 | Status | "Implement: in progress" | updated from latest artifacts | all PASS | optional |
 | Screenshots | placeholder + prompt user | keep as-is | verify filled | prompt |
 | Checklist | unchecked | keep user edits | verify items consistent | unchecked |
+
+### 7.2.1 Release Notes section (user-visible changes)
+
+The Release Notes section captures what users of the plugin / library / app will see, in a form ready to paste into the project's changelog at release time. The section appears in the PR body when at least one of the following signals is true:
+
+- The spec / clarify / plan declares any of: `user-facing: true`, `prod-bound: true`, `breaking: true`, `release_notes:` block in frontmatter.
+- The diff touches a public API surface (`/api/`, public functions, exported types in barrel files, plugin manifests, marketplace metadata).
+- The user passed `--release-notes "..."` to `create-pr`.
+
+When emitted, the section follows the format the repo already uses — detect by file presence:
+
+| Repo file | Format used in PR body |
+|---|---|
+| `CHANGELOG.md` (root or per-plugin) | Keep-a-Changelog bullet, classified as one of `Added` / `Changed` / `Fixed` / `Deprecated` / `Removed` / `Security`. Breaking changes flagged with a leading `**Breaking:**` |
+| `.changeset/` directory | A `type: patch \| minor \| major` block plus the one-line summary (matches Changesets convention) |
+| `RELEASE_NOTES.md` or `docs/CHANGELOG.md` | Same Keep-a-Changelog format as `CHANGELOG.md` |
+| None of the above | Plain bullet list under `## Release Notes` — the project owner copies it into whichever changelog mechanism they adopt later |
+
+The section is text only — `create-pr` does NOT modify `CHANGELOG.md`, `.changeset/`, or any release-notes file in the repo. Writing to those files is the project owner's choice at release time. Including the entry in the PR body keeps the change visible at review time without committing format-specific files (which would conflict with release tooling that owns those files).
+
+`--skip-release-notes` opts out of the section even when signals match — recorded in the PR body as `Release notes: skipped (<reason>)`.
+
+The PR receipt records `release_notes: emitted | skipped: <reason> | not-applicable` so downstream stages and audits can tell which path was taken.
 
 ### 7.3 Detect visual changes
 

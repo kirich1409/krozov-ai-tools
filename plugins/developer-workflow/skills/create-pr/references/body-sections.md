@@ -22,6 +22,29 @@ Available sections (include only those that apply):
 - [ ] Scenario 1
 - [ ] Scenario 2
 
+## Release Notes
+<!--
+  Emitted when the change is user-visible (see SKILL.md §7.2.1).
+  Format follows the project's existing changelog convention; choose ONE form:
+
+  Keep-a-Changelog (CHANGELOG.md / RELEASE_NOTES.md):
+  ### Added
+  - Short user-facing description (#NNN)
+
+  Changesets (.changeset/):
+  type: minor
+  Short user-facing description.
+
+  No project changelog yet — plain bullet:
+  - **<Area>:** short user-facing description.
+
+  Breaking change marker (any format):
+  **Breaking:** describe what users must do to migrate.
+
+  When the section is intentionally skipped:
+  > Release notes: skipped (<reason>)
+-->
+
 ## Status
 <!-- Table: Implement / Finalize / Acceptance stages, pass/fail/pending from artifacts -->
 | Stage | Result | Notes |
