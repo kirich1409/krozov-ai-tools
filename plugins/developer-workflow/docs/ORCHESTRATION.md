@@ -260,7 +260,7 @@ Review these changes and produce a structured verdict.
 
 | Expert | Trigger — files touch any of: |
 |--------|-------------------------------|
-| `security-expert` | Auth, encryption, token/secret storage, network requests, permissions, user data handling |
+| `security-expert` | Either (a) the spec / plan declares `risk_areas` containing any of `auth`, `payment`, `pii`, `data-migration`; or (b) the diff matches the [pattern-trigger table](../skills/finalize/SKILL.md#security-expert-pattern-triggers) — any **narrow** pattern, or **two or more broad** patterns. A single broad pattern fires a scoped review (e.g. "audit the network layer for regressions"), not a full audit. |
 | `performance-expert` | RecyclerView/LazyColumn adapters, database queries, image loading, coroutine dispatchers, hot loops, large collections |
 | `architecture-expert` | New modules created, dependency direction changed, public API modified, new abstractions introduced |
 | `test-coverage-expert` (engineer-agent role, no separate file) | New public API in the diff with no matching test, `<slug>-test-plan.md` declares Test Cases not implemented in the test code, data layer / repository / service files modified without new test files, or `--coverage-audit` override |

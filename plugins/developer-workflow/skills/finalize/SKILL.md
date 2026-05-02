@@ -38,8 +38,12 @@ The caller (orchestrator or user) provides:
   - `--allow-warn` — stop after 1 round even if WARN findings remain (default: still exit PASS on WARN-only, but keep iterating BLOCKs until resolved or round budget runs out)
   - `--skip-experts` — omit Phase D (rarely useful; experts auto-skip if no triggers match)
   - `--max-rounds N` — override the default 3-round cap. Use when the user wants one more round after an ESCALATE, without restarting the whole stage. Must be ≥ 1.
+<<<<<<< HEAD
   - `--coverage-audit` — force-on the Phase D `test-coverage-expert` trigger even when none of the diff conditions match. Useful for explicit pre-release coverage sweeps.
   - `--skip-coverage-audit` — turn off the Phase D `test-coverage-expert` trigger for this round. Discouraged; recorded verbatim with the user reason in the finalize report's `acknowledged risks` section.
+=======
+  - `--skip-security-review` — turn off both the `risk_areas`-based and the pattern-based `security-expert` triggers for this round. Discouraged; recorded verbatim with the user reason in the finalize report's `acknowledged risks` section. Other Phase D experts still fire on their own triggers.
+>>>>>>> 8ed44a8 (finalize Phase D: security-expert pattern triggers)
 
 ---
 
@@ -153,6 +157,30 @@ Trigger experts only when the diff matches their domain. Launch the matching one
 Trigger matrix lives in [`docs/ORCHESTRATION.md` § Phase D expert-review triggers](../../docs/ORCHESTRATION.md#phase-d-expert-review-triggers) — that document is the single source of truth. Do not duplicate it here; read the matrix before executing.
 
 No trigger matched → skip Phase D entirely for this round.
+
+### `security-expert` pattern triggers
+
+The default `risk_areas`-based trigger only fires when the spec or plan explicitly declared `auth` / `payment` / `pii` / `data-migration`. Bug fixes, trivial features, and any task that arrives without a spec slip through. To close that gap, Phase D additionally fires `security-expert` when the diff matches the patterns below.
+
+| Category | Pattern (path or diff content) | Tier |
+|---|---|---|
+| Network layer | path under `/network/`, `/api/`, `/http/`, `/rpc/`, `/graphql/` | broad |
+| Auth / Crypto | path under `/auth/`, `/crypto/`, `/token/`, `/session/` | narrow |
+| Credential storage | diff mentions `SharedPreferences`, `EncryptedSharedPreferences`, `Keychain`, `UserDefaults`, `localStorage`, `sessionStorage`, `document.cookie`, `KeyStore` | narrow |
+| Supply chain | new dependency line added in `build.gradle*`, `Podfile`, `Package.swift`, `package.json`, `pom.xml`, `Cargo.toml`, `requirements.txt`, `pyproject.toml`, `go.mod` | narrow |
+| DB migrations | path under `migrations/`, `*.sql`, `Migration.kt`, `schema.prisma`, Flyway / Liquibase configs, `alembic/` | narrow |
+| Deserialization | Jackson / Gson / `kotlinx.serialization` config blocks; unsafe Python-pickle usage, `XMLDecoder`, `ObjectInputStream` in diff | narrow |
+
+**Threshold (false-positive control):**
+
+- **At least one narrow pattern** → full security review (same as `risk_areas` trigger).
+- **Two or more broad patterns** → full security review.
+- **Exactly one broad pattern, no narrow** → **scoped review** — launch `security-expert` with a narrowed prompt that names the specific surface (e.g. "audit the network layer for regressions only"), not a full audit. Cuts false-positive review time roughly in half.
+- **No pattern + no `risk_areas`** → security-expert does not fire. Other Phase D experts may still trigger.
+
+**Override.** `--skip-security-review` on `finalize` (Tolerance flags above) turns off both `risk_areas` and pattern-based security triggers for the round. Recorded verbatim in `<slug>-finalize.md`'s `acknowledged risks` section with the user's reason. Discouraged.
+
+**Source.** Patterns are evaluated against the unified diff between the remote default branch's merge-base and `HEAD` (same derivation as Phase A's diff materialisation). Renames are followed; pure rename-without-content-change does not trigger.
 
 ### Handling expert findings
 
