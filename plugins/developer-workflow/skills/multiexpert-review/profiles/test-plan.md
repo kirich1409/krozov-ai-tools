@@ -29,7 +29,7 @@ verdicts: [PASS, WARN, FAIL]
 severity_mapping:
   - items: ["a", "b", "c"]
     severity: critical
-  - items: ["d", "e"]
+  - items: ["d", "e", "g"]
     severity: major
 
 source_routing:
@@ -44,27 +44,28 @@ receipt:
 
 ## Rubric
 
-Every reviewer must evaluate the test-plan against these five items and report the status of each one explicitly in their response. Copy the items verbatim into the review prompt so findings are comparable across agents:
+Every reviewer must evaluate the test-plan against these items and report the status of each one explicitly in their response. Copy the items verbatim into the review prompt so findings are comparable across agents:
 
 - **(a) AC coverage** — every Acceptance Criterion from the linked spec has ≥1 Test Case that verifies it. Missing or weak mapping is a violation.
 - **(b) Negative balance** — every happy-path (positive) TC has ≥2 unhappy/negative TCs covering the same flow (invalid input, error states, boundary violations, concurrent or race conditions). A plan that is mostly happy paths violates this item.
 - **(c) Edge cases present** — at least one TC is explicitly tagged as an edge case (boundary value, empty/null, maximum size, timezone/locale boundaries, concurrency, resource exhaustion, etc.). If the plan has no edge-case TC at all, this item is violated.
 - **(d) Non-functional scenarios where applicable** — if the linked spec mentions any of {SLA, latency budget, throughput, a11y, auth, encryption, PII, resource limits, rate limits}, there must be ≥1 non-functional TC covering that concern (performance, accessibility, security). Applicability is driven by spec content — if the spec mentions none of these triggers, this item is trivially satisfied.
 - **(e) Priority-risk alignment** — priorities (P0–P3) are consistent with risk assessment: any high-risk flow (data loss, auth, payment, destructive actions) is at P0–P1; any user-facing critical path is at P0–P1; trivial/informational cases are at P2–P3. Mismatch between stated risk and assigned priority violates this item.
+- **(g) Instrumentation declared** — when the spec / task is `user-facing` or `prod-bound`, or the feature touches an observability hot-path (network calls, payments, background jobs, auth, data migrations), the test plan ends with a `## Non-functional / Instrumentation` section that lists Log events / Metrics / Traces / Alerts / Dashboards (or sub-headings filled with concrete declarations). For internal / dev-only / pure-refactor work, an explicit `N/A: <reason>` (one line) is acceptable. A missing section, or one labelled simply `TBD` / `?` / blank, violates this item.
 
 ## Verdict policy
 
 | Verdict | Trigger | Exit condition |
 |---------|---------|----------------|
 | **FAIL** (blocker) | Any of items **(a)**, **(b)**, **(c)** is violated | Plan MUST be revised. Engine drives the revise-loop up to 3 cycles. After 3 cycles still FAIL → escalate to user. Pipeline is blocked. |
-| **WARN** (non-blocking) | Items (a)–(c) all satisfied, but **(d)** or **(e)** is violated | Pipeline continues. Engine records `review_verdict: WARN` in the receipt with the explicit list of violated items. No revise-loop required. |
-| **PASS** (clean) | All five items satisfied | Pipeline continues unconditionally. Engine records `review_verdict: PASS` in the receipt. |
+| **WARN** (non-blocking) | Items (a)–(c) all satisfied, but **(d)**, **(e)**, or **(g)** is violated | Pipeline continues. Engine records `review_verdict: WARN` in the receipt with the explicit list of violated items. No revise-loop required. |
+| **PASS** (clean) | Every item satisfied | Pipeline continues unconditionally. Engine records `review_verdict: PASS` in the receipt. |
 
 A single critical from any agent with medium-or-higher confidence is enough to trigger FAIL, matching the engine's aggregation rules.
 
 ## Prompt augmentation
 
-Every agent reviewing a test-plan receives the following 5-item checklist verbatim in their Step 3 prompt (the engine substitutes this section into `{PROFILE_PROMPT_AUGMENTATION}` literally — not by reference to the Rubric section above). Each agent must explicitly report the status of each item (satisfied / violated, with rationale). The engine parses these into the severity mapping.
+Every agent reviewing a test-plan receives the following checklist verbatim in their Step 3 prompt (the engine substitutes this section into `{PROFILE_PROMPT_AUGMENTATION}` literally — not by reference to the Rubric section above). Each agent must explicitly report the status of each item (satisfied / violated, with rationale). The engine parses these into the severity mapping.
 
 ---
 
@@ -75,6 +76,7 @@ Every agent reviewing a test-plan receives the following 5-item checklist verbat
 - **(c) Edge cases present** — at least one TC is explicitly tagged as an edge case (boundary value, empty/null, maximum size, timezone/locale boundaries, concurrency, resource exhaustion, etc.). If the plan has no edge-case TC at all, this item is violated.
 - **(d) Non-functional scenarios where applicable** — if the linked spec mentions any of {SLA, latency budget, throughput, a11y, auth, encryption, PII, resource limits, rate limits}, there must be ≥1 non-functional TC covering that concern (performance, accessibility, security). Applicability is driven by spec content — if the spec mentions none of these triggers, this item is trivially satisfied.
 - **(e) Priority-risk alignment** — priorities (P0–P3) are consistent with risk assessment: any high-risk flow (data loss, auth, payment, destructive actions) is at P0–P1; any user-facing critical path is at P0–P1; trivial/informational cases are at P2–P3. Mismatch between stated risk and assigned priority violates this item.
+- **(g) Instrumentation declared** — when the spec / task is `user-facing` or `prod-bound`, or the feature touches an observability hot-path (network calls, payments, background jobs, auth, data migrations), the test plan ends with a `## Non-functional / Instrumentation` section that lists Log events / Metrics / Traces / Alerts / Dashboards (or sub-headings filled with concrete declarations). For internal / dev-only / pure-refactor work, an explicit `N/A: <reason>` (one line) is acceptable. A missing section, or one labelled simply `TBD` / `?` / blank, violates this item.
 
 For every Issue you raise, use the item ID as the title stem — e.g. `(a) AC coverage: API X has no test case`. This keeps synthesizer aggregation greppable.
 
