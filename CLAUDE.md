@@ -9,7 +9,7 @@ Rules that are not open for discussion. Violating these is an error, not a judgm
 - **Never run `npm publish` locally.** Publishing is exclusively via GitHub Actions — prevents partial releases and version skew.
 - **All 8 version locations must stay in sync.** A version bump touches all `plugin.json` files, `package.json`, and `marketplace.json` simultaneously — see Publishing for the list.
 - **Critical or Major violations of PLUGIN-STANDARDS.md block the release.** Fix first, release later.
-- **All extension content is written in English.** Skills (`SKILL.md`, references, evals), agents (`agents/*.md`), hooks, MCP servers, plugin manifests (`plugin.json`, `marketplace.json`), and any prompt/instruction text shipped inside `plugins/` must be in English. User-facing chat in any language is fine; the shipped extension content itself targets an international audience and must not contain non-English prose. Code identifiers and external API field names keep their original form regardless of language.
+- **All extension content is written in English.** Skills (`SKILL.md`, references, evals), agents (`agents/*.md`), hooks, MCP servers, plugin manifests (`plugin.json`, `marketplace.json`), and any prompt/instruction text shipped inside `plugins/` must be in English. User-facing chat in any language is fine; the shipped extension content itself targets an international audience and must not contain non-English prose. Code identifiers and external API field names keep their original form regardless of language. **Excluded:** repository documentation under `docs/` and top-level `README.md` — these are maintainer-facing and may be in any language. Do not "fix" them to English.
 
 ## Project
 
