@@ -1,6 +1,6 @@
 {
   "name": "developer-workflow-kotlin",
-  "version": "0.11.1",
+  "version": "0.12.0",
   "description": "Kotlin, Android, and KMP specialist agents and migration skills \u2014 kotlin-engineer, compose-developer, code-migration, kmp-migration, migrate-to-compose. Extends developer-workflow for Kotlin/Android projects.",
   "author": {
     "name": "kirich1409"
@@ -18,11 +18,11 @@
   "dependencies": [
     {
       "name": "developer-workflow",
-      "version": "^0.11.1"
+      "version": "^0.12.0"
     },
     {
       "name": "developer-workflow-experts",
-      "version": "^0.11.1"
+      "version": "^0.12.0"
     }
   ]
 }
