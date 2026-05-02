@@ -114,45 +114,45 @@ Round N — review proposals
 ## P1 — Important
 
 2. **Flow.collect leaks without a cancellation guard on rotate.** @bob,
-   api/Repo.kt:88 (same pattern at :120). Delegate to `implement`: переписать
-   оба места на `repeatOnLifecycle(STARTED)`, ничего больше не трогать.
+   api/Repo.kt:88 (same pattern at :120). Delegate to `implement`: rewrite
+   both call sites to `repeatOnLifecycle(STARTED)`, do not touch anything else.
 
 ## P2 — Suggestion
 
-3. **Уточнить scope для v1 vs v2.** @bob, api/Repo.kt:91. Ревьюер спросил, нужно
-   ли это для initial release. Ответить в треде: "Targeting v2 — opening a
+3. **Clarify scope for v1 vs v2.** @bob, api/Repo.kt:91. Reviewer asked
+   whether this is needed for the initial release. Reply in the thread: "Targeting v2 — opening a
    follow-up issue. Does that work?"
 
 ## P3 — Nit
 
-4. **Локальная переменная `tmp` непонятна.** @alice, ui/Screen.kt:12.
-   Переименовать `tmp` → `pendingUser`.
+4. **Local variable `tmp` is unclear.** @alice, ui/Screen.kt:12.
+   Rename `tmp` → `pendingUser`.
 
 ## P4 — Praise / Out-of-scope / NoAction
 
-5. **PRAISE.** @alice. Reply: "Thanks — appreciated." Резолв.
+5. **PRAISE.** @alice. Reply: "Thanks — appreciated." Resolve.
 
 6. **OUT_OF_SCOPE.** @carol, api/Repo.kt:200. Reply: "Valid concern, out of scope
-   for this PR. Follow-up issue если скажешь." Резолв.
+   for this PR. I can open a follow-up issue if you'd like." Resolve.
 
 ## Blockers
 
-нет.
+none.
 
 ## Summary
 
-6 пунктов: 2 правки, 1 делегирование, 2 dismiss, 1 уточнение.
+6 items: 2 edits, 1 delegation, 2 dismissals, 1 clarification.
 ```
 
 ### Format rules
 
 - Sections in order P0 → P1 → P2 → P3 → P4. Skip empty buckets.
-- Numbering is **continuous** across sections (1, 2, 3 …) — gate-команды (`approve`, `skip 1,4`, `stop`) ссылаются на эти номера.
-- Each item: `**Bold headline.**` (one sentence про суть) + `@author, file:line.` + 1–2 sentences context and action. Snippet inline indented when relevant (≤15 lines).
-- Quote the reviewer verbatim only when paraphrase loses meaning. Иначе перевести в суть и пропустить кавычки.
-- No labels, no `→`, no category/actionability/delegate columns — приоритет уже сказан секцией; что делать — последним предложением.
-- `## Blockers` section всегда выводится последней (одно слово «нет.» если пусто) — это то, что останавливает раунд для пользователя.
-- `## Summary` — одна строка с разбивкой по типам действий.
+- Numbering is **continuous** across sections (1, 2, 3 …) — gate commands (`approve`, `skip 1,4`, `stop`) reference these numbers.
+- Each item: `**Bold headline.**` (one sentence on the gist) + `@author, file:line.` + 1–2 sentences of context and action. Snippet inline indented when relevant (≤15 lines).
+- Quote the reviewer verbatim only when paraphrase loses meaning. Otherwise paraphrase to the essence and drop the quotes.
+- No labels, no `→`, no category/actionability/delegate columns — the priority is already conveyed by the section; what to do is the last sentence.
+- `## Blockers` section is always rendered last (one word "none." if empty) — this is what stops the round for the user.
+- `## Summary` — one line with the breakdown by action type.
 
 ### Gate behaviour
 

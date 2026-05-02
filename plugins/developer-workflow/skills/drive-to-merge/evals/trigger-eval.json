@@ -1,13 +1,13 @@
 [
   {"query": "drive this PR to merge — monitor CI, handle reviews, push fixes", "should_trigger": true},
   {"query": "get this PR merged — I don't want to babysit it", "should_trigger": true},
-  {"query": "доведи PR до мержа автоматически, сам разбирайся с ревью и CI", "should_trigger": true},
+  {"query": "drive this PR to merge automatically — handle review and CI yourself", "should_trigger": true},
   {"query": "ship this PR — it's been waiting for 3 days, just drive it home", "should_trigger": true},
   {"query": "land this PR — handle reviewer comments, rerun failed CI, merge when green", "should_trigger": true},
-  {"query": "замержь этот PR — веди его до конца, сам отвечай на комментарии", "should_trigger": true},
+  {"query": "merge this PR for me — drive it to completion, reply to comments yourself", "should_trigger": true},
   {"query": "monitor CI and reviews on this PR and keep pushing until it's in", "should_trigger": true},
   {"query": "run the autonomous merge loop on PR #142 — auto-apply fixable comments", "should_trigger": true},
-  {"query": "веди PR — рестарть упавшие чеки, отвечай на комменты, force-push-with-lease если надо", "should_trigger": true},
+  {"query": "drive this PR — restart failing checks, reply to comments, force-push-with-lease when needed", "should_trigger": true},
   {"query": "drive this MR to merge in GitLab — same story, CI plus reviews", "should_trigger": true},
 
   {"query": "create a PR from the current branch — write the description and open it as draft", "should_trigger": false},

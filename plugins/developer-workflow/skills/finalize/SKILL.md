@@ -6,7 +6,7 @@ description: >
   Runs code-reviewer, /simplify, optional pr-review-toolkit trio, and conditional expert reviews
   with /check between rounds; exits PASS when no BLOCK findings remain or ESCALATE after max rounds.
   Triggers: "finalize", "run code quality pass", "clean up the code", "prepare for review",
-  "полируй код", "финализация", "доведи код", "почисти".
+  "polish the code", "tidy up", "harden the implementation".
 ---
 
 # Finalize

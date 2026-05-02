@@ -4,7 +4,7 @@ description: >
   This skill should be used when the user wants an existing PR/MR driven to merge —
   monitor CI, triage review comments, fix failures, re-request review, loop until merged.
   Triggers: "drive this PR to merge", "get this PR merged", "monitor CI and reviews",
-  "ship this PR", "land this PR", "доведи PR до мержа", "веди PR", "замержь этот PR".
+  "ship this PR", "land this PR", "take this PR all the way", "merge this PR for me".
   Do NOT use for creating new PRs (use create-pr) or code written from scratch (use implement).
 ---
 
@@ -35,7 +35,7 @@ compaction — the user never edits it.
 | `--auto` | Same table shown for visibility, then proceeds without waiting; merge step still asks |
 | `--dry-run` | Runs analysis and renders the decision table once; makes no edits, pushes, or posts; exits |
 
-Trigger words equivalent to `--auto`: "действуй автономно", "без подтверждений", "auto mode", "не спрашивай". The skill echoes which mode it is running in before Phase 2.
+Trigger words equivalent to `--auto`: "act autonomously", "without confirmations", "auto mode", "don't ask". The skill echoes which mode it is running in before Phase 2.
 
 The merge step in Phase 5 **always** asks — `--auto` does not override that.
 

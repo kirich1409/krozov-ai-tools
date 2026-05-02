@@ -8,7 +8,7 @@ description: >
   with a draft-or-ready prompt. Composes description from available swarm-report artifacts
   (research, plan, test-plan, finalize, acceptance) and falls back to git log + diff. Invoke
   when the user says "create PR", "open draft PR", "refresh PR description", "promote to ready",
-  "mark PR ready for review", "обнови PR", "переведи в ready", or when feature-flow /
+  "mark PR ready for review", "update the PR", "switch the PR to ready", or when feature-flow /
   bugfix-flow orchestrators call this skill at a lifecycle step.
 ---
 

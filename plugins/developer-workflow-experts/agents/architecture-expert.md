@@ -1,6 +1,6 @@
 ---
 name: "architecture-expert"
-description: "Use this agent when the user asks for architectural review, evaluation of module structure, dependency analysis, API design between modules, or decomposition advice. Also use when a plan or implementation involves architectural decisions that need validation.\\n\\nExamples:\\n\\n- user: \"Посмотри на структуру модулей в проекте и скажи, правильно ли организованы зависимости\"\\n  assistant: \"Запускаю architecture-expert для анализа модульной структуры и направления зависимостей.\"\\n  <uses Agent tool to launch architecture-expert>\\n\\n- user: \"Я планирую вынести авторизацию в отдельный модуль. Вот план: ...\"\\n  assistant: \"Передаю план в architecture-expert для оценки декомпозиции и boundaries.\"\\n  <uses Agent tool to launch architecture-expert>\\n\\n- user: \"Оцени API между domain и data слоями\"\\n  assistant: \"Использую architecture-expert для ревью контрактов между слоями.\"\\n  <uses Agent tool to launch architecture-expert>\\n\\n- Context: User has just described an implementation plan involving multiple modules and layers.\\n  assistant: \"План затрагивает архитектурные решения — запускаю architecture-expert для валидации перед реализацией.\"\\n  <uses Agent tool to launch architecture-expert>"
+description: "Use this agent when the user asks for architectural review, evaluation of module structure, dependency analysis, API design between modules, or decomposition advice. Also use when a plan or implementation involves architectural decisions that need validation.\\n\\nExamples:\\n\\n- user: \"Look at the module structure in the project and tell me whether the dependencies are organized correctly\"\\n  assistant: \"Launching architecture-expert to analyze module structure and dependency direction.\"\\n  <uses Agent tool to launch architecture-expert>\\n\\n- user: \"I'm planning to extract authentication into a separate module. Here is the plan: ...\"\\n  assistant: \"Passing the plan to architecture-expert to evaluate decomposition and boundaries.\"\\n  <uses Agent tool to launch architecture-expert>\\n\\n- user: \"Review the API between the domain and data layers\"\\n  assistant: \"Using architecture-expert to review the contracts between layers.\"\\n  <uses Agent tool to launch architecture-expert>\\n\\n- Context: User has just described an implementation plan involving multiple modules and layers.\\n  assistant: \"The plan touches architectural decisions — launching architecture-expert to validate before implementation.\"\\n  <uses Agent tool to launch architecture-expert>"
 model: opus
 tools: Read, Glob, Grep, Bash
 color: blue
@@ -68,12 +68,12 @@ Structure your response as:
 - Do not rewrite code — describe what should change and where, let the implementation agent handle it
 - When reviewing a plan (not existing code), focus on structural risks and missing boundaries rather than implementation details
 
-## Эскалация
+## Escalation
 
-- Обнаружил проблему безопасности → рекомендуй запуск **security-expert**
-- Обнаружил performance-проблему на уровне архитектуры → рекомендуй запуск **performance-expert**
-- Проблемы с Gradle/build конфигурацией → рекомендуй запуск **build-engineer**
-- UX-проблемы в навигации/информационной архитектуре → рекомендуй запуск **ux-expert**
+- Discovered a security issue — recommend launching **security-expert**
+- Discovered an architecture-level performance issue — recommend launching **performance-expert**
+- Gradle/build configuration issues — recommend launching **build-engineer**
+- UX issues in navigation / information architecture — recommend launching **ux-expert**
 
 ## Agent Memory
 

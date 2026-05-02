@@ -11,8 +11,8 @@ description: >-
   separate `finalize` stage. Does NOT create worktrees, PRs, or run live QA — those are
   separate stages.
 
-  Use when: "implement", "write the code", "fix this", "сделай", "реализуй", "напиши код",
-  "пофикси", or when an orchestrator delegates the implementation stage.
+  Use when: "implement", "write the code", "fix this", "build this", "code this up",
+  or when an orchestrator delegates the implementation stage.
   Do NOT use for: debugging/investigation (use debug), research (use research),
   PR creation (use create-pr), live QA (use acceptance).
 disable-model-invocation: true

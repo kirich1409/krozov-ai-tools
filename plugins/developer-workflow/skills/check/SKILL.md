@@ -10,8 +10,8 @@ description: >-
 
   Use when: "check the project", "run tests", "verify build", "does it build?", "smoke check",
   "make sure nothing is broken", "validate the branch", "after I edited X run checks",
-  "проверь проект", "запусти проверки", "собери проект", "прогони тесты", "все ли чисто",
-  "ничего не сломал?", or when a pipeline stage needs to confirm that code modifications
+  "is everything clean?", "did I break anything?",
+  or when a pipeline stage needs to confirm that code modifications
   did not break anything. Do NOT use for code review (that is finalize Phase A), functional
   acceptance testing (use acceptance), or exploratory QA (use bug-hunt).
 ---

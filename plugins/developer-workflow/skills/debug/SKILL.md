@@ -3,7 +3,7 @@ name: debug
 description: >-
   Systematic root cause investigation — stops at diagnosis, does NOT fix.
   Invoke when user says "debug", "find root cause", "why is X broken", "investigate bug",
-  "что сломалось", "почему не работает", "найди причину", "дебаг", "отладь",
+  "what broke", "why is it not working", "trace the failure",
   "test fails", "build breaks", "crash", "unexpected behavior", "regression",
   or when a previous fix attempt didn't work.
 

@@ -5,8 +5,8 @@ description: >
   (feature) or that a bug no longer reproduces (bug fix). Fans out parallel checks and
   aggregates verdicts into one receipt. Triggers: "test this", "verify against spec",
   "QA the implementation", "run the test plan", "validate acceptance criteria",
-  "verify the PR", "verify the fix", "confirm bug is gone", "acceptance", "приёмка",
-  "проверь", "протестируй".
+  "verify the PR", "verify the fix", "confirm bug is gone", "acceptance",
+  "verify this", "test this".
 disable-model-invocation: true
 ---
 

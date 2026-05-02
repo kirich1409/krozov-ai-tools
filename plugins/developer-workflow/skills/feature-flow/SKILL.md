@@ -6,7 +6,7 @@ description: >-
   review, test-plan, implement, finalize, acceptance, draft/ready PR, and drive-to-merge.
   Thin orchestrator: delegates every stage to a separate skill; writes no code itself.
   Triggers: "/feature-flow", "implement this feature end-to-end", "run the full pipeline",
-  "сделай эту фичу от начала до конца", "full cycle", "autonomous implementation".
+  "ship this feature start to finish", "full cycle", "autonomous implementation".
   Do NOT use for: bug fixes (use bugfix-flow), research-only (use research), or a single
   quick change that does not need the pipeline (invoke implement directly).
 ---

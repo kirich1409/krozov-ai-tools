@@ -6,7 +6,7 @@ description: >
   or when multiple plausible designs exist. Launches architecture-expert agents in parallel
   under different style constraints (minimal / clean / pragmatic) and presents the options
   side-by-side for an informed pick. Triggers: "explore design options", "show me alternatives",
-  "choose between approaches", "предложи варианты архитектуры", "разные подходы".
+  "choose between approaches", "propose architecture options", "different approaches".
 ---
 
 # Design Options
@@ -21,7 +21,7 @@ Run `design-options` when at least one of (same trigger list as `feature-flow` �
 
 1. **High architectural risk** — the task touches module boundaries, introduces new abstractions, or replaces a core pattern.
 2. **The plan settles the "what" but leaves the "how" open** — multiple plausible approaches exist, and the plan itself does not commit to one.
-3. **User explicitly asks for alternatives** — "show me a few options", "what are the alternatives", "variants", "разные подходы".
+3. **User explicitly asks for alternatives** — "show me a few options", "what are the alternatives", "variants", "different approaches".
 
 Skip for:
 - Straightforward tasks with a single obvious approach

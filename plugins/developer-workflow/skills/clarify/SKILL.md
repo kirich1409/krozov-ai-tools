@@ -131,7 +131,7 @@ Present all questions in a single message. Wait for the user's response before p
 
 ### 2.2 Accepting defaults
 
-If the user says "accept all defaults", "принимаю всё", or any equivalent phrasing:
+If the user says "accept all defaults", "go with the defaults", or any equivalent phrasing:
 - Record every proposed default from round 1 as a confirmed assumption in the artifact
 - For round 2 candidates: auto-confirm those that have an obvious default; record the rest
   as non-blocking open questions

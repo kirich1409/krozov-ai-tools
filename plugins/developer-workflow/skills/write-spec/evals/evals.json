@@ -4,29 +4,29 @@
     {
       "id": 1,
       "name": "eval-push-notifications",
-      "prompt": "Хочу добавить push-уведомления о новых сообщениях. Уведомления в приложении уже есть.",
-      "expected_output": "Полная спека с acceptance criteria, затронутыми модулями, техническим подходом, ограничениями и принятыми решениями. Должно быть исследование существующей системы уведомлений и интеграция с ней.",
-      "principle": "enhancement — доработка существующего",
+      "prompt": "I want to add push notifications for new messages. In-app notifications already exist.",
+      "expected_output": "Full spec with acceptance criteria, affected modules, technical approach, constraints, and decisions made. Must investigate the existing notification system and integrate with it.",
+      "principle": "enhancement — extending existing functionality",
       "files": [],
       "assertions": [
         {
-          "text": "Спека содержит все обязательные секции: Acceptance Criteria, Affected Modules, Technical Approach, Technical Constraints, Decisions Made, Out of Scope",
+          "text": "Spec contains all required sections: Acceptance Criteria, Affected Modules, Technical Approach, Technical Constraints, Decisions Made, Out of Scope",
           "type": "structural"
         },
         {
-          "text": "Acceptance Criteria содержит не менее 3 пунктов, каждый из которых описывает наблюдаемое поведение (не внутреннее состояние)",
+          "text": "Acceptance Criteria contains at least 3 items, each describing observable behavior (not internal state)",
           "type": "quality"
         },
         {
-          "text": "Спека явно ссылается на существующую систему уведомлений как integration point — не проектирует push-уведомления с нуля в вакууме",
+          "text": "Spec explicitly references the existing notification system as an integration point — does not design push notifications from scratch in a vacuum",
           "type": "research"
         },
         {
-          "text": "Раздел Decisions Made содержит хотя бы одно решение с обоснованием (rationale)",
+          "text": "Decisions Made section contains at least one decision with a rationale",
           "type": "decisions"
         },
         {
-          "text": "Out of Scope содержит хотя бы один явный пункт",
+          "text": "Out of Scope contains at least one explicit item",
           "type": "scope"
         }
       ]
@@ -34,29 +34,29 @@
     {
       "id": 2,
       "name": "eval-retry-backoff",
-      "prompt": "Сейчас при ошибке сети показываем заглушку и всё. Хочу retry с exponential backoff — само переподключается, пользователь видит прогресс.",
-      "expected_output": "Полная спека с чётко описанным изменением существующего поведения. Acceptance criteria по retry-логике, явная секция Out of Scope, изменения в существующем error handling flow.",
-      "principle": "behavior change — изменение существующего поведения",
+      "prompt": "Right now we show a placeholder when the network errors out and that's it. I want a retry with exponential backoff — auto-reconnects, the user sees progress.",
+      "expected_output": "Full spec with the change to existing behavior clearly described. Acceptance criteria for retry logic, explicit Out of Scope, changes to the existing error handling flow.",
+      "principle": "behavior change — modifying existing behavior",
       "files": [],
       "assertions": [
         {
-          "text": "Спека содержит все обязательные секции: Acceptance Criteria, Affected Modules, Technical Approach, Technical Constraints, Decisions Made, Out of Scope",
+          "text": "Spec contains all required sections: Acceptance Criteria, Affected Modules, Technical Approach, Technical Constraints, Decisions Made, Out of Scope",
           "type": "structural"
         },
         {
-          "text": "Acceptance Criteria содержит конкретные параметры retry: максимальное количество попыток и формулу задержки (exponential backoff)",
+          "text": "Acceptance Criteria contains concrete retry parameters: maximum attempt count and the delay formula (exponential backoff)",
           "type": "quality"
         },
         {
-          "text": "Спека явно описывает что меняется (retry вместо заглушки) и что остаётся прежним (какие типы ошибок не попадают под retry)",
+          "text": "Spec explicitly describes what changes (retry instead of placeholder) and what stays the same (which error types are not subject to retry)",
           "type": "change-boundary"
         },
         {
-          "text": "Раздел Decisions Made содержит хотя бы одно решение с обоснованием",
+          "text": "Decisions Made section contains at least one decision with a rationale",
           "type": "decisions"
         },
         {
-          "text": "Out of Scope содержит хотя бы один явный пункт",
+          "text": "Out of Scope contains at least one explicit item",
           "type": "scope"
         }
       ]
@@ -64,29 +64,29 @@
     {
       "id": 3,
       "name": "eval-passkey",
-      "prompt": "Хочу добавить авторизацию через Passkey. Сейчас только email+пароль.",
-      "expected_output": "Полная спека с результатами веб-ресёрча по WebAuthn/Passkey, архитектурными решениями по интеграции с существующим auth flow, acceptance criteria по регистрации и аутентификации через passkey, явными решениями по backward compatibility.",
-      "principle": "new functionality with research — новый подход, требует исследования",
+      "prompt": "I want to add authentication via Passkey. Currently we only support email + password.",
+      "expected_output": "Full spec with web-research results on WebAuthn/Passkey, architectural decisions for integration with the existing auth flow, acceptance criteria for passkey registration and authentication, and explicit decisions on backward compatibility.",
+      "principle": "new functionality with research — new approach, requires investigation",
       "files": [],
       "assertions": [
         {
-          "text": "Спека содержит все обязательные секции: Acceptance Criteria, Affected Modules, Technical Approach, Technical Constraints, Decisions Made, Out of Scope",
+          "text": "Spec contains all required sections: Acceptance Criteria, Affected Modules, Technical Approach, Technical Constraints, Decisions Made, Out of Scope",
           "type": "structural"
         },
         {
-          "text": "Спека упоминает WebAuthn или FIDO2 — признак того, что был проведён ресёрч технологии",
+          "text": "Spec mentions WebAuthn or FIDO2 — a sign that the technology was researched",
           "type": "research"
         },
         {
-          "text": "Acceptance Criteria покрывает оба флоу: регистрацию passkey и последующую аутентификацию через него",
+          "text": "Acceptance Criteria covers both flows: passkey registration and subsequent authentication using it",
           "type": "coverage"
         },
         {
-          "text": "Раздел Decisions Made содержит явное решение по backward compatibility с существующим email+пароль входом",
+          "text": "Decisions Made section contains an explicit decision on backward compatibility with the existing email + password login",
           "type": "decisions"
         },
         {
-          "text": "Out of Scope содержит хотя бы один явный пункт",
+          "text": "Out of Scope contains at least one explicit item",
           "type": "scope"
         }
       ]

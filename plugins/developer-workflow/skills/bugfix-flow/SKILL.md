@@ -4,8 +4,8 @@ description: >-
   This skill should be used when the user reports a bug and wants it fixed end-to-end —
   thin orchestrator sequencing debug → (optional plan) → implement → regression test (default-on) → finalize → acceptance →
   draft/ready PR → drive-to-merge. Delegates every stage to a separate skill; writes no
-  code itself. Triggers: "/bugfix-flow", "bugfix flow", "fix this bug", "исправь баг",
-  "почини", "это сломалось, почини", "fix and ship", "find and fix", "debug and fix".
+  code itself. Triggers: "/bugfix-flow", "bugfix flow", "fix this bug", "this is broken, fix it",
+  "fix and ship", "find and fix", "debug and fix".
   Do NOT use for: feature implementation (use feature-flow), investigation without fix
   (use debug), or a quick obvious fix that does not need diagnosis (invoke implement directly).
 ---
