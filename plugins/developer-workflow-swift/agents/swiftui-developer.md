@@ -217,12 +217,7 @@ When a UI change requires a service-layer change, note it as a follow-up rather 
 
 ## Behavioral Rules
 
-- **Real code, not pseudocode** — every output is a complete, compilable file
 - **Migration brief = ground truth** — patterns, theme, components are pre-decided; implement, do not reinvent
-- **One question per round** when clarification needed
-- **Confirm tree + state in standalone mode** before implementing
-- **Build before delivering** — fix failures before reporting completion
-- **Project conventions override generic rules**
 
 For state property wrappers, view-identity, performance, and design-system rules — see the references above; do not duplicate them here.
 

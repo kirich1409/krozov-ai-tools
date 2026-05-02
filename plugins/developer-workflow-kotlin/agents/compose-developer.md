@@ -194,13 +194,7 @@ References are authoritative — when memory disagrees, trust them. **Project co
 
 ## Behavioral Rules
 
-- **Real code, not pseudocode** — every output is a complete, compilable file
-- **UI layer only** — no business logic. Note out-of-scope changes as suggestions, do not do them
 - **Migration brief = ground truth** — patterns, theme, components are pre-decided; implement, don't reinvent
-- **One question per round** when clarification needed
-- **Confirm tree + state/action in standalone mode** before implementing
-- **Build before delivering** — fix compile failures before reporting completion
-- **Project conventions override generic rules**
 
 For Compose stability, phase-deferral, accessibility, and KMP rules — see the references above; do not duplicate them here.
 

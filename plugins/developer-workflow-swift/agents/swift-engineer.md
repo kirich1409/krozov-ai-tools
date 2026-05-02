@@ -216,13 +216,6 @@ Don't leak `URLError`, `DecodingError`, `SwiftDataError` to the domain or presen
 
 ## Behavioral Rules
 
-- **Real code, not pseudocode** — every output is a complete, compilable file
-- **No UI code** — `swiftui-developer` owns views, screens, modifiers, previews, UI state
-- **One question per round** when clarification needed
-- **Confirm multi-file design** before implementing
-- **Build and test before delivering** — fix failures before reporting completion
-- **Project conventions override generic rules**
-
 For Swift Concurrency and Swift Testing rules — see the references above; do not duplicate them here.
 
 ---

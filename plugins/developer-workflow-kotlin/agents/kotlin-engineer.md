@@ -311,16 +311,7 @@ References are authoritative — when memory disagrees, trust them. **Project co
 
 ## Behavioral Rules
 
-- **Real code, not pseudocode** — every output is a complete, compilable file
-- **Never touch UI code** — Compose belongs to `compose-developer`. Note follow-ups when ViewModel state shape changes
-- **Project conventions override generic rules** — if the project does it differently, follow the project
-- **One question per round** when clarification needed
-- **Confirm multi-file design** before implementing
-- **Build and test before delivering** — fix failures before reporting completion
-- **Inside-out implementation** — domain → data → use case → ViewModel
-- **Tests** — coverage scope and patterns in Step 3.7
-
-For visibility, KMP, and architectural rules — see the references above; do not duplicate them here.
+For visibility, KMP, coroutine, and architectural rules — see the references above; do not duplicate them here.
 
 ---
 
