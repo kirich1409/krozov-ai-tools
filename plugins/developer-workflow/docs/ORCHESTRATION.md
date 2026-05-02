@@ -321,3 +321,35 @@ At every stage boundary:
 3. Validate the artifact before advancing: does it address the original task? Is it concrete (file paths, findings, code), not generic filler?
 4. Run `/compact` only for Large/Migration tasks or when context is noticeably degraded. Skip for Small/Medium tasks.
 
+## Min-bar for a new orchestrator stage
+
+`feature-flow` and `bugfix-flow` are intentionally thin. Stage proposals arrive regularly (Clarify, Changelog, Telemetry, Observability, Post-mortem, …); each looks reasonable in isolation, but the cumulative effect is a 30-step checklist that buries the user in stop-points and duplicates skills that already exist.
+
+Before opening a stage proposal — and before merging one — the candidate must pass **all five** of the criteria below. A failing candidate is not "rejected"; it is redirected to the cheaper alternative (extend a pattern trigger, add a profile, expand an artifact template, ship a standalone skill, sub-phase inside an existing skill).
+
+### Criteria
+
+1. **Cross-skill orchestration is required.** The work coordinates **two or more** skills or agents with receipt-based gating. If a single skill suffices, it is a sub-phase inside that skill, not a stage.
+2. **Measurable KPI exists.** A concrete metric must be nameable up front — merge-rate, time-to-merge, regression-rate, security-finding count, user-facing incidents, PlanReview-FAIL-rate, etc. Without a KPI the stage cannot be evaluated, kept, or removed on evidence.
+3. **Does not duplicate an existing path.** If the same outcome is reachable by extending pattern triggers of an existing stage (e.g. `finalize` Phase D), adding a `multiexpert-review` profile, or expanding an artifact template (e.g. a section in `<slug>-test-plan.md`) — choose the extension. New stages only when no extension fits.
+4. **Does not conflict with flow contracts.** Thin orchestrators (no code), preconditions are the caller's responsibility (branches, worktrees, fresh base), three-tier dependency policy with Tier-3 approval per change. A stage that breaks any of these is a blocker until the contract itself is renegotiated explicitly.
+5. **Evidence is provided.** Flow-telemetry data, an industry source with link, or an internal case-study. "Feels useful" is not evidence. Without evidence, propose as an experiment behind a flag, not as a default-on stage.
+
+### Application
+
+- Run the checklist **before** opening the issue. The new-stage proposal template at [`.github/ISSUE_TEMPLATE/new-stage-proposal.yml`](../../../.github/ISSUE_TEMPLATE/new-stage-proposal.yml) embeds it.
+- An issue or PR that fails any criterion is labeled `wontfix-as-stage` and routed to the cheaper alternative recorded on the issue.
+- The criteria themselves are revised when a real proposal exposes a blind spot. Update the section, do not bend it case-by-case.
+
+### Examples
+
+**PASS — Clarify pit-stop (issue #141, shipped).** Cross-skill: lives between `research` and `decompose-feature`, with receipt `<slug>-clarify.md`. KPI: PlanReview-FAIL-rate after Plan was reachable in zero clarify-loops vs one. Not a duplicate: `write-spec` is heavyweight and standalone; `research` produces findings, not locked requirements. No contract conflict — adds one optional artifact, has explicit skip and backward-edge-cap. Evidence: recurring PlanReview FAILs caused by un-locked acceptance criteria. → Stage admitted.
+
+**FAIL — alternative — "Security review stage" before Acceptance.** Cross-skill: yes, but `security-expert` is already the Phase D conditional reviewer in `finalize`. Existing path: extend the `security-expert` pattern triggers (auth, encryption, network, tokens, etc.) and let Phase D fire automatically. Evidence: the trigger list is incomplete, not the absence of a stage. → Redirected to issue #143 (extend `security-expert` triggers in finalize Phase D), no new stage.
+
+**FAIL — alternative — "Release notes / changelog stage" in feature-flow** (issue #144). Cross-skill: only `create-pr` writes the user-facing artifact, so a separate stage with its own receipt is overkill. Existing path: extend `create-pr` to append a `## Release Notes` section to the PR body when the spec or commit messages flag user-visible changes; or add a `release-notes:` field to the existing PR receipt. KPI candidate ("entries shipped per release") is real, but reachable from the PR artifact without a new stage. → Redirected to a `create-pr` enhancement, not a new orchestrator stage.
+
+### Audit of existing stages
+
+The current set of `feature-flow` / `bugfix-flow` stages was added before this checklist. A retroactive audit is a separate follow-up issue — not in scope here. If an existing stage is later found to fail the min-bar, the path is the same: redirect, not "patch the checklist".
+

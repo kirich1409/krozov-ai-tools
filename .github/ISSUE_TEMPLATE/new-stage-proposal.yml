@@ -1,0 +1,101 @@
+name: New Orchestrator Stage Proposal
+description: Propose adding a new stage to feature-flow or bugfix-flow
+labels: ["enhancement", "stage-proposal"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this template only for **new stages** in `feature-flow` or `bugfix-flow`.
+        For sub-phases inside an existing skill, pattern-trigger extensions, or new
+        `multiexpert-review` profiles — open a regular Feature Request instead.
+
+        Read the [Min-bar for a new orchestrator stage](https://github.com/kirich1409/krozov-ai-tools/blob/main/plugins/developer-workflow/docs/ORCHESTRATION.md#min-bar-for-a-new-orchestrator-stage)
+        before filling this in. A proposal that fails any criterion below is labeled
+        `wontfix-as-stage` and redirected to the cheaper alternative.
+
+  - type: dropdown
+    id: target-flow
+    attributes:
+      label: Target flow
+      options:
+        - feature-flow
+        - bugfix-flow
+        - both
+    validations:
+      required: true
+
+  - type: textarea
+    id: stage-name
+    attributes:
+      label: Proposed stage name and position
+      description: Where does it fit in the state machine? (e.g. "After Research, before Decompose")
+    validations:
+      required: true
+
+  - type: textarea
+    id: contract
+    attributes:
+      label: Stage contract
+      description: |
+        - Input artifact(s) consumed
+        - Output artifact written to `swarm-report/`
+        - Skip conditions
+        - Backward-edge cap (if any)
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: min-bar
+    attributes:
+      label: Min-bar checklist
+      description: All five must be checked. If any cannot be checked, this is not a stage proposal — see the redirect note in each item.
+      options:
+        - label: "**Cross-skill orchestration required.** Coordinates ≥ 2 skills/agents with receipt-based gating. (If one skill suffices → sub-phase, not a stage.)"
+          required: true
+        - label: "**Measurable KPI named.** A concrete metric is given in the proposal (merge-rate, time-to-merge, regression-rate, security-finding count, PlanReview-FAIL-rate, etc.)."
+          required: true
+        - label: "**Does not duplicate an existing path.** Extension via pattern triggers / `multiexpert-review` profile / artifact-template section was considered and ruled out — explicitly stated in the proposal."
+          required: true
+        - label: "**Does not conflict with flow contracts.** Thin orchestrator (no code), preconditions are caller's responsibility, three-tier dependency policy, Tier-3 approval per change."
+          required: true
+        - label: "**Evidence provided.** Flow-telemetry data, industry source with link, or internal case-study. (`Feels useful` is not evidence.)"
+          required: true
+
+  - type: textarea
+    id: kpi
+    attributes:
+      label: KPI definition
+      description: Name the metric, the baseline, and what change you expect after the stage ships.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives ruled out
+      description: |
+        Which cheaper paths were considered and why they are not enough?
+        - Extend `finalize` Phase D triggers
+        - New `multiexpert-review` profile
+        - Section in an existing artifact template (`<slug>-test-plan.md`, PR body, …)
+        - Sub-phase inside an existing skill
+        - Standalone skill (user-invoked, not a stage)
+    validations:
+      required: true
+
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Evidence
+      description: Flow-telemetry numbers, links, or a concrete past incident.
+    validations:
+      required: true
+
+  - type: textarea
+    id: contract-impact
+    attributes:
+      label: Flow-contract impact
+      description: |
+        Does this stage stay thin (no code in the orchestrator)? Does it require new caller preconditions? Does it introduce a Tier-3 dependency?
+    validations:
+      required: true

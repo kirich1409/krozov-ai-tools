@@ -44,6 +44,7 @@ Skills in this plugin delegate to engineer agents (kotlin-engineer / compose-dev
 - Workspace directories (`*-workspace/`) are runtime artifacts, not skills. Gitignored.
 - Pipeline orchestration rules (task profiling, Research Consortium, Quality Loop gates, State Machine, receipt-based gating) ship with this plugin at [`docs/ORCHESTRATION.md`](docs/ORCHESTRATION.md) — skills and the core feature-flow/bugfix-flow orchestrators read from there.
 - Quality Loop gates are defined in `docs/ORCHESTRATION.md`, not in any individual skill.
+- New stages for `feature-flow` / `bugfix-flow` must pass the [Min-bar checklist](docs/ORCHESTRATION.md#min-bar-for-a-new-orchestrator-stage) (5 criteria + alternative-redirect). Failing candidates are redirected to the cheaper path (extend triggers, profile, artifact template, or standalone skill); they are not merged as stages.
 
 ## Skills roster (18)
 
