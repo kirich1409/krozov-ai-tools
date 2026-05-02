@@ -100,13 +100,28 @@ Invoke `developer-workflow:debug` with the bug description.
 
 Wait for `swarm-report/<slug>-debug.md`.
 
-The debug artifact includes a **Reproduction Steps** section in `swarm-report/<slug>-debug.md`.
-This section is persistent state — survives context compaction. Re-read it before any
-action that depends on reproduction steps.
+The debug artifact follows the canonical template at
+[`debug/references/debug-template.md`](../debug/references/debug-template.md). Three
+fields are read by this orchestrator:
+
+- **`Severity` (P0 | P1 | P2 | P3)** — surfaced in announce-transitions and the draft PR
+  body. Severity does NOT branch the state machine on its own (the existing trivial-fix
+  shortcut at Phase 0.2 is the only Setup-level fast-lane), but it modulates downstream
+  decisions:
+  - **P0 / P1** → Phase 2.5 Finalize tightens (no Phase D skip even when no trigger
+    matches; treat WARN findings as block-equivalent on auth, data, and concurrency).
+    Phase 3 Blast-radius coverage is enforced strictly — every "Fix all" site MUST land
+    in the diff, no orchestrator-level forgiveness.
+  - **P3 + Fix direction `Simple`** → eligible for a Phase 2.2 regression-test skip with
+    a one-line user confirmation (instead of the diagnosis-then-confirm path). The
+    skip-condition list still applies; Severity only sets the bar lower for asking.
+- **`Status`** — drives routing.
+- **Reproduction Steps** (Section 1) — persistent state, survives context compaction.
+  Re-read before any action that depends on reproduction steps.
 
 **Route by status:**
-- **Diagnosed, simple fix** (single file, clear direction) → **Stage: Debug → Implement.**
-- **Diagnosed, complex fix** (multiple files, architectural impact, unclear approach) → **Stage: Debug → Plan.**
+- **Diagnosed, simple fix** (Fix direction `Simple` — single file, clear direction) → **Stage: Debug → Implement.**
+- **Diagnosed, complex fix** (Fix direction `Complex` — multiple files, architectural impact, unclear approach) → **Stage: Debug → Plan.**
 - **Not Reproducible** → report to user, ask for more info. Stop.
 - **Escalated** → report findings, stop. Bug needs user decision.
 
@@ -298,6 +313,26 @@ Invoke `developer-workflow:acceptance` with:
 
 The acceptance skill saves an E2E scenario to `swarm-report/<slug>-e2e-scenario.md`.
 This file uses checkboxes — completed checks (`[x]`) survive compaction and are NOT repeated.
+
+### 3.1 Blast-radius coverage check
+
+Before reading the acceptance verdict, the orchestrator checks Section 4 (Blast-radius)
+of `swarm-report/<slug>-debug.md` against the diff:
+
+- **Decision was "Fix all"** — every site listed under "Matches found" must appear in
+  the diff. Missing sites → record in the PR body and route **Acceptance → Implement**
+  (counted against the cap of 2) so the remaining sites are addressed before promotion.
+- **Decision was "Fix this site only"** — the recorded reason must still hold. If the
+  fix changed scope and now logically applies elsewhere, request the user before
+  promoting.
+- **Decision was "Open follow-ups"** — confirm the linked issues exist; record their
+  numbers in the PR body. If they are missing, file them now (one issue per remaining
+  site) before promotion.
+- **Section is `N/A: not reproducible`** — skip the check; only the symptom verification
+  applies.
+
+This check runs once per Acceptance round and does not consume a backward-edge cap on
+its own; it only triggers a route-back if a "Fix all" decision is incomplete.
 
 Wait for `swarm-report/<slug>-acceptance.md`.
 

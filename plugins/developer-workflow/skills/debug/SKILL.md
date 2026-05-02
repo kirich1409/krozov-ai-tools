@@ -137,39 +137,55 @@ Escalate to user when:
 
 ## Report
 
-Save findings to `swarm-report/<slug>-debug.md`:
+Save findings to `swarm-report/<slug>-debug.md` using the canonical template at
+[`references/debug-template.md`](references/debug-template.md). The template is
+mandatory — every section is required, with `N/A: <reason>` allowed when a section
+genuinely does not apply (e.g. RCA on `Not Reproducible`).
+
+### Required structure (summary — full details in `references/debug-template.md`)
+
+Frontmatter triplet:
 
 ```
-## Symptom
-What was observed — error message, failing test, unexpected behavior
-
-## Reproduction Steps
-Exact steps to trigger the bug consistently
-
-## Investigation Path
-What was checked, what was eliminated (binary search log)
-
-## Root Cause
-What actually causes it — with evidence (file:line, stack trace, data flow)
-
-## Recommended Fix Direction
-What needs to change and where — NOT the implementation, just the direction
-
-## Status
-Diagnosed / Escalated / Not Reproducible
+Started: <ISO-8601 timestamp>
+Severity: P0 | P1 | P2 | P3
+Status: Reproduced | Not Reproducible | Diagnosed | Escalated
 ```
+
+Body sections (in order):
+
+1. **Reproduce** — steps, environment, expected vs observed, frequency
+2. **Severity classification** — impact, urgency, workaround, justification of the
+   chosen tier (rubric in the references file)
+3. **Root-cause analysis** — 5-whys chain, single-sentence root cause, `file:line`
+   localisation
+4. **Blast-radius** — pattern-search query, matches found, fix-all / fix-here-only /
+   open-follow-ups decision
+5. **Fix direction** — Simple | Complex | Not Reproducible | Escalated, plus a
+   one-paragraph what/where (not how)
+6. **Next step** — Implement | Plan | Report | Escalate (filled by the orchestrator)
+
+### Why the structure is fixed
+
+- `Severity` is read by `bugfix-flow` Phase 1 to choose between simple and complex
+  fix routing, and surfaces in the PR body.
+- `Blast-radius` makes the pattern-search step explicit so a fix closes every
+  reachable instance of the defect, not only the reported one.
+- Separating Reproduce / RCA / Blast-radius prevents symptom-only patches and the
+  "fix one site, ignore three identical ones" failure mode.
 
 ### Chat output
 
 After saving, post a chat summary (≤15 lines):
 
-1. One sentence: what the bug is and what causes it (Root Cause in one line).
+1. One sentence: what the bug is and what causes it (Root Cause in one line) plus
+   the chosen Severity tier.
 2. Bullets (max 4):
    - Symptom (one line — what the user observed)
-   - Root cause location: file:line or component
+   - Root cause location: `file:line` or component
    - Fix direction (one line — what needs to change, not how)
-   - Any side effects or adjacent code at risk (one line, only if relevant)
+   - Blast-radius outcome (one line — "1 site only", "3 sites covered", or "follow-ups #N, #M")
 3. If reproduction requires specific steps or environment: ONE question to confirm.
 4. One line: "Recommended next step: implement the fix via `/implement`" (or `/bugfix-flow` if in standalone context).
 
-Do NOT post the full investigation log or hypothesis list in chat — those are in the file.
+Do NOT post the full investigation log, 5-whys chain, or hypothesis list in chat — those are in the file.

@@ -430,16 +430,18 @@ regression, not the original feature work.
 
 Invoke `developer-workflow:debug` with the collected context.
 
-Wait for `swarm-report/<slug>-debug.md`. Same convention as bugfix-flow —
-the file includes a **Reproduction Steps** section, is persistent state, and
-survives context compaction. Re-read it before any downstream action.
+Wait for `swarm-report/<slug>-debug.md`. The artifact follows the canonical template at
+[`debug/references/debug-template.md`](../debug/references/debug-template.md) — same
+convention as bugfix-flow. Re-read Section 1 (Reproduce) and the `Severity` /
+`Status` frontmatter before any downstream action; both survive context compaction.
 
-**Route by status:**
-- **Diagnosed, simple fix** → **Stage: Debug → Implement.** Pass `<slug>-debug.md` as
-  the anchor so the next Implement retry acts on the root cause, not the symptom.
-- **Diagnosed, complex fix** (multiple files, architectural impact) → surface to the
-  user; feature-flow does not have a mid-pipeline Plan stage, so a complex acceptance
-  regression is escalated rather than looped through Plan.
+**Route by status (read `Status` and `Fix direction` from the artifact):**
+- **Diagnosed, simple fix** (`Fix direction: Simple`) → **Stage: Debug → Implement.** Pass
+  `<slug>-debug.md` as the anchor so the next Implement retry acts on the root cause,
+  not the symptom.
+- **Diagnosed, complex fix** (`Fix direction: Complex` — multiple files, architectural
+  impact) → surface to the user; feature-flow does not have a mid-pipeline Plan stage,
+  so a complex acceptance regression is escalated rather than looped through Plan.
 - **Not Reproducible** → report to user, ask for more info. Stop.
 - **Escalated** → report findings, stop.
 
