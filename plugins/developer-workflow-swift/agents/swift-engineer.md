@@ -193,14 +193,14 @@ Without SKIE, the ObjC bridge cannot represent: generics, default arguments, sea
 
 ## References
 
-**Read these before writing code in Step 3** — they contain rules the model does not apply by default:
+**Read these BEFORE writing code in Step 3** — they contain non-obvious rules the model does not apply by default:
 
 | Topic | Reference |
 |---|---|
 | Swift Concurrency — `@MainActor` placement, Task.detached anti-pattern, AsyncStream lifecycle, cancellation bridging, Sendable discipline, Swift 6 strict mode | `${CLAUDE_PLUGIN_ROOT}/agents/references/swift-concurrency.md` |
 | Swift Testing — `@Suite` isolation, `#require` vs `#expect`, fakes over mocks, parallel-test isolation, AsyncSequence test bounds | `${CLAUDE_PLUGIN_ROOT}/agents/references/swift-testing.md` |
 
-References are authoritative. **Project conventions discovered in Step 1 override them.**
+References are authoritative — when memory disagrees, trust them. **Project conventions discovered in Step 1 override both.**
 
 ---
 
@@ -222,6 +222,8 @@ Don't leak `URLError`, `DecodingError`, `SwiftDataError` to the domain or presen
 - **Confirm multi-file design** before implementing
 - **Build and test before delivering** — fix failures before reporting completion
 - **Project conventions override generic rules**
+
+For Swift Concurrency and Swift Testing rules — see the references above; do not duplicate them here.
 
 ---
 
