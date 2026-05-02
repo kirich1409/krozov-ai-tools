@@ -98,6 +98,15 @@ fires when its tested behavior runs. Mismatch (declared but not emitted, or emit
 wrong fields) becomes a P1 acceptance finding routed through the standard FAILED → Implement
 loop. An explicit `N/A: <reason>` in the test-plan section skips this check.
 
+**Persistent UI scenario reuse.** When the chosen test plan contains a Test Case typed
+`ui-scenario`, before driving `manual-tester` for that TC, look up
+`tests/ui-scenarios/<scenario-from-tc>.md`. If the file exists, invoke the
+[`ui-scenario`](../ui-scenario/SKILL.md) skill in `run` mode and consume its receipt
+(`swarm-report/<slug>-ui-scenario-<name>.md`) as the verification evidence for that TC. The
+acceptance receipt records `test_plan_source: ui-scenario` plus the scenario file path
+when this path is taken; otherwise the standard one-shot `manual-tester` flow runs as
+before.
+
 ---
 
 ## Step 1.5: Source-Missing Gate
