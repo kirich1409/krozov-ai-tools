@@ -14,11 +14,7 @@ delegates to a platform engineer agent: `kotlin-engineer` / `compose-developer` 
 Kotlin/Android targets, or `swift-engineer` / `swiftui-developer` for Swift/iOS targets.
 The skill's job is discovery, planning, delegation, and verification.
 
-**Author fixes broken tests (non-negotiable).** When a generated or extended test exposes a
-pre-existing failure in the same file or a directly adjacent test, the engineer agent fixes
-those tests in the same `write-tests` run; results are surfaced in the final report. Skipping
-or `@Ignore`-ing without a recorded follow-up issue is not allowed. Disambiguation rules and
-the single skip-marker escape hatch live in [`docs/TESTING-STRATEGY.md`](../../docs/TESTING-STRATEGY.md#author-fixes-broken-tests-non-negotiable).
+**Author fixes broken tests (non-negotiable).** Any test broken by the changes this skill produces — the new test, the file it covers, or a directly adjacent test whose behaviour shifted because of the new assertions — is fixed by the engineer agent in the same `write-tests` run. Tests already failing on `main` before this run are NOT in scope; surface them in the final report and continue. Skipping or `@Ignore`-ing the in-scope set without a recorded follow-up issue is not allowed. Disambiguation rules (intentional behaviour change vs unintentional break vs pre-existing failure on `main`) and the single skip-marker escape hatch live in [`docs/TESTING-STRATEGY.md`](../../docs/TESTING-STRATEGY.md#author-fixes-broken-tests-non-negotiable).
 
 ---
 
