@@ -62,7 +62,7 @@
           "type": "correctness"
         },
         {
-          "text": "defect_hardcoded_cancel — §9 содержит запись про hardcoded 'Cancel' (localization gap)",
+          "text": "hygiene_hardcoded_cancel — `<slug>-hygiene.md` содержит запись про hardcoded 'Cancel' (localization-readiness hygiene per references/analysis-checklist.md §14 — feature behaves correctly today, gap manifests only when project ships another locale)",
           "type": "correctness"
         },
         {
@@ -182,11 +182,11 @@
           "type": "quality"
         },
         {
-          "text": "defect_weak_prng — §9 содержит запись про слабый PRNG (kotlin.random.Random вместо SecureRandom) для PKCE state или code_verifier",
+          "text": "hygiene_weak_prng — `<slug>-hygiene.md` содержит запись про слабый PRNG (kotlin.random.Random вместо SecureRandom) для PKCE state или code_verifier (security-posture hygiene per references/analysis-checklist.md §14 — feature flow completes successfully; problem is the strength of the secret, not feature behavior)",
           "type": "correctness"
         },
         {
-          "text": "defect_nonsecure_token_storage — §9 содержит запись про токены в non-encrypted storage (multiplatform-settings) как security weakness",
+          "text": "hygiene_nonsecure_token_storage — `<slug>-hygiene.md` содержит запись про токены в non-encrypted storage (multiplatform-settings) как security-posture hygiene (per references/analysis-checklist.md §14 — feature works; risk is about device-compromise threat models, not feature behavior)",
           "type": "correctness"
         },
         {
