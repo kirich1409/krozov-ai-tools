@@ -6,6 +6,7 @@ Rules that are not open for discussion. Violating these is an error, not a judgm
 
 - **Non-QA skills must not hardcode MCP tool names.** They must run (with reduced capability) when an MCP server is absent. Exception: QA-execution skills (`manual-tester`, live parts of `acceptance`, `bug-hunt`) that require real device/browser automation may fail fast with an install/enable message — graceful degradation is impossible there.
 - **Tier-3 hard-dep escalation requires explicit user approval per change.** Proposing is allowed; editing `plugin.json` `dependencies` or `.mcp.json` without explicit go-ahead is not.
+- **The author of a change that breaks tests fixes those tests in the same PR.** No `--skip-test-fix`, no "TODO fix later", no "merge red". `/check` is the gate; if tests fail, `implement` does not exit. The only escape hatch is an explicit, justified test skip-marker plus a follow-up issue — treated as an exception, not a routine. Detailed disambiguation (intentional behaviour change vs unintentional break vs pre-existing failure) lives in [`docs/TESTING-STRATEGY.md`](docs/TESTING-STRATEGY.md#author-fixes-broken-tests-non-negotiable).
 
 ## Structure
 

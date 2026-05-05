@@ -25,6 +25,8 @@ This skill exists because agent-written code carries recurring patterns worth po
 | **`finalize`** | Is the code written well? | this skill |
 | `acceptance` | Does the feature solve the user's problem? | functional verification via `manual-tester` |
 
+**Author fixes broken tests (non-negotiable).** A `/check` invocation between phases that surfaces test failures triggers an inline fix in the same Finalize round — owned by the engineer agent that produced the change. Round-end exit is impossible while tests remain red. See [`docs/TESTING-STRATEGY.md`](../../docs/TESTING-STRATEGY.md#author-fixes-broken-tests-non-negotiable) for disambiguation rules and the single skip-marker escape hatch.
+
 ---
 
 ## Inputs

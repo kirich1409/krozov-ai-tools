@@ -111,6 +111,8 @@ Summary for this skill's callers:
 - Gate 2 is the intent check — re-read task + plan, verify the diff addresses them; scope creep or drift → fix or flag; also verify no `## Non-negotiables` rule from applicable `CLAUDE.md` files is violated — a violation is treated as DRIFT and triggers a fix cycle
 - A gate failure triggers a fix cycle; total loop is capped per ORCHESTRATION.md
 
+**Author fixes broken tests (non-negotiable).** When the diff breaks existing tests, the engineer agent that wrote the change fixes those tests in the same Implement run before Gate 1 can PASS. There is no `--skip-test-fix`. Disambiguation between "intentional behaviour change → update assertions", "unintentional break → diagnose root cause", and "pre-existing failure on main → not this PR's responsibility, surface to user" lives in [`docs/TESTING-STRATEGY.md`](../../docs/TESTING-STRATEGY.md#author-fixes-broken-tests-non-negotiable). Skip-marker + follow-up issue is the only escape hatch and must be surfaced explicitly in the Implement artifact.
+
 Do not duplicate gate details here — read ORCHESTRATION.md before executing. If ORCHESTRATION.md is missing, escalate rather than guessing the current rules.
 
 ---
