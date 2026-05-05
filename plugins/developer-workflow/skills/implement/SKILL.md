@@ -106,7 +106,8 @@ Run two quality gates sequentially. A failure triggers a fix cycle before advanc
 After code is written, run the Quality Loop defined in [`docs/ORCHESTRATION.md`](../../docs/ORCHESTRATION.md#implement--quality-loop-2-gates) — that document is the single source of truth for gate definitions, verdict handling, and iteration limits.
 
 Summary for this skill's callers:
-- Gate 1 invokes `/check` (mechanical: build + lint + typecheck + tests)
+- Gate 1 invokes `/check` (mechanical: build + lint + typecheck + tests + public-API coverage gate)
+- The Phase 3.5 public-API coverage gate inside `/check` fails when the diff introduces a new public symbol with no matching test file. Engineer agent resolves it inside the same Implement run before Gate 1 can PASS — add a test (default), mark the symbol with the language-appropriate skip marker (`@NoTestRequired` annotation in Kotlin, `// no-test-required: <reason>` line comment in Swift / Rust / Go / TS / JS, `# no-test-required: <reason>` in Python) only when it falls under the trivial allow-list, or pass `--no-coverage-gate` (discouraged; recorded in the quality artifact). See [`/check` Phase 3.5](../check/SKILL.md#phase-35-public-api-coverage-gate-default-on) for the per-language marker list.
 - Gate 2 is the intent check — re-read task + plan, verify the diff addresses them; scope creep or drift → fix or flag; also verify no `## Non-negotiables` rule from applicable `CLAUDE.md` files is violated — a violation is treated as DRIFT and triggers a fix cycle
 - A gate failure triggers a fix cycle; total loop is capped per ORCHESTRATION.md
 
