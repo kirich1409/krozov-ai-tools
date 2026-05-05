@@ -199,14 +199,14 @@ markdown), the phase-segmentation worked example, and the rules for when each va
 
 Every plan ends with a `## Non-functional / Instrumentation` section that declares observability **before** implementation, not after the first incident. Required when the spec / task is tagged `user-facing` or `prod-bound`, or when the feature touches an observability hot-path: network calls, payments, background jobs, auth, data migrations.
 
-`N/A: <reason>` (one line) is allowed for internal / developer-only tooling and for pure refactors with no change to observable behaviour. Never delete the heading.
+`N/A: <reason>` (one line) is allowed for internal / developer-only tooling and for pure refactors with no change to observable behavior. Never delete the heading.
 
 The section covers five subsections — Log events / Metrics / Traces / Alerts / Dashboards (full template in [`references/format-templates.md`](references/format-templates.md#non-functional--instrumentation)). The skill reads naming and stack conventions (OpenTelemetry, Prometheus, StatsD, vendor-specific) from the project's `CLAUDE.md` and reuses them; it does not prescribe a stack. If the project has no convention, the skill asks one question and records the answer.
 
 Downstream stages consume this section:
 
 - `multiexpert-review` test-plan profile checks the section is filled or carries an explicit `N/A: <reason>`.
-- `acceptance` verifies, against the running app, that declared events / metrics actually fire when the tested behaviour runs.
+- `acceptance` verifies, against the running app, that declared events / metrics actually fire when the tested behavior runs.
 
 ## Guidelines
 

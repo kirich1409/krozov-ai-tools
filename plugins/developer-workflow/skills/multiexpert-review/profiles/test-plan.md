@@ -1,6 +1,6 @@
 ---
 name: test-plan
-description: Profile for test-plan artifacts (docs/testplans/<slug>-test-plan.md and swarm-report/<slug>-test-plan.md receipts). Verdict alphabet PASS/WARN/FAIL with 5-item checklist. Primary reviewer business-analyst; adds domain specialists when spec invokes their concerns.
+description: Profile for test-plan artifacts (docs/testplans/<slug>-test-plan.md and swarm-report/<slug>-test-plan.md receipts). Verdict alphabet PASS/WARN/FAIL with 6-item checklist (a, b, c, d, e, g). Primary reviewer business-analyst; adds domain specialists when spec invokes their concerns.
 
 detect:
   frontmatter_type: [test-plan, test-plan-receipt]
@@ -85,7 +85,7 @@ For every Issue you raise, use the item ID as the title stem — e.g. `(a) AC co
 After Step 4 synthesis, the engine updates `swarm-report/<slug>-test-plan.md` (the receipt, not the permanent file at `docs/testplans/<slug>-test-plan.md`) with:
 
 - `review_verdict: PASS | WARN | FAIL`
-- On WARN: `review_warnings:` list enumerating violated items `(d)`, `(e)` with one-line rationale each
+- On WARN: `review_warnings:` list enumerating violated items from `(d)`, `(e)`, `(g)` with one-line rationale each
 - On FAIL: `review_blockers:` list enumerating violated items from `(a)–(c)` with the blocking finding and suggested fix
 
 The receipt format is owned by the `generate-test-plan` skill — this profile only writes the three fields listed in `receipt.fields_to_update`.
