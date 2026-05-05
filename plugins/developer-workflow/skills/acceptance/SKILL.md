@@ -90,6 +90,14 @@ consumers (including the `surfaces` invariant guards) live in
 [`references/source-branches.md`](references/source-branches.md). Record the selected
 branch as `test_plan_source` in the receipt.
 
+**Instrumentation verification.** When the test plan ends with a `## Non-functional /
+Instrumentation` section that exists and is not `N/A: <reason>` (Log events / Metrics /
+Traces / Alerts / Dashboards — see [`generate-test-plan` Field Definitions](../generate-test-plan/SKILL.md#non-functional--instrumentation-mandatory-for-user-facing--prod-bound)),
+acceptance verifies, against the running app, that each declared event / metric / span
+fires when its tested behavior runs. Mismatch (declared but not emitted, or emitted with
+wrong fields) becomes a P1 acceptance finding routed through the standard FAILED → Implement
+loop. An explicit `N/A: <reason>` in the test-plan section skips this check.
+
 ---
 
 ## Step 1.5: Source-Missing Gate

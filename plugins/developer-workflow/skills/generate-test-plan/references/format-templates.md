@@ -91,6 +91,41 @@ Test cases that are good candidates for automated testing.
 | TC-[N] | [why this is a good automation candidate] |
 
 > Omit this section if no test cases are suitable for automation.
+
+---
+
+## Non-functional / Instrumentation
+
+> **Mandatory** when the spec / task is `user-facing` or `prod-bound`, or the
+> feature touches an observability hot-path (network calls, payments,
+> background jobs, auth, data migrations). Internal / dev-only / pure refactor
+> tasks may set the section to `N/A: <reason>` (one line) — never delete the
+> heading.
+
+### Log events
+- Event: `<namespace>.<action>` — when fired, key fields (NO PII)
+
+### Metrics
+- Counter: `<name>` — increments on ..., labels ...
+- Histogram: `<name>` — observes ..., bucket strategy ...
+- Gauge: `<name>` — tracks ...
+
+### Traces
+- Span: `<operation>` — entry point, child spans, key attributes
+- Parent context: where the trace-id originates
+
+### Alerts
+- Alert: `<name>` — condition, severity, route (oncall / Slack / email)
+- Runbook: `runbooks/<slug>.md` (if the project follows that convention)
+
+### Dashboards
+- Existing to update: URL / id
+- New needed: yes / no, owner
+
+> Naming, namespacing, and stack (OTel, Prometheus, StatsD, vendor-specific) are
+> read from the project's `CLAUDE.md`. The skill does not prescribe a stack —
+> it records what the project already uses, or asks one question if the
+> project has none.
 ```
 
 ## Phase Segmentation
