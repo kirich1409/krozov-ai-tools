@@ -196,16 +196,16 @@ See [`references/body-sections.md`](references/body-sections.md) for the full se
 
 The Release Notes section captures what users of the plugin / library / app will see, in a form ready to paste into the project's changelog at release time. The section appears in the PR body when at least one of the following signals is true:
 
-- The spec / clarify / plan declares any of: `user-facing: true`, `prod-bound: true`, `breaking: true`, `release_notes:` block in frontmatter.
-- The diff touches a public API surface (`/api/`, public functions, exported types in barrel files, plugin manifests, marketplace metadata).
-- The user passed `--release-notes "..."` to `create-pr`.
+- **Optional custom frontmatter fields** in the spec / clarify / plan declare any of: `user-facing: true`, `prod-bound: true`, `breaking: true`, or a `release_notes:` block. These keys are **not** part of the canonical `write-spec` template (see `skills/write-spec/references/spec-template.md`); they are optional add-ons that callers may put into their spec frontmatter to force the section. Stages upstream of `create-pr` are not required to emit them.
+- The diff touches a public API surface (`/api/`, public functions, exported types in barrel files, plugin manifests, marketplace metadata) — the default automatic-detection path when no custom frontmatter is set.
+- The user passed `--release-notes "..."` to `create-pr` (always wins).
 
 When emitted, the section follows the format the repo already uses — detect by file presence:
 
 | Repo file | Format used in PR body |
 |---|---|
 | `CHANGELOG.md` (root or per-plugin) | Keep-a-Changelog bullet, classified as one of `Added` / `Changed` / `Fixed` / `Deprecated` / `Removed` / `Security`. Breaking changes flagged with a leading `**Breaking:**` |
-| `.changeset/` directory | A `type: patch \| minor \| major` block plus the one-line summary (matches Changesets convention) |
+| `.changeset/` directory | PR-body shorthand: a `type: patch \| minor \| major` line plus the one-line summary. **This is a PR-body representation only, not a valid `.changeset/` entry**; the actual `.changeset/*.md` file (if any) is created at release time and uses the standard `---` frontmatter mapping packages to bump levels per the [Changesets format](https://github.com/changesets/changesets/blob/main/docs/intro-to-using-changesets.md). Do not paste this snippet directly into a changeset file. |
 | `RELEASE_NOTES.md` or `docs/CHANGELOG.md` | Same Keep-a-Changelog format as `CHANGELOG.md` |
 | None of the above | Plain bullet list under `## Release Notes` — the project owner copies it into whichever changelog mechanism they adopt later |
 
