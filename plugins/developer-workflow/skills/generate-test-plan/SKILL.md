@@ -169,6 +169,34 @@ markdown), the phase-segmentation worked example, and the rules for when each va
 
 ## Field Definitions
 
+### Type
+
+Every test case declares an explicit `Type` plus a one-line `Type rationale` (see `references/format-templates.md`). Downstream stages (`finalize` Phase D coverage audit, `multiexpert-review` test-plan profile, engineer agents in `implement`) read this field — it is not optional.
+
+| Type | Scope | Pick when |
+|------|-------|-----------|
+| `unit` | One class/function with mocked collaborators | Pure logic, transform, validator, mapper, parser, state-holder math |
+| `integration` | Several classes plus real / in-memory dependencies | Repository + DB, service + test API, data pipeline, multi-class interaction |
+| `ui-instrumentation` | One UI component inside its framework (Compose UI test, XCUITest single screen, ViewInspector) | Single screen / component user action with visible state assertion |
+| `ui-scenario` | Running app driven by an MCP-based device / browser automation runner, re-runnable scripted journey | Multi-screen user journey, cross-platform critical flow |
+| `screenshot` | Visual render comparison (Paparazzi, swift-snapshot-testing) | Visual fidelity is part of the contract — additive, never the sole coverage |
+| `e2e` | Whole application end-to-end | Release-critical journey that cannot be split into smaller types — keep the count small |
+
+#### Selection heuristic
+
+Per acceptance criterion: pick the **smallest scope that catches a real failure of that AC**. Climb only when needed. When in doubt, prefer the cheaper type.
+
+| AC shape | Type |
+|---|---|
+| Value transform / pure computation | `unit` |
+| Component interaction with real or fake collaborators | `integration` |
+| Single-screen user action with visible state change | `ui-instrumentation` |
+| Multi-screen journey | `ui-scenario` |
+| Release-critical journey + visual fidelity matters | `screenshot` (additive) and/or `e2e` |
+| Release-critical end-to-end flow that cannot be split | `e2e` |
+
+The same heuristic appears in [`docs/TESTING-STRATEGY.md`](../../docs/TESTING-STRATEGY.md#selection-heuristic) — this section is its application inside `generate-test-plan`. When the strategy doc and this section disagree, the strategy doc is authoritative.
+
 ### Priority
 
 | Priority | Meaning | Guideline |
