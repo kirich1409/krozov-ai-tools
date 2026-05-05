@@ -122,6 +122,29 @@ Full pipeline with diagrams and gate-level detail:
 - [`docs/WORKFLOW.md`](docs/WORKFLOW.md) — stages, artifacts, decision points
 - [`docs/ORCHESTRATORS.md`](docs/ORCHESTRATORS.md) — feature-flow and bugfix-flow state diagrams
 - [`docs/ORCHESTRATION.md`](docs/ORCHESTRATION.md) — task profiling, Research Consortium, re-anchoring, State Machine, Receipt-Based Gating, Quality Loop gates
+- [`docs/METRICS-SCHEMA.md`](docs/METRICS-SCHEMA.md) — schema for the `swarm-report/<slug>-metrics.json` file emitted after every `feature-flow` / `bugfix-flow` run
+
+## Aggregating run telemetry
+
+Both orchestrators write `swarm-report/<slug>-metrics.json` after every run (best-effort, local-only — full schema in the linked document). Three baseline `jq` queries to mine the local history (each requires at least one metrics file under `swarm-report/`; with no files the shell may pass the literal glob to `jq` and produce a confusing error — run the queries after at least one orchestrator run completes):
+
+Average wall-clock seconds across all runs:
+
+```
+jq -s 'map(.wall_clock_seconds) | add/length' swarm-report/*-metrics.json
+```
+
+Most frequent backward-transition pairs:
+
+```
+jq -r '.backward_transitions[] | "\(.from) -> \(.to)"' swarm-report/*-metrics.json | sort | uniq -c | sort -rn | head
+```
+
+Percentage of runs that used at least one override:
+
+```
+jq -s '(map(select(.overrides | length > 0)) | length) / length * 100' swarm-report/*-metrics.json
+```
 
 ## License
 

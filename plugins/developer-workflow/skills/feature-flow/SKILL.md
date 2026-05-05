@@ -526,6 +526,19 @@ Each backward transition:
 
 ---
 
+## Post-run Telemetry (best-effort hook)
+
+After the run terminates (outcome: `merged` / `escalated` / `interrupted`) — i.e. the orchestrator reaches stage `Merged`, hits an escalation Stop Point, or is cut by the user — the orchestrator writes `swarm-report/<slug>-metrics.json`. Note the case distinction: stage labels (e.g. `Merged`) are TitleCase in the state machine; outcome enum values (e.g. `merged`) are lowercase in the schema. The schema lives in [`docs/METRICS-SCHEMA.md`](../../docs/METRICS-SCHEMA.md) and is shared with `bugfix-flow`.
+
+- Local-only artifact under the gitignored `swarm-report/` directory. Not sent off the machine.
+- Best-effort: a write failure logs once to chat and **does not break the orchestrator**. The run's main outcome is unaffected.
+- Required at minimum: `slug`, `flow: feature-flow`, `started_at`, `ended_at`, `wall_clock_seconds`, `outcome` (`merged` / `escalated` / `interrupted`), `escalation_reason` (or `null`), `stages` array, `backward_transitions` array, `overrides`, `review_verdicts`, `finalize_rounds`, `acceptance_verdict`, `pr_number`, `drive_to_merge_rounds`, `schema_version: "1"`.
+- Outcomes:
+  - `merged` — `drive-to-merge` confirmed merge.
+  - `escalated` — orchestrator stopped at an explicit Stop Point or hit a backward-edge cap; `escalation_reason` is filled.
+  - `interrupted` — user cut the run (e.g. abandoned worktree, `/exit`, `Ctrl+C`); fields not yet known are `null`.
+- The orchestrator updates the in-memory record at every stage transition so the file can be flushed at any point. The single write happens on terminal transition or in the cleanup hook for interruptions.
+
 ## Stop Points
 
 The orchestrator **stops and waits for the user** at:

@@ -356,3 +356,7 @@ Before opening a stage proposal — and before merging one — the candidate mus
 
 The current set of `feature-flow` / `bugfix-flow` stages was added before this checklist. A retroactive audit is a separate follow-up issue — not in scope here. If an existing stage is later found to fail the min-bar, the path is the same: redirect, not "patch the checklist".
 
+## Post-run Telemetry
+
+Both orchestrators write `swarm-report/<slug>-metrics.json` after every run as a best-effort post-hook (success, escalation, or interruption). The artifact is local-only and does NOT change the orchestrator's terminal verdict — a write failure logs once and the run completes as it would have otherwise. Schema lives in [`METRICS-SCHEMA.md`](METRICS-SCHEMA.md); it is shared between `feature-flow` and `bugfix-flow` and feeds the `jq`-based local aggregation snippets in the plugin README (`Aggregating run telemetry` section).
+
