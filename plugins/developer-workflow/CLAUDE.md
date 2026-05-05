@@ -10,7 +10,7 @@ Rules that are not open for discussion. Violating these is an error, not a judgm
 ## Structure
 
 ```
-skills/<name>/SKILL.md    # 18 lifecycle skills, each a directory with YAML frontmatter
+skills/<name>/SKILL.md    # 19 lifecycle skills, each a directory with YAML frontmatter
 agents/manual-tester.md   # only agent in core (QA executor)
 docs/WORKFLOW.md          # Full pipeline documentation with diagrams
 docs/ORCHESTRATORS.md     # feature-flow and bugfix-flow diagrams
@@ -22,7 +22,7 @@ This plugin is part of a split family. Depending on the task, Claude Code will h
 
 | Plugin | Contributes |
 |---|---|
-| `developer-workflow` (this) | 18 lifecycle skills + `manual-tester` |
+| `developer-workflow` (this) | 19 lifecycle skills + `manual-tester` |
 | `developer-workflow-experts` | `code-reviewer`, `architecture-expert`, `security-expert`, `performance-expert`, `ux-expert`, `build-engineer`, `devops-expert`, `business-analyst`, `debugging-expert` — required, auto-installed as a dependency |
 | `developer-workflow-kotlin` | `kotlin-engineer`, `compose-developer`; skills `code-migration`, `kmp-migration`, `migrate-to-compose` — install for Kotlin/Android/KMP work |
 | `developer-workflow-swift` | `swift-engineer`, `swiftui-developer` — install for Swift/iOS/macOS work |
@@ -47,12 +47,12 @@ Skills in this plugin delegate to engineer agents (kotlin-engineer / compose-dev
 - New stages for `feature-flow` / `bugfix-flow` must pass the [Min-bar checklist](docs/ORCHESTRATION.md#min-bar-for-a-new-orchestrator-stage) (5 criteria + alternative-redirect). Failing candidates are redirected to the cheaper path (extend triggers, profile, artifact template, or standalone skill); they are not merged as stages.
 - Test coverage policy (single-phase, test types, framework detection, audit, skip rules, "author fixes broken tests") is documented in [`docs/TESTING-STRATEGY.md`](docs/TESTING-STRATEGY.md). `implement`, `write-tests`, `generate-test-plan`, `finalize`, and `acceptance` read from there.
 
-## Skills roster (18)
+## Skills roster (19)
 
 - Planning/research: `research`, `clarify` (lightweight Q&A pit-stop — locks requirements between Research and Decompose), `decompose-feature`, `write-spec`, `multiexpert-review`, `design-options` (optional pre-multiexpert-review stage — generates 2-3 architectural alternatives for high-arch-risk tasks)
 - Implementation: `implement`, `write-tests`, `debug`
 - Verification utility: `check` — reusable mechanical-check runner (build + lint + typecheck + tests), invoked by `implement`, `finalize`, and any code-modifying skill
 - Code-quality pass: `finalize` — multi-round review-and-fix loop (code-reviewer → /simplify → optional pr-review-toolkit trio → expert reviews) that runs between `implement` and `acceptance`. The `pr-review-toolkit` trio is a soft-reference: installed → Phase C runs; absent → Phase C is skipped with a log entry.
-- QA: `generate-test-plan`, `acceptance`, `bug-hunt`
+- QA: `generate-test-plan`, `acceptance`, `bug-hunt`, `ui-scenario` (re-runnable UI tests via `mobile` / `playwright` MCP — write / run / update modes; honoured by `acceptance` when a persistent scenario exists for the slug)
 - PR: `create-pr`, `drive-to-merge`
 - Orchestrators: `feature-flow`, `bugfix-flow`
