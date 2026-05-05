@@ -103,11 +103,11 @@ Update mode is not for migrating a scenario across a major UI redesign — that 
 
 `acceptance` Branch 2 (test-plan-driven verification) checks for a persistent scenario before falling back to one-shot manual-tester execution:
 
-1. For each `ui-scenario`-typed Test Case in the test plan, look up `tests/ui-scenarios/<scenario-from-tc>.md`.
+1. For each `ui-scenario`-typed Test Case in the test plan, resolve the scenario file name from the TC's `Scenario:` field if present, otherwise slugify the TC title. Look up `tests/ui-scenarios/<scenario-name>.md`.
 2. If the file exists, invoke `ui-scenario` `run` mode and consume its receipt as the verification evidence for that TC.
 3. If the file does not exist, fall back to the one-shot `manual-tester` flow already documented in `acceptance/SKILL.md`.
 
-The acceptance skill records `test_plan_source: ui-scenario` (with the scenario file path) when the persistent scenario was used.
+The acceptance skill records the resolved scenario path on the per-TC evidence entry as `ui_scenario_path`. The receipt's `test_plan_source` field is unchanged by this path — it keeps its existing values `receipt | mounted | on-the-fly | absent` describing how the test plan itself was sourced, not how an individual TC was verified.
 
 ## Output artifacts
 

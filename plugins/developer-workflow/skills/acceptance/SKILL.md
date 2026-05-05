@@ -99,13 +99,18 @@ wrong fields) becomes a P1 acceptance finding routed through the standard FAILED
 loop. An explicit `N/A: <reason>` in the test-plan section skips this check.
 
 **Persistent UI scenario reuse.** When the chosen test plan contains a Test Case typed
-`ui-scenario`, before driving `manual-tester` for that TC, look up
-`tests/ui-scenarios/<scenario-from-tc>.md`. If the file exists, invoke the
+`ui-scenario`, before driving `manual-tester` for that TC, derive the scenario file name:
+read the TC's optional `Scenario:` field if present; otherwise slugify the TC title
+(lowercase, non-alphanumeric → `-`, collapse runs, trim leading/trailing `-`). Look up
+`tests/ui-scenarios/<scenario-name>.md`. If the file exists, invoke the
 [`ui-scenario`](../ui-scenario/SKILL.md) skill in `run` mode and consume its receipt
-(`swarm-report/<slug>-ui-scenario-<name>.md`) as the verification evidence for that TC. The
-acceptance receipt records `test_plan_source: ui-scenario` plus the scenario file path
-when this path is taken; otherwise the standard one-shot `manual-tester` flow runs as
-before.
+(`swarm-report/<slug>-ui-scenario-<name>.md`) as the verification evidence for that TC.
+Record the resolved scenario path on the per-TC evidence entry as `ui_scenario_path`
+(separate from `test_plan_source`, which keeps its existing values
+`receipt | mounted | on-the-fly | absent` describing how the test plan itself was
+sourced). When the scenario file does not exist, the standard one-shot `manual-tester`
+flow runs as before; emit a one-line note pointing to the missing file path so authors
+can decide whether to write the scenario.
 
 ---
 

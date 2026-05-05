@@ -1,6 +1,6 @@
 # UI Scenario Format
 
-Canonical structure for `tests/ui-scenarios/<name>.md`. Every scenario is a markdown file with three sections — **header**, **steps**, **cleanup** — plus an optional **fixtures** block. The format is human-readable AND machine-parseable: the running agent reads each step verbatim and maps actions to MCP tool calls.
+Canonical structure for `tests/ui-scenarios/<name>.md`. Every scenario is a markdown file with four required sections — **header**, **preconditions**, **steps**, **cleanup** — plus an optional **fixtures** block. The format is human-readable AND machine-parseable: the running agent reads each step verbatim and maps actions to MCP tool calls.
 
 ## File layout
 
@@ -8,9 +8,9 @@ Canonical structure for `tests/ui-scenarios/<name>.md`. Every scenario is a mark
 # UI Scenario: <human title>
 
 Platforms: android, ios, web        # one or more, comma-separated
-Device profile: default              # optional — see "Device profiles" below
-Tags: smoke, checkout, regression    # optional — used by acceptance/CI to filter
-Timeout: 60s                          # optional — overall scenario timeout
+Device profile: default              # optional — runner-defined profile name
+Tags: smoke, checkout, regression    # optional — informational only
+Timeout: 60s                          # optional — overall scenario timeout (wall-clock)
 
 ## Preconditions
 
@@ -47,10 +47,10 @@ Timeout: 60s                          # optional — overall scenario timeout
 | Field | Required | Notes |
 |---|---|---|
 | Title (`# UI Scenario: ...`) | yes | Human-readable; not used by the runner |
-| `Platforms:` | yes | One or more of `android`, `ios`, `web`. Determines which MCP server (`mobile` / `playwright`) executes the scenario |
-| `Device profile:` | no | Defaults to `default`. Project-specific profiles can declare locale, screen size, network throttle |
-| `Tags:` | no | Free-form list, comma-separated. `acceptance` and CI runners filter on these |
-| `Timeout:` | no | Overall wall-clock cap. Defaults to 120s for `mobile`, 60s for `playwright`. Per-step waits do NOT count against this — only total wall time |
+| `Platforms:` | yes | One or more of `android`, `ios`, `web`. Determines which MCP-based runner (device / browser automation) executes the scenario |
+| `Device profile:` | no | Defaults to `default`. Runner-defined profile name (locale, screen size, network throttle). The set of available profiles is project-specific; reserved for future runner extensions |
+| `Tags:` | no | Free-form list, comma-separated. **Informational only** — reserved for future filtering by `acceptance` and CI runners; nothing consumes this field today |
+| `Timeout:` | no | Overall wall-clock cap on the entire scenario. Defaults: 120s for mobile platforms, 60s for `web`. When `Platforms:` lists multiple targets, the runner uses the highest default for the executing platform unless `Timeout:` is set explicitly. **Everything counts as wall time** — including explicit `wait for: 5s` steps and `wait for: <selector>` polls. The runner measures `now() - scenario_start` and trips the cap regardless of where the time was spent |
 
 ## Selector priority
 
