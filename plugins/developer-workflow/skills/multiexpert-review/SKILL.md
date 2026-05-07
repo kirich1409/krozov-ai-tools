@@ -6,8 +6,7 @@ description: >-
   committing. Triggers: "review the plan", "review the spec", "review the test-plan",
   "multi-expert review", "panel review", "validate the approach", "sanity check this",
   "what did I miss?", "review the spec", "review the test-plan",
-  "evaluate the plan". Do NOT use for code review (use code-reviewer) or for generating
-  alternative designs (use design-options).
+  "evaluate the plan". Do NOT use for code review (use code-reviewer).
 ---
 
 # Multi-Expert Review
@@ -334,4 +333,4 @@ Categories:
 - `PROFILE_INVENTORY_MISMATCH` — README list vs. `profiles/*.md` presence disagree
 - `ROUTING_NOT_SUPPORTED` — engine reached Step 5 with a source the profile declared `N/A` in `source_routing`
 
-Consumers (`feature-flow`, `write-spec`, etc.) detect this prefix to distinguish engine errors from ordinary review FAIL verdicts.
+Consumers (e.g. `write-spec`) detect this prefix to distinguish engine errors from ordinary review FAIL verdicts.

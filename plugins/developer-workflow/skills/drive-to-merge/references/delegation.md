@@ -8,7 +8,7 @@ Apply the snippet directly via Edit tool (one file at a time). After all edit ro
 
 ## 3.2 Delegate rows
 
-For each delegate row: invoke the named skill (`implement` or `debug`) or engineer agent via the Task tool. Prompt includes:
+For each delegate row: invoke the named engineer agent (`kotlin-engineer`, `compose-developer`, `swift-engineer`, `swiftui-developer`) via the Task tool. Prompt includes:
 
 - The reviewer comment quote.
 - The proposed approach from the decision table.

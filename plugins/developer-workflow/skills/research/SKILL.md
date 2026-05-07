@@ -1,6 +1,6 @@
 ---
 name: research
-description: "Research Consortium — parallel expert investigation of a topic, idea, problem, or technology before implementation. Launches up to 5 domain experts simultaneously (codebase, web, docs, dependencies, architecture), synthesizes findings into a structured report, auto-reviews via business-analyst. Use when: \"research\", \"investigate\", \"explore this idea\", \"technical spike\", \"feasibility\", \"can we do X?\", \"what are the options for\", \"compare approaches\", \"evaluate alternatives\", \"pros and cons of\", \"before we start — let's understand\", \"what do we need to know before\". Also invoked when implement or code-migration needs a Research stage, or when multiexpert-review verdict is FAIL. Do NOT use for: code review (use code-reviewer agent), implementation (use implement), multiexpert review (use multiexpert-review), library version lookup (use maven-mcp:latest-version), debugging existing bugs."
+description: "Research Consortium — parallel expert investigation of a topic, idea, problem, or technology before implementation. Launches up to 5 domain experts simultaneously (codebase, web, docs, dependencies, architecture), synthesizes findings into a structured report, auto-reviews via business-analyst. Use when: \"research\", \"investigate\", \"explore this idea\", \"technical spike\", \"feasibility\", \"can we do X?\", \"what are the options for\", \"compare approaches\", \"evaluate alternatives\", \"pros and cons of\", \"before we start — let's understand\", \"what do we need to know before\". Do NOT use for: code review (use code-reviewer agent), multiexpert review (use multiexpert-review), library version lookup (use maven-mcp:latest-version), debugging existing bugs."
 disable-model-invocation: true
 ---
 
@@ -358,10 +358,10 @@ should be able to make a decision without opening the file. Format:
    which question it is out of N total (e.g. "Question 1 of 3:"). Save the rest
    to the report — present subsequent questions one-by-one only after the user
    answers the current one.
-4. One line: suggested next step with command (e.g. `/decompose-feature` or `/implement`).
+4. One line: suggested next step (e.g. enter plan mode, `/multiexpert-review` the proposed approach, or proceed to implementation).
 
 Hard limit: ≤30 lines in chat. No tables, no source lists, no inline markdown citations.
-The swarm-report file is for downstream pipeline stages and compaction recovery — not for the user.
+The swarm-report file is for downstream skills and compaction recovery — not for the user.
 
 ### Suggest next action
 
@@ -369,17 +369,16 @@ Based on the research findings, propose the logical next step:
 
 | Situation | Suggested action |
 |-----------|-----------------|
-| Feature is large, multiple independent parts | `/decompose-feature` — break into tasks |
-| Feature is clear, single task, ready to build | `/implement` — start implementation |
+| Feature is clear, single task, ready to build | Enter plan mode and start implementing |
 | Complex approach, needs validation before coding | Plan Mode → `/multiexpert-review` |
-| Research revealed a bug, not a feature need | `/bugfix-flow` — switch to bug pipeline |
+| Research revealed a bug, not a feature need | Enter plan mode for the fix |
 | Open questions block progress | List questions, ask user to resolve before proceeding |
 | Multiple viable approaches, no clear winner | Present trade-offs, ask user to choose |
 
 Frame the suggestion as an actionable proposal, not a question:
 
-> **Next step:** feature splits into 3 independent parts → suggesting `/decompose-feature`.
-> Or if ready to code right away — `/implement`.
+> **Next step:** the work splits into 3 independent parts → suggesting plan mode to sequence them.
+> Or if ready to code right away — start implementation.
 
 ---
 
@@ -415,27 +414,11 @@ Stop and escalate to the user when:
 
 ---
 
-## Integration with Pipeline
-
-This skill operates both standalone and as a stage in larger workflows:
-
-- **Standalone** (Research profile): user asks a question, gets a report. No implementation follows.
-- **Pipeline stage** (Feature/Migration profile): the `implement` skill or `code-migration` invokes
-  research as Phase 0. The output artifact (`<slug>-research.md`) feeds into the Plan stage
-  via the receipt-based gating protocol.
-- **Recovery** (backward transition): when `multiexpert-review` returns FAIL due to missing context,
-  or when implementation reveals unexpected scope, the pipeline transitions back to Research.
-
-In all cases, the artifact location and format are the same — downstream stages read
-`./swarm-report/<slug>-research.md` regardless of how research was triggered.
-
----
-
 ## Output Format and Location
 
 | Artifact | Path | Purpose |
 |----------|------|---------|
-| Research report | `./swarm-report/<slug>-research.md` | Final synthesized findings — the receipt for the next pipeline stage |
+| Research report | `./swarm-report/<slug>-research.md` | Final synthesized findings |
 | State file | `./swarm-report/research-<slug>-state.md` | Compaction-resilient progress tracking during investigation |
 | Chat summary | — | ≤30-line user-facing output posted after the file is saved |
 

@@ -132,14 +132,14 @@ Test cases that are good candidates for automated testing.
 
 ## Phase Segmentation
 
-When the feature reaches this skill via `decompose-feature` with phases (e.g. T-1..T-3 in
-Phase 1, T-4..T-6 in Phase 2), the permanent file splits the `## Test Cases` section by
-phase so each phase can ship and be re-verified independently. One permanent document per
-feature remains the rule — phases are sections inside it, not separate files.
+When the feature ships in phases (e.g. T-1..T-3 in Phase 1, T-4..T-6 in Phase 2), the
+permanent file splits the `## Test Cases` section by phase so each phase can ship and
+be re-verified independently. One permanent document per feature remains the rule —
+phases are sections inside it, not separate files.
 
-Apply segmentation when the decomposition artifact contains two or more phases **and** test
-cases can be grouped by which phase introduces the behavior they cover. Otherwise keep a
-single flat `## Test Cases` section.
+Apply segmentation when the input plan / spec contains two or more phases **and** test
+cases can be grouped by which phase introduces the behavior they cover. Otherwise keep
+a single flat `## Test Cases` section.
 
 Example for a feature with two phases:
 

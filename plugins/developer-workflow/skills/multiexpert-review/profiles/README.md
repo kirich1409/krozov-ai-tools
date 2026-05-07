@@ -99,7 +99,7 @@ Profiles whose rubric is a **labeled checklist** with short IDs (e.g. test-plan 
 
 ## Error semantics (unified across engine)
 
-All engine errors produce the exact prefix `[multiexpert-review ERROR] <CATEGORY>: <details>` as the first line of conversation output. Consumers (`feature-flow`, `write-spec`, etc.) detect this prefix to distinguish engine errors from ordinary review FAIL verdicts. Categories:
+All engine errors produce the exact prefix `[multiexpert-review ERROR] <CATEGORY>: <details>` as the first line of conversation output. Consumers (e.g. `write-spec`) detect this prefix to distinguish engine errors from ordinary review FAIL verdicts. Categories:
 
 - `UNKNOWN_PROFILE_HINT` — caller passed hint not in inventory
 - `FORBIDDEN_PROFILE_FIELD` — profile frontmatter violates negative-list

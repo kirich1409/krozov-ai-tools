@@ -8,8 +8,7 @@ description: >
   with a draft-or-ready prompt. Composes description from available swarm-report artifacts
   (research, plan, test-plan, finalize, acceptance) and falls back to git log + diff. Invoke
   when the user says "create PR", "open draft PR", "refresh PR description", "promote to ready",
-  "mark PR ready for review", "update the PR", "switch the PR to ready", or when feature-flow /
-  bugfix-flow orchestrators call this skill at a lifecycle step.
+  "mark PR ready for review", "update the PR", "switch the PR to ready".
 ---
 
 # Create PR
@@ -22,10 +21,10 @@ Manage a pull request (GitHub) or merge request (GitLab) across its lifecycle �
 
 | Mode | When | What it does | Fails if |
 |---|---|---|---|
-| `--draft` | After first implement commit in a pipeline | Creates draft PR if none exists; refreshes body if a draft already exists | PR exists and is already ready for review |
-| `--refresh` | After major lifecycle steps (finalize round complete, acceptance passed) | Updates body of existing PR (draft or ready) — no status change | No PR exists |
+| `--draft` | After the first commit on a feature branch | Creates draft PR if none exists; refreshes body if a draft already exists | PR exists and is already ready for review |
+| `--refresh` | After meaningful progress (finalize round complete, acceptance passed) | Updates body of existing PR (draft or ready) — no status change | No PR exists |
 | `--promote` | After all local quality passes (finalize + acceptance) | Refreshes body with final summary, then marks draft PR as ready for review | No PR exists, or PR is already ready |
-| default | Manual invocation outside pipeline | Asks draft-or-ready if unclear, then creates | PR already exists |
+| default | Direct invocation | Asks draft-or-ready if unclear, then creates | PR already exists |
 
 Mode is passed via arguments: `/create-pr --draft`, `/create-pr --refresh`, `/create-pr --promote`, or `/create-pr` for default.
 
@@ -127,16 +126,14 @@ Look for artifacts in `./swarm-report/` that match the current branch/task slug.
 | research | `swarm-report/<slug>-research.md` | Link + 1-sentence abstract in "Context" section |
 | spec | `docs/specs/<YYYY-MM-DD>-<slug>.md` (written by `write-spec`) | Reference as "Specification" |
 | plan | `swarm-report/<slug>-plan.md` | Reference as "Plan"; acceptance criteria extracted for "How to test" |
-| decomposition | `swarm-report/<slug>-decomposition.md` | Reference as "Task breakdown" when present |
-| debug | `swarm-report/<slug>-debug.md` | Root cause + reproduction steps — primary context for bugfix PRs |
+| debug | `swarm-report/<slug>-debug.md` | Root cause + reproduction steps — primary context for bug-fix PRs |
 | test plan | `swarm-report/<slug>-test-plan.md` | Reference; test cases become checklist in "How to test" |
-| implement | `swarm-report/<slug>-implement.md` | Summary of implementation goes into "What changed" |
 | quality | `swarm-report/<slug>-quality.md` | Gate pass/fail summary for status table |
 | finalize | `swarm-report/<slug>-finalize.md` | Round-by-round summary for status table (available once the `finalize` skill is installed) |
 | acceptance | `swarm-report/<slug>-acceptance.md` | Pass/fail + verified scenarios for "Verification" section |
 
 Slug resolution:
-1. Prefer slug if orchestrator passed it as argument
+1. Prefer slug if the caller passed it as an argument
 2. Fallback to branch name with common prefix stripped: `feature/`, `fix/`, `hotfix/`, `bug/`, `chore/`, `refactor/`, `docs/`
 
 Artifacts are gitignored (in `swarm-report/`), so they won't appear in diff — include them as *references* in the body (e.g., "See `swarm-report/my-slug-plan.md`"), not as inlined content. Reviewers working on the PR locally can read them; CI cannot, but the body remains readable without them.
@@ -355,18 +352,16 @@ Output differs by status (see "Output templates" below).
 
 ## Lifecycle integration (informational)
 
-Orchestrators (`feature-flow`, `bugfix-flow`) invoke this skill at these milestones:
+A typical flow:
 
 ```
-implement first pass → push → /create-pr --draft
-finalize (runs after implement, before acceptance — multi-round code-quality loop)
+first commit on the feature branch → push → /create-pr --draft
+finalize (multi-round code-quality loop)
 acceptance
 all local checks PASS → /create-pr --promote
 ```
 
-Both orchestrators (`feature-flow`, `bugfix-flow`) call `/create-pr --draft` after `implement` and `/create-pr --promote` after `acceptance` passes. Mid-flow `--refresh` calls (e.g., after each finalize round, after fix loops) are not currently wired in — user or orchestrator can invoke `/create-pr --refresh` manually if the PR body should reflect intermediate progress.
-
-The orchestrator owns deciding *when* to invoke; this skill owns *how*.
+Mid-flow `--refresh` calls are useful when the PR body should reflect intermediate progress (e.g., after each finalize round, after a fix loop). The caller decides *when* to invoke; this skill owns *how*.
 
 ---
 

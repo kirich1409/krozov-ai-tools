@@ -1,6 +1,6 @@
 ---
 name: write-spec
-description: "Specification-Driven Development — transforms a feature idea into an exhaustive spec that enables autonomous implementation without user interruptions downstream. Researches codebase, interviews user with pre-filled suggestions, produces structured spec with acceptance criteria, affected modules, constraints, and decisions. Spec is auto-reviewed (self-review + multiexpert-review), discussed with user, saved as permanent document. Use when: \"write a spec\", \"spec this out\", \"design doc\", \"spec-driven\", \"let's spec it before building\", \"write a specification for\", \"design the architecture for\", \"let's plan it properly\", \"I don't want to wing it\". Invoke proactively when a feature is complex enough that jumping straight to implementation would be risky. Do NOT use for: bug fixes (use debug + implement), research-only questions (use research skill), single-file changes, decomposition without design (use decompose-feature). Saved spec feeds into decompose-feature and implement."
+description: "Specification-Driven Development — transforms a feature idea into an exhaustive spec that enables autonomous implementation without user interruptions downstream. Researches codebase, interviews user with pre-filled suggestions, produces structured spec with acceptance criteria, affected modules, constraints, and decisions. Spec is auto-reviewed (self-review + multiexpert-review), discussed with user, saved as permanent document. Use when: \"write a spec\", \"spec this out\", \"design doc\", \"spec-driven\", \"let's spec it before building\", \"write a specification for\", \"design the architecture for\", \"let's plan it properly\", \"I don't want to wing it\". Invoke proactively when a feature is complex enough that jumping straight to implementation would be risky. Do NOT use for: bug fixes (use plan mode), research-only questions (use research skill), single-file changes."
 ---
 
 # Write Spec
@@ -301,7 +301,7 @@ decides when to proceed.
 
 After saving, confirm to the user in one sentence: spec saved to
 `docs/specs/YYYY-MM-DD-<slug>.md`, status: approved. Suggest the next step
-(e.g. `/generate-test-plan` or `/implement`).
+(e.g. `/generate-test-plan`, plan-mode implementation, or `/multiexpert-review`).
 No inline content — the file is the artifact; chat is just a status ping.
 
 See [`references/output-layout.md`](references/output-layout.md) for the full

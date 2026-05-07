@@ -31,12 +31,10 @@ SKILL.md stays the stable orchestration contract.
 
 ## Vocabulary
 
-Canonical values used throughout this skill. Downstream consumers (`feature-flow`,
-`bugfix-flow`, `create-pr`) read these from the receipt.
+Canonical values used throughout this skill. `create-pr` and any downstream consumer read these from the receipt.
 
 - **`project_type`** — one of: `android`, `ios`, `web`, `desktop`, `backend-jvm`,
-  `backend-node`, `cli`, `library`, `generic`. Source of truth: `docs/ORCHESTRATION.md`
-  §Project type detection.
+  `backend-node`, `cli`, `library`, `generic`.
 - **`has_ui_surface`** — boolean derived from `project_type`. True for `android`, `ios`,
   `web`, `desktop`. False otherwise (`generic` → ask user).
 - **`ecosystem`** — build stack: `gradle`, `node`, `rust`, `go`, `python`, `xcode`. Used
@@ -44,8 +42,7 @@ Canonical values used throughout this skill. Downstream consumers (`feature-flow
 - **Per-check verdict** — each sub-check reports `PASS | WARN | FAIL | SKIPPED`, plus
   `severity` (`critical | major | minor`), `confidence` (`high | medium | low`), and
   `domain_relevance` (`high | medium | low`) for aggregation.
-- **Bug severity** — `P0 | P1 | P2 | P3`. Unchanged from prior receipt schema, primary
-  axis for `feature-flow`/`bugfix-flow` routing.
+- **Bug severity** — `P0 | P1 | P2 | P3`. Unchanged from prior receipt schema.
 - **Aggregated Status** — `VERIFIED | FAILED | PARTIAL`. Derived; table in
   `references/aggregation.md` §Aggregated Status.
 
@@ -53,8 +50,7 @@ Canonical values used throughout this skill. Downstream consumers (`feature-flow
 
 ## Step 0: Detect Project Type
 
-Follow the canonical heuristic in `plugins/developer-workflow/docs/ORCHESTRATION.md`
-§Project type detection. Output: `project_type`, `has_ui_surface`, `ecosystem`.
+Detect from build files, manifests, and source layout: Android (`AndroidManifest.xml`, `build.gradle*` with `com.android.application`), iOS (`*.xcodeproj`, `Package.swift` with iOS targets, `Info.plist`), web (`package.json` with browser-targeted framework), desktop (Compose Desktop, Tauri, Electron), backend (Spring/Ktor/Express without UI), CLI / library (no UI surface). When ambiguous, ask the user. Output: `project_type`, `has_ui_surface`, `ecosystem`.
 
 **Override policy.** If the spec frontmatter `platform:` list is non-empty, **spec wins** —
 take the first platform value as the canonical `project_type`. If the list has more than
@@ -102,15 +98,13 @@ loop. An explicit `N/A: <reason>` in the test-plan section skips this check.
 `ui-scenario`, before driving `manual-tester` for that TC, derive the scenario file name:
 read the TC's optional `Scenario:` field if present; otherwise slugify the TC title
 (lowercase, non-alphanumeric → `-`, collapse runs, trim leading/trailing `-`). Look up
-`tests/ui-scenarios/<scenario-name>.md`. If the file exists, invoke the
-[`ui-scenario`](../ui-scenario/SKILL.md) skill in `run` mode and consume its receipt
-(`swarm-report/<slug>-ui-scenario-<name>.md`) as the verification evidence for that TC.
-Record the resolved scenario path on the per-TC evidence entry as `ui_scenario_path`
-(separate from `test_plan_source`, which keeps its existing values
-`receipt | mounted | on-the-fly | absent` describing how the test plan itself was
-sourced). When the scenario file does not exist, the standard one-shot `manual-tester`
-flow runs as before; emit a one-line note pointing to the missing file path so authors
-can decide whether to write the scenario.
+`tests/ui-scenarios/<scenario-name>.md`. If the file exists, drive `manual-tester` against
+that scenario file as the source of truth for the TC. Record the resolved scenario path
+on the per-TC evidence entry as `ui_scenario_path` (separate from `test_plan_source`,
+which keeps its existing values `receipt | mounted | on-the-fly | absent` describing how
+the test plan itself was sourced). When the scenario file does not exist, the standard
+one-shot `manual-tester` flow runs as before; emit a one-line note pointing to the
+missing file path so authors can decide whether to write the scenario.
 
 ---
 
@@ -122,9 +116,9 @@ Fires only on `test_plan_source: absent`.
 
 | Situation | Proposal |
 |---|---|
-| No spec, no test plan, implement receipt exists (feature) | Run `/write-spec` (requirements doc) or `/generate-test-plan` (tests only), then re-run acceptance. |
+| No spec, no test plan (feature) | Run `/write-spec` (requirements doc) or `/generate-test-plan` (tests only), then re-run acceptance. |
 | Spec exists without acceptance criteria, no test plan, UI project | Run `/generate-test-plan` to produce executable TCs, or add acceptance criteria to the spec. |
-| Bugfix path with no `swarm-report/<slug>-debug.md` | Run `/debug` to capture reproduction steps, then re-run acceptance. |
+| Bugfix path with no reproduction notes | Capture root-cause + reproduction steps in `swarm-report/<slug>-debug.md` (plan-mode investigation), then re-run acceptance. |
 | Only `design.figma` in spec, no test plan, UI project | Design-only review possible via `ux-expert`; for functional acceptance also run `/generate-test-plan`. |
 
 ### Options
@@ -136,8 +130,9 @@ Fires only on `test_plan_source: absent`.
 Exploratory QA without a scenario is the `bug-hunt` skill's responsibility. Do not offer
 it as a fallback inside acceptance.
 
-From `feature-flow` / `bugfix-flow` this gate rarely fires — upstream skills guarantee a
-source. Standalone invocations are the main user.
+When acceptance is invoked after a structured upstream step (`write-spec`,
+`generate-test-plan`, captured `debug.md`), this gate rarely fires — those steps
+already produced a source. Standalone invocations are the main case.
 
 ---
 
@@ -176,25 +171,24 @@ incomplete step.
 
 ## Step 2.5: Dedup Probe
 
-Read `swarm-report/<slug>-quality.md` (produced by `implement`'s Quality Loop). Three
-cases:
+Read `swarm-report/<slug>-quality.md` (an upstream code-quality receipt, e.g. produced by
+`finalize` or any quality-loop run that wrote it). Three cases:
 
 - **`Status: PASS`**, receipt from the current branch head → `code-reviewer` is skipped.
   Freshness is inferred from the receipt's `Date:` field vs the branch commit window; if
   it cannot be confirmed, do **not** skip — run `code-reviewer` normally. On skip, write a
   stub at `swarm-report/<slug>-acceptance-code.md` with `verdict: SKIPPED`,
   `blocked_on: null`, one-line body referencing `<slug>-quality.md`.
-- **`Status: FAIL`** → Quality Loop failed upstream. Run `code-reviewer` anyway, surface
+- **`Status: FAIL`** → upstream quality loop failed. Run `code-reviewer` anyway, surface
   `blocked_on: quality-loop failed — see <slug>-quality.md` in the Step 4 Summary. The
   aggregated Status is forced to `PARTIAL` at minimum (or `FAILED` if `code-reviewer`
   itself returns `FAIL`).
 - **Receipt missing** → run `code-reviewer` normally. No skip.
 
-Field name matches `implement`'s receipt schema. Note: `code-reviewer` skipping here is
-decoupled from the Re-verification Loop's `diff_hash` policy
-(see [`references/re-verification.md`](references/re-verification.md)) — the dedup here is
-about "implement already ran code-review on this diff", whereas `diff_hash` idempotency is
-about "previous acceptance run covered this same diff".
+Note: `code-reviewer` skipping here is decoupled from the Re-verification Loop's
+`diff_hash` policy (see [`references/re-verification.md`](references/re-verification.md))
+— the dedup here is about "an upstream pass already ran code-review on this diff",
+whereas `diff_hash` idempotency is about "previous acceptance run covered this same diff".
 
 This probe is synchronous — it decides the Step 3 fan-out composition and emits the stub
 before fan-out.
@@ -414,7 +408,7 @@ Do NOT paste acceptance receipt tables into chat. The file is for audit trail on
 
 ## Re-verification Loop
 
-On fix-loop re-entry (after `FAILED` → `implement` fix → re-run acceptance), compute
+On fix-loop re-entry (after `FAILED` → fix on the branch → re-run acceptance), compute
 `diff_hash_new` and decide which checks to re-run vs reuse, per the decision table in
 [`references/re-verification.md`](references/re-verification.md). Spec and test-plan
 change overrides (`spec_hash` / `test_plan_hash` mismatch forces `business-analyst` /

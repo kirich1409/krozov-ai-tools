@@ -19,8 +19,8 @@ Shared reference material in `agents/references/`:
 
 ## Dependencies
 
-- [`developer-workflow`](../developer-workflow/) — lifecycle orchestration (`implement`, `write-tests`, etc. call into this plugin's engineers)
-- [`developer-workflow-experts`](../developer-workflow-experts/) — expert agents used by the lifecycle pipeline
+- [`developer-workflow`](../developer-workflow/) — toolbox skills (`write-tests`, `check`, `finalize`, etc.) used during platform work
+- [`developer-workflow-experts`](../developer-workflow-experts/) — expert agents used by skills in this plugin
 
 Both dependencies are installed automatically when this plugin is installed:
 

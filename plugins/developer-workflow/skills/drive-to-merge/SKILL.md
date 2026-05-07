@@ -147,8 +147,8 @@ Procedure and "Dismiss stale approvals" side effect in [`references/merge.md`](r
 Execute strictly in table order. Branches:
 
 - **Edit rows** — apply snippet, run `check`, stop on failure.
-- **Delegate rows** — invoke `implement` / `debug` or engineer agent sequentially; scope-guard
-  diff after each returns.
+- **Delegate rows** — invoke the named engineer agent (kotlin-engineer / compose-developer /
+  swift-engineer / swiftui-developer) sequentially; scope-guard diff after each returns.
 - **Ask-in-thread rows** — post verbatim question, do not resolve.
 - **Dismiss rows** — canned template + sanitized slot, resolve thread.
 

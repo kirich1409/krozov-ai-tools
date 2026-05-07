@@ -28,10 +28,10 @@ Acceptance uses the same aggregation protocol as `multiexpert-review` (see
 | **`minor` severity** or **`low` confidence** from a single check | → Note, not blocker. Does not affect aggregated Status. |
 | **`low` domain_relevance** check flagging an issue | → Note, weight lower. |
 
-**Bug severities (P0–P3) remain the primary routing axis** for
-`feature-flow`/`bugfix-flow`. Any P0/P1 bug reported by any sub-check maps directly to
-`FAILED` regardless of the PoLL above; PoLL layers additional rules on top for cases not
-covered by bug severity alone (e.g. AC coverage FAIL without an associated P0 bug).
+**Bug severities (P0–P3) remain the primary routing axis** for the caller. Any P0/P1
+bug reported by any sub-check maps directly to `FAILED` regardless of the PoLL above;
+PoLL layers additional rules on top for cases not covered by bug severity alone (e.g.
+AC coverage FAIL without an associated P0 bug).
 
 ## Aggregated Status — final table
 
@@ -112,14 +112,15 @@ reported it.]
 [Ship / Do not ship / Ship with known issues — and why]
 ```
 
-## Routing (consumed by orchestrators)
+## Routing (consumed by callers)
 
 - **VERIFIED** → `create-pr` (or mark existing PR ready for review).
-- **FAILED** with P0/P1 and obvious cause → `implement` with the bug list as input. Max 3
-  round-trips.
-- **FAILED** with P0/P1 and unclear cause → `debug` first, then `implement`.
-- **FAILED** with P0/P1 requiring regression coverage → `test-plan` append `## Regression TC`,
-  then `implement`.
-- **PARTIAL** with P2/P3 only or WARN — orchestrator asks the user: fix now or ship with
-  known issues (continue to `create-pr`, include in PR description).
+- **FAILED** with P0/P1 and obvious cause → fix on the branch with the bug list as input,
+  then re-run acceptance. Max 3 round-trips.
+- **FAILED** with P0/P1 and unclear cause → investigate root cause (plan-mode debug) first,
+  then fix and re-run.
+- **FAILED** with P0/P1 requiring regression coverage → append a `## Regression TC` to the
+  test plan, then fix and re-run.
+- **PARTIAL** with P2/P3 only or WARN — ask the user: fix now or ship with known issues
+  (continue to `create-pr`, include in PR description).
 - **PARTIAL** with `blocked_on` — surface the blocker; do not continue until resolved.

@@ -54,17 +54,17 @@ of the caller — it is no longer needed once the spec is saved.
 Spec saved: docs/specs/{filename}
 
 This document is self-sufficient for implementation. When you're ready,
-decompose-feature will break it into tasks for autonomous execution.
+plan mode (or any structured implementation pass) can pick it up.
 ```
 
-Do not auto-invoke `decompose-feature` or any other skill. The spec is the
-deliverable. The user decides when and how to proceed.
+Do not auto-invoke any other skill. The spec is the deliverable. The user
+decides when and how to proceed.
 
 ---
 
 ## Hand-off
 
 The saved spec is the sole deliverable of `write-spec`. It is designed to be
-handed to `decompose-feature` and then `implement` at any future point,
-producing a complete autonomous implementation with user involvement only at
+picked up by plan-mode implementation or any downstream tooling at any future
+point, producing a complete implementation with user involvement only at
 genuine critical blockers.

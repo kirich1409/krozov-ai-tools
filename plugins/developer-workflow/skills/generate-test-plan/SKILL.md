@@ -29,28 +29,26 @@ docs/testplans/<slug>-test-plan.md
 ```
 
 Create the `docs/testplans/` directory if it doesn't exist. The slug is the canonical
-filename anchor — downstream stages (`feature-flow` Phase 1.5, `acceptance` Branch 2)
-mount by exact slug match, so the filename must be slug-based regardless of invocation
-mode.
+filename anchor — `acceptance` mounts by exact slug match, so the filename must be
+slug-based regardless of invocation mode.
 
 Slug resolution rules (apply in order):
 
-1. **Orchestrator invocation** — when this skill is invoked from `feature-flow`, a
-   `slug` argument is passed explicitly. Use it as-is.
-2. **Standalone invocation, slug provided inline** — the user or caller may supply
-   a slug directly (e.g. `"slug: login-flow"`). Use it as-is.
+1. **Caller-provided** — when a `slug` argument is passed explicitly, use it as-is.
+2. **Standalone invocation, slug provided inline** — the user may supply a slug
+   directly (e.g. `"slug: login-flow"`). Use it as-is.
 3. **Standalone invocation, no slug** — derive one from the feature name with the
-   stable kebab-case convention used elsewhere in workflow docs: lowercase the
-   name, replace runs of spaces or punctuation with `-`, trim leading/trailing `-`.
+   stable kebab-case convention used elsewhere: lowercase the name, replace runs
+   of spaces or punctuation with `-`, trim leading/trailing `-`.
 
 Examples of derivation (rule 3): `"User authentication"` → `user-authentication`,
 `"Cart & checkout"` → `cart-checkout`, `"Token refresh (auth)"` → `token-refresh-auth`.
 The resulting filename is then `docs/testplans/<slug>-test-plan.md` (for example,
 `docs/testplans/user-authentication-test-plan.md`).
 
-### Receipt (when invoked from orchestrator with a slug)
+### Receipt (when invoked with a slug)
 
-When invoked from `feature-flow` with a `slug` argument, also emit a receipt at
+When invoked with a `slug` argument, also emit a receipt at
 `swarm-report/<slug>-test-plan.md` so `multiexpert-review` and `acceptance` can mount
 the artifact via receipt-based gating. The permanent file remains the source of truth;
 the receipt is metadata + pointer. Standalone invocations (no slug passed) skip the
@@ -75,10 +73,10 @@ Read the document. Extract:
 
 **Spec frontmatter (when the source is a file with YAML frontmatter).** Read the frontmatter
 block first. If it contains a `platform:` list, copy that list verbatim into the receipt's
-`platform:` field (same canonical values as `write-spec` and ORCHESTRATION.md §Project type
-detection). When the orchestrator invokes this skill without a file-based spec, or the spec
-has no frontmatter, leave `platform:` empty in the receipt — `acceptance` will fall back to
-its project-type heuristic.
+`platform:` field (canonical values: `android | ios | web | desktop | backend-jvm |
+backend-node | cli | library | generic`, same as `write-spec`). When the caller invokes
+this skill without a file-based spec, or the spec has no frontmatter, leave `platform:`
+empty in the receipt — `acceptance` will fall back to its project-type heuristic.
 
 ### 2. Figma mockup
 
@@ -159,7 +157,7 @@ Two variants exist:
   collapse Steps and Expected Result into a single `Scenario (Given/When/Then)` row.
   All other sections are unchanged.
 
-When the feature arrives via `decompose-feature` with two or more phases and test cases can
+When the feature has two or more phases (e.g. a multi-stage rollout) and test cases can
 be grouped by phase, split the `## Test Cases` section into `### Phase N (T-i..T-j) — <label>`
 subsections (still one permanent file per feature). The receipt's `phase_coverage` then lists
 the phase labels present.
@@ -171,7 +169,7 @@ markdown), the phase-segmentation worked example, and the rules for when each va
 
 ### Type
 
-Every test case declares an explicit `Type` plus a one-line `Type rationale` (see `references/format-templates.md`). Downstream stages (`finalize` Phase D coverage audit, `multiexpert-review` test-plan profile, engineer agents in `implement`) read this field — it is not optional.
+Every test case declares an explicit `Type` plus a one-line `Type rationale` (see `references/format-templates.md`). Downstream consumers (`finalize` Phase D coverage audit, `multiexpert-review` test-plan profile, engineer agents writing the actual tests) read this field — it is not optional.
 
 | Type | Scope | Pick when |
 |------|-------|-----------|
@@ -195,7 +193,7 @@ Per acceptance criterion: pick the **smallest scope that catches a real failure 
 | Release-critical journey + visual fidelity matters | `screenshot` (additive) and/or `e2e` |
 | Release-critical end-to-end flow that cannot be split | `e2e` |
 
-The same heuristic appears in [`docs/TESTING-STRATEGY.md`](../../docs/TESTING-STRATEGY.md#selection-heuristic) — this section is its application inside `generate-test-plan`. When the strategy doc and this section disagree, the strategy doc is authoritative.
+This heuristic is the canonical reference for picking a TC type within this plugin family.
 
 ### Priority
 

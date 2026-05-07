@@ -30,7 +30,7 @@ style/minor; `FAIL` for blockers.
 
 ## Build smoke (non-UI branch)
 
-Pick the command by `ecosystem` (see ORCHESTRATION.md §Build system detection):
+Pick the command by `ecosystem`:
 
 | `ecosystem` | Command |
 |---|---|

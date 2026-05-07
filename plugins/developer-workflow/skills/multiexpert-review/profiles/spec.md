@@ -67,12 +67,12 @@ Reviewers: evaluate the spec against the rubric above AND apply your general exp
 Matches engine default for `[PASS, CONDITIONAL, FAIL]`:
 
 - **PASS** — no critical issues, no important improvements, or only minor suggestions
-- **CONDITIONAL** — no critical issues but major items from the rubric are violated (strongly recommended to fix before implement)
+- **CONDITIONAL** — no critical issues but major items from the rubric are violated (strongly recommended to fix before implementation)
 - **FAIL** — any critical rubric item violated OR any blocker from reviewer expertise
 
 ## No receipt
 
-Spec profile does not write a receipt. Verdict is a conversation-level output consumed by `write-spec` Phase 4 loop (and, in the future, by `decompose-feature` if it runs spec review before decomposition).
+Spec profile does not write a receipt. Verdict is a conversation-level output consumed by `write-spec` Phase 4 loop.
 
 ## Rationale (why this profile exists)
 

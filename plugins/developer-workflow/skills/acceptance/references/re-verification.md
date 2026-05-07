@@ -2,7 +2,7 @@ Referenced from: `plugins/developer-workflow/skills/acceptance/SKILL.md` (§Re-v
 
 # Acceptance — Re-verification Loop
 
-On fix-loop re-entry (after `FAILED` → `implement` fix → re-run acceptance):
+On fix-loop re-entry (after `FAILED` → fix on the branch → re-run acceptance):
 
 1. Re-probe Step 0 and Step 1 (project type rarely changes; inputs may).
 2. Compute `diff_hash_new` = `sha256(git diff <base>...HEAD)`.

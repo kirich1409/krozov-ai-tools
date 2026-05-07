@@ -2,10 +2,9 @@ Referenced from: `plugins/developer-workflow/skills/generate-test-plan/SKILL.md`
 
 # Test Plan Receipt Format
 
-When this skill is invoked from the `feature-flow` orchestrator, a `slug` argument is passed
-explicitly. In that case, in addition to the permanent document, produce a **receipt**
-at `swarm-report/<slug>-test-plan.md` that the orchestrator and downstream stages
-(`multiexpert-review`, `acceptance`) can consume for receipt-based gating.
+When this skill is invoked with an explicit `slug` argument, in addition to the permanent
+document, produce a **receipt** at `swarm-report/<slug>-test-plan.md` that downstream
+consumers (`multiexpert-review`, `acceptance`) can read for receipt-based gating.
 
 The permanent file remains the source of truth. The receipt is metadata + pointer.
 
@@ -44,7 +43,7 @@ updated: YYYY-MM-DD
 
 - `status`: `Draft` right after generation; `Ready` after multiexpert-review returns PASS/WARN;
   `Approved` when the user explicitly signs off; `Mounted` when a user-authored permanent
-  file is adopted without regeneration (see `feature-flow/SKILL.md` §1.5 Pre-check).
+  file is adopted without regeneration.
 - `review_verdict`: `pending` at creation; updated by `multiexpert-review` to
   `PASS | WARN | FAIL`; `skipped` on mount (no review occurs).
 - `review_warnings` / `review_blockers`: arrays of short strings populated by `multiexpert-review`.
@@ -60,17 +59,17 @@ updated: YYYY-MM-DD
 - Relative path in the markdown link assumes the conventional `swarm-report/` ↔ `docs/`
   sibling layout at the repo root.
 
-## Backward compatibility — standalone invocation without slug
+## Standalone invocation without slug
 
-When a user invokes this skill directly (e.g. "create a test plan for X") without the
-orchestrator passing a `slug`, the receipt is **not** produced. The permanent file is
-still saved under the canonical slug-based filename:
+When a user invokes this skill directly (e.g. "create a test plan for X") without an
+explicit `slug`, the receipt is **not** produced. The permanent file is still saved
+under the canonical slug-based filename:
 
 - Permanent file generated at `docs/testplans/<slug>-test-plan.md`, where `<slug>` is
   either provided inline or derived from the feature name per the Slug resolution rules
-  in SKILL.md. If the plan may later be consumed by another workflow that mounts an existing
-  plan (e.g. `bugfix-flow` → `acceptance` Branch 2), use the eventual orchestrator slug
-  at creation time so the file is deterministically mountable without renaming.
+  in SKILL.md. If the plan may later be consumed by `acceptance` (Branch 2 mount), pick
+  the eventual slug at creation time so the file is deterministically mountable without
+  renaming.
 - No `swarm-report/<slug>-test-plan.md` receipt is written.
 - No `phase_coverage` or receipt metadata tracked elsewhere.
 

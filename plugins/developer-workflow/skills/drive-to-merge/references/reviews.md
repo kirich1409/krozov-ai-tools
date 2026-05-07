@@ -90,7 +90,7 @@ Multiple reviewers pointing at the same issue → one group. Multiple comments f
 For each FIXABLE item, generate a specific proposal — not a category label. The proposal is one of:
 
 - **Edit:** `<file:line>` with before/after snippet (≤15 lines total). Shown inline in the decision table row.
-- **Delegate with intent:** a one-paragraph instruction naming the engineer (kotlin-engineer / swift-engineer / …) or skill (`implement` / `debug`) and the exact files to touch, when the change is too big for a snippet.
+- **Delegate with intent:** a one-paragraph instruction naming the engineer (kotlin-engineer / swift-engineer / compose-developer / swiftui-developer) and the exact files to touch, when the change is too big for a snippet.
 - **Ask in thread:** the clarifying question the skill will post, verbatim. Used for NEEDS_CLARIFICATION.
 - **Dismiss with reply:** the canned template with a 1-sentence context slot, for PRAISE / OUT_OF_SCOPE / NO_ACTION / NIT+NO_ACTION.
 
@@ -114,7 +114,7 @@ Round N — review proposals
 ## P1 — Important
 
 2. **Flow.collect leaks without a cancellation guard on rotate.** @bob,
-   api/Repo.kt:88 (same pattern at :120). Delegate to `implement`: rewrite
+   api/Repo.kt:88 (same pattern at :120). Delegate to `kotlin-engineer`: rewrite
    both call sites to `repeatOnLifecycle(STARTED)`, do not touch anything else.
 
 ## P2 — Suggestion

@@ -1,6 +1,6 @@
 ---
 name: write-tests
-description: "This skill should be used to write retroactive tests for existing code — classes, modules, or directories lacking coverage — and to write a focused regression test for a specific bug fix (Regression Mode: pass regression-scenario from debug.md). Discovers test infrastructure, plans test cases, delegates generation to platform engineer agents (kotlin-engineer, compose-developer, swift-engineer, swiftui-developer), verifies tests pass. Use when: \"write tests for\", \"add tests to\", \"test this class\", \"increase coverage\", \"add unit tests\", \"this code has no tests\", \"cover with tests\", \"retroactive tests\", \"add regression test for this fix\", \"write a test that catches this bug\", \"regression test after fixing\", \"test to verify the fix\". Do NOT use when: user wants a test plan document (use generate-test-plan), run tests on live app (use acceptance), exploratory QA (use bug-hunt), or tests are part of a new feature (engineer agent handles within implement)."
+description: "This skill should be used to write retroactive tests for existing code — classes, modules, or directories lacking coverage — and to write a focused regression test for a specific bug fix. Discovers test infrastructure, plans test cases, delegates generation to platform engineer agents (kotlin-engineer, compose-developer, swift-engineer, swiftui-developer), verifies tests pass. Use when: \"write tests for\", \"add tests to\", \"test this class\", \"increase coverage\", \"add unit tests\", \"this code has no tests\", \"cover with tests\", \"retroactive tests\", \"add regression test for this fix\", \"write a test that catches this bug\", \"regression test after fixing\", \"test to verify the fix\". Do NOT use when: user wants a test plan document (use generate-test-plan), run tests on live app (use acceptance), exploratory QA (use bug-hunt), or tests are part of a new feature (engineer agent handles inline)."
 ---
 
 # Write Tests
@@ -14,7 +14,14 @@ delegates to a platform engineer agent: `kotlin-engineer` / `compose-developer` 
 Kotlin/Android targets, or `swift-engineer` / `swiftui-developer` for Swift/iOS targets.
 The skill's job is discovery, planning, delegation, and verification.
 
-**Author fixes broken tests (non-negotiable).** Any test broken by the changes this skill produces — the new test, the file it covers, or a directly adjacent test whose behaviour shifted because of the new assertions — is fixed by the engineer agent in the same `write-tests` run. Tests already failing on `main` before this run are NOT in scope; surface them in the final report and continue. Skipping or `@Ignore`-ing the in-scope set without a recorded follow-up issue is not allowed. Disambiguation rules (intentional behaviour change vs unintentional break vs pre-existing failure on `main`) and the single skip-marker escape hatch live in [`docs/TESTING-STRATEGY.md`](../../docs/TESTING-STRATEGY.md#author-fixes-broken-tests-non-negotiable).
+**Author fixes broken tests (non-negotiable).** Any test broken by the changes this skill produces — the new test, the file it covers, or a directly adjacent test whose behaviour shifted because of the new assertions — is fixed by the engineer agent in the same `write-tests` run. Tests already failing on `main` before this run are NOT in scope; surface them in the final report and continue. Skipping or `@Ignore`-ing the in-scope set without a recorded follow-up issue is not allowed.
+
+**Disambiguation:**
+- *Intentional behaviour change* — your new test asserts a different (intentional) outcome from a pre-existing test → update the older test in the same run, with a one-line comment explaining the new contract.
+- *Unintentional break* — a previously green test fails after your change and the change shouldn't have affected that behaviour → the change is wrong; revise it.
+- *Pre-existing failure on main* — a test was already red before this run → out of scope; report it and continue.
+
+The single escape hatch is an explicit skip-marker (e.g., `@Ignore("…")` / `xtest("…")`) with a justification and a recorded follow-up issue. Using it without both is not allowed.
 
 ---
 
@@ -274,8 +281,8 @@ Steps:
    - What aspect of the bug the test missed (wrong entry point, wrong layer, assertion
      on a side effect rather than the cause, etc.)
    - What would need to change for the test to actually catch the regression
-   Report to `bugfix-flow` as an **Ineffective Test** (not a Production Bug — see Phase 6.5
-   status `INEFFECTIVE`), attaching the Coverage Diagnosis so the next Implement invocation
+   Report this to the caller as an **Ineffective Test** (not a Production Bug — see Phase 6.5
+   status `INEFFECTIVE`), attaching the Coverage Diagnosis so the next implementation pass
    has a concrete direction for addressing the test design, not just the fix.
    Do NOT continue to Phase 5.1.
 
@@ -350,8 +357,8 @@ Stop and include the diagnosis in the final report.
 **Regression Mode only — skip in Normal Mode.**
 
 After all tests pass (Phase 5.1 green), commit the generated test file(s) and push to the
-current branch. Normal Mode leaves file management to the user; Regression Mode is invoked
-by `bugfix-flow` which expects the test to land as a commit on the PR branch automatically.
+current branch. Normal Mode leaves file management to the user; Regression Mode commits and
+pushes so the test lands on the PR branch automatically as part of the bugfix work.
 
 ```bash
 git add <test-file-paths>
@@ -466,7 +473,7 @@ Status: INEFFECTIVE | FAILED | NOT_ATTEMPTED
 {what would need to change in code or test setup}
 ```
 
-Reference this file in the PR body and in the report to `bugfix-flow`.
+Reference this file in the PR body.
 
 ---
 

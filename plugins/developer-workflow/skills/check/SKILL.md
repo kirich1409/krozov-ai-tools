@@ -2,8 +2,8 @@
 name: check
 description: >-
   Run all mechanical verification checks on the project — build, static analysis (lint),
-  tests, and typecheck — in a single command. Reusable utility called by any stage that
-  modifies code: implement, finalize, migration skills, or directly by the user.
+  tests, and typecheck — in a single command. Reusable utility called by any skill that
+  modifies code: finalize, migration skills, or directly by the user.
 
   Auto-detects project tooling (Gradle, npm/pnpm/yarn, cargo, Swift SPM, Xcode, Python,
   Go, Makefile) and runs the appropriate commands. Does NOT modify code — it only verifies.
@@ -143,7 +143,7 @@ For each command:
 
 ## Phase 3.5: Public-API coverage gate (default-on)
 
-Runs after the test category has executed. Even when build / lint / typecheck / tests all pass, a new public symbol that has no matching test file fails this gate. Implements the [`docs/TESTING-STRATEGY.md`](../../docs/TESTING-STRATEGY.md#coverage-audit) "early" check; the late audit lives in `finalize` Phase D.
+Runs after the test category has executed. Even when build / lint / typecheck / tests all pass, a new public symbol that has no matching test file fails this gate. The "early" check; the late audit lives in `finalize` Phase D.
 
 ### When the gate runs
 
@@ -201,8 +201,8 @@ This gate adds a `coverage` category to the report and the verdict block. Result
 
 ### Integration with callers
 
-- `implement` Quality Loop Gate 1 fails when `/check` returns `coverage: FAIL`. Engineer agent must add tests, mark trivial, or pass `--no-coverage-gate` (which is recorded in the quality artifact and is discouraged).
-- `finalize` invocations of `/check` honour the same gate; a coverage failure surfaced inside finalize is owned by the engineer who introduced the symbol (see [`docs/TESTING-STRATEGY.md`](../../docs/TESTING-STRATEGY.md#author-fixes-broken-tests-non-negotiable)).
+- A `coverage: FAIL` result from `/check` means the engineer must add tests, mark trivial, or pass `--no-coverage-gate` (which is recorded and is discouraged).
+- `finalize` invocations of `/check` honour the same gate; a coverage failure surfaced inside finalize is owned by the engineer who introduced the symbol — author fixes broken tests in the same run.
 
 ---
 
@@ -267,9 +267,8 @@ When escalating, state what was detected, what was attempted, and what the calle
 
 ## Integration notes for callers
 
-- `implement` — call `/check` inside its Quality Loop after each code change; fix based on the report, re-run until PASS.
 - `finalize` — call `/check` after each Phase's fix round in the multi-round loop.
-- Migration skills (`code-migration`, `kmp-migration`, `migrate-to-compose`) — call `/check` after every migration step to verify the step preserved build health.
+- Migration skills (`kmp-migration`, `migrate-to-compose`) — call `/check` after every migration step to verify the step preserved build health.
 - User-invoked — run standalone at any time to verify the current branch state (`/check`, `/check --fast`, etc.).
 
 Callers pass the detected slug and working directory; this skill does not manage artifacts. Output is returned to the caller, who decides what to record.

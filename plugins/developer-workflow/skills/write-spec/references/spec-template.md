@@ -10,7 +10,7 @@ date: {YYYY-MM-DD}
 status: draft
 # Optional fields — leave blank when not applicable. Consumed by `acceptance`
 # (choreography) and by `generate-test-plan` (platform-aware coverage).
-platform: []                     # Canonical values from ORCHESTRATION.md §Project type detection: [android], [ios], [web], [desktop], [backend-jvm], [backend-node], [cli], [library], [generic]. May be multi-value for cross-platform features.
+platform: []                     # Canonical values: [android], [ios], [web], [desktop], [backend-jvm], [backend-node], [cli], [library], [generic]. May be multi-value for cross-platform features.
 surfaces: []                     # e.g. [ui], [api], [cli], [background-job]. Drives which acceptance checks run.
 risk_areas: []                   # e.g. [auth], [payment], [pii], [data-migration], [perf-critical]. Each entry triggers a conditional expert in acceptance.
 non_functional:                  # Optional block. Each present entry triggers an expert check.
