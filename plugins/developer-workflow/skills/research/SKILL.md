@@ -79,7 +79,7 @@ Report the redirect in one line ("Topic is narrow — handing off to {target} in
 
 Generate kebab-case slug from the topic (e.g., `ktor-migration`, `push-notifications`):
 - Artifact: `./swarm-report/research/research-<slug>.md`
-- State: `./swarm-report/research/research-<slug>-state.md`
+- State: `./swarm-report/research-<slug>-state.md`
 
 ---
 
@@ -94,7 +94,7 @@ Architecture) with their tools and required structure.
 
 ### State persistence
 
-Before launching, create `./swarm-report/research/research-<slug>-state.md`:
+Before launching, create `./swarm-report/research-<slug>-state.md`:
 
 ```markdown
 # Research State: {topic}
@@ -120,14 +120,18 @@ Started: {date}
 not user-facing)
 ```
 
-The state file and any other temp files under `./swarm-report/research/` are for the
-orchestrator's internal use: progress tracking, inter-phase info passing, expert-output
-buffering for compaction resilience. Update the checklist as each agent completes and
-fold raw findings here if it helps survive a compaction.
+The state file and any other temp files live at the `./swarm-report/` **root** —
+that's the temp/working area. Use them freely for the orchestrator's internal needs:
+progress tracking, inter-phase info passing, expert-output buffering for compaction
+resilience. Update the checklist as each agent completes and fold raw findings here if
+it helps survive a compaction.
+
+The `./swarm-report/research/` subdirectory is reserved for **finished deliverables**
+only — the polished report from Phase 5.2 lands there, nothing else.
 
 **What does not go into any file** is the user-facing dialogue — clarification questions
 and the user's answers from Phase 1 / Phase 5.1 round-loops live exclusively in the chat
-session. The polished, finished report lands on disk only in Phase 5.2.
+session.
 
 ---
 
@@ -135,9 +139,9 @@ session. The polished, finished report lands on disk only in Phase 5.2.
 
 Combine findings into a structured synthesis held primarily in working memory. The
 synthesis is mutable until Phase 5 closes the clarification round-loop, so **do not write
-the final report here** — that is exclusively Phase 5.2. Internal temp files under
-`./swarm-report/research/` (state file, inter-phase buffers) are allowed if they help
-survive compaction. Cross-reference findings for:
+the final report here** — that is exclusively Phase 5.2. Internal temp files at the
+`./swarm-report/` root (state file, inter-phase buffers) are allowed if they help survive
+compaction. Cross-reference findings for:
 - **Convergence** — multiple experts independently agree (strongest signal)
 - **Contradictions** — surface explicitly, do not paper over
 - **Gaps** — what no expert covered
@@ -352,7 +356,7 @@ Stop and escalate when:
 | Artifact | Path | Purpose |
 |---|---|---|
 | Research report | `./swarm-report/research/research-<slug>.md` | Final synthesized findings |
-| State file | `./swarm-report/research/research-<slug>-state.md` | Compaction-resilient progress tracking |
+| State file | `./swarm-report/research-<slug>-state.md` | Compaction-resilient progress tracking |
 | Chat summary | — | ≤30-line user-facing post-save output |
 
 The research report is the primary deliverable. The state file is operational and may be
