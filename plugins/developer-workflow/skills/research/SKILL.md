@@ -10,9 +10,15 @@ Parallel expert investigation of a topic before implementation. The Research Con
 launches up to 5 domain agents simultaneously, each investigating their slice independently,
 then synthesizes findings into a single structured report.
 
-**Synthesis-bias prevention:** the agents that gather data never synthesize it. Each runs in
-isolation with no visibility into the others. A separate reviewer (business-analyst) challenges
-the merged synthesis afterwards. This separation is the core value of the skill — preserve it.
+**Synthesis-bias prevention.** The core invariant: **agents that gather data never synthesize
+it.** Each gather-agent runs in isolation with no visibility into the others — only the
+orchestrator merges their findings. This gather/synthesize separation is what makes the
+consortium worth the cost; preserve it across every change.
+
+A second, optional layer is the post-synthesis review: in product-angled topics a separate
+`business-analyst` agent challenges the merged report (Phase 4 `business-analyst` mode);
+in purely technical topics the orchestrator runs a self-check against a fixed checklist
+(`tech-sanity` mode). The reviewer layer is a defence-in-depth, not the core value.
 
 ---
 
@@ -28,10 +34,19 @@ Select expert tracks:
 | Track | Include when |
 |---|---|
 | **Codebase** | Topic touches existing code, patterns, or modules |
-| **Web** | Topic compares against industry practices outside our code; involves external libraries/frameworks/protocols whose best practices may diverge from the codebase; benchmarks, post-mortems, or articles on similar problems are needed; or the question explicitly asks about "industry consensus" / "how big projects do it". Skip when all signals are internal-only |
+| **Web** | See criteria below — conditional, skip for purely internal topics |
 | **Docs** | Topic involves specific libraries/frameworks with external documentation |
 | **Dependencies** | Topic involves adding, replacing, or evaluating JVM/KMP deps |
 | **Architecture** | Topic affects module boundaries, layer design, or API contracts |
+
+**Web track inclusion** — launch when ANY of the following holds, otherwise skip:
+- Topic compares against industry practices outside our code.
+- Involves external libraries/frameworks/protocols whose best practices may diverge from the codebase.
+- Benchmarks, post-mortems, or articles on similar problems are needed.
+- The question explicitly asks about "industry consensus" / "how big projects do it".
+
+Skipping Web on purely internal topics avoids generic web noise and saves a track for
+something that adds signal.
 
 **If scope is genuinely ambiguous** (multiple valid interpretations), state the assumed scope and ask **one** clarifying question. Otherwise proceed — the auto-review step catches major gaps.
 
@@ -48,6 +63,13 @@ If the topic resolves to **only one** expert track after applying selection crit
 | Web only | Answer inline with `WebSearch` / `WebFetch` |
 
 Report the redirect in one line ("Topic is narrow — handing off to {target} instead of running the consortium"), then exit. Do not create state or report artifacts for redirected topics.
+
+**Caller contract.** Skills that invoke `research` as a subroutine (e.g. `write-spec` Phase 1)
+must handle two outcomes: (a) full report at `./swarm-report/<slug>-research.md` — proceed
+normally; (b) inline redirect notice with no artifact — fold the redirect target's output
+into the caller's flow inline, do not block waiting for a file. Callers that cannot accept
+the inline outcome must either widen their input to ensure ≥2 tracks or pre-validate scope
+before invoking research.
 
 Generate kebab-case slug from the topic (e.g., `ktor-migration`, `push-notifications`):
 - Artifact: `./swarm-report/<slug>-research.md`
@@ -177,6 +199,13 @@ Use **`tech-sanity`** (lightweight self-check, no agent launch) when the topic i
 technical with no product angle — e.g. "which DI", "which serializer", "which test runner",
 "sync vs async retries". Running business-analyst here adds tokens and latency without
 producing actionable output.
+
+**Tiebreaker.** When the topic could plausibly fit either mode (e.g. "Coil vs Glide" where
+the technical pick subtly affects app size and MVP scope), default to `tech-sanity`. Promote
+to `business-analyst` only if the report's recommendation materially depends on a product /
+scope judgement that the gatherers did not make. The cost asymmetry is real — `tech-sanity`
+is free, `business-analyst` is a full agent launch — so bias toward the cheaper option when
+in doubt.
 
 ### Mode `business-analyst`
 
