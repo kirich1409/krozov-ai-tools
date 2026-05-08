@@ -73,7 +73,7 @@ If the topic resolves to **only one** expert track after applying selection crit
 | Docs only | Use a library-docs lookup tool (Context7-style) directly |
 | Dependencies only | Use a dependency/version lookup tool directly (e.g. the `maven-mcp` skill family if installed) |
 | Architecture only | Delegate to `architecture-expert` agent directly |
-| Web only | Answer inline with the available web-search tool |
+| Web only | Answer inline with the available web-search tool; if none is available, answer from training knowledge and explicitly note the limitation |
 
 Report the redirect in one line ("Topic is narrow — handing off to {target} instead of running the consortium"), then exit. Do not create state or report artifacts for redirected topics.
 
