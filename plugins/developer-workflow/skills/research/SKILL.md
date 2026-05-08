@@ -78,8 +78,8 @@ If the topic resolves to **only one** expert track after applying selection crit
 Report the redirect in one line ("Topic is narrow — handing off to {target} instead of running the consortium"), then exit. Do not create state or report artifacts for redirected topics.
 
 Generate kebab-case slug from the topic (e.g., `ktor-migration`, `push-notifications`):
-- Artifact: `./swarm-report/<slug>-research.md`
-- State: `./swarm-report/research-<slug>-state.md`
+- Artifact: `./swarm-report/research/research-<slug>.md`
+- State: `./swarm-report/research/research-<slug>-state.md`
 
 ---
 
@@ -94,7 +94,7 @@ Architecture) with their tools and required structure.
 
 ### State persistence
 
-Before launching, create `./swarm-report/research-<slug>-state.md`:
+Before launching, create `./swarm-report/research/research-<slug>-state.md`:
 
 ```markdown
 # Research State: {topic}
@@ -136,7 +136,7 @@ round-loop. Cross-reference findings for:
 ### Report structure
 
 Use this exact structure when Phase 5.2 writes the final report to
-`./swarm-report/<slug>-research.md`:
+`./swarm-report/research/research-<slug>.md`:
 
 ```markdown
 # Research: {topic}
@@ -297,7 +297,7 @@ What does **not** belong in the round-loop:
 
 ### 5.2 Save the final report
 
-Once the loop exits, write `./swarm-report/<slug>-research.md`. The report is a finished
+Once the loop exits, write `./swarm-report/research/research-<slug>.md`. The report is a finished
 deliverable, not a scratchpad — every section reflects the post-clarification synthesis,
 and Open Questions contains only the genuinely-not-resolvable-by-research items from
 above. Mark the state file `Status: done`.
@@ -340,8 +340,8 @@ Stop and escalate when:
 
 | Artifact | Path | Purpose |
 |---|---|---|
-| Research report | `./swarm-report/<slug>-research.md` | Final synthesized findings |
-| State file | `./swarm-report/research-<slug>-state.md` | Compaction-resilient progress tracking |
+| Research report | `./swarm-report/research/research-<slug>.md` | Final synthesized findings |
+| State file | `./swarm-report/research/research-<slug>-state.md` | Compaction-resilient progress tracking |
 | Chat summary | — | ≤30-line user-facing post-save output |
 
 The research report is the primary deliverable. The state file is operational and may be
