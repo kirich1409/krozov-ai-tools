@@ -104,7 +104,7 @@ Look for artifacts in `./swarm-report/` that match the current branch/task slug.
 
 | Artifact | Location | Purpose in body |
 |---|---|---|
-| research | `swarm-report/<slug>-research.md` | Link + 1-sentence abstract in "Context" section |
+| research | `swarm-report/research/research-<slug>.md` | Link + 1-sentence abstract in "Context" section |
 | spec | `docs/specs/<YYYY-MM-DD>-<slug>.md` (written by `write-spec`) | Reference as "Specification" |
 | plan | `swarm-report/<slug>-plan.md` | Reference as "Plan"; acceptance criteria extracted for "How to test" |
 | debug | `swarm-report/<slug>-debug.md` | Root cause + reproduction steps — primary context for bug-fix PRs |

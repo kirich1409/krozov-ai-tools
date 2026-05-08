@@ -316,10 +316,11 @@ What does **not** belong in the round-loop:
 
 ### 5.2 Save the final report
 
-Once the loop exits, write `./swarm-report/research/research-<slug>.md`. The report is a finished
-deliverable, not a scratchpad — every section reflects the post-clarification synthesis,
-and Open Questions contains only the genuinely-not-resolvable-by-research items from
-above. Mark the state file `Status: done`.
+Once the loop exits, ensure `./swarm-report/research/` exists (`mkdir -p` it if needed —
+fresh repos won't have the nested subdir), then write `./swarm-report/research/research-<slug>.md`.
+The report is a finished deliverable, not a scratchpad — every section reflects the
+post-clarification synthesis, and Open Questions contains only the
+genuinely-not-resolvable-by-research items from above. Mark the state file `Status: done`.
 
 ### 5.3 Chat summary
 
