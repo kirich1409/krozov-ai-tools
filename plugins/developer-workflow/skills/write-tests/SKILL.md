@@ -238,10 +238,12 @@ that would have been green even before the fix. Before running the full test sui
 the contract: the test MUST fail on the original buggy code.
 
 Steps:
-1. **Identify fix commits** from `swarm-report/<slug>-implement.md` (field "Commit" or
-   "Commits"). If a single hash → use it directly. If multiple hashes → collect all of them;
-   revert in reverse order (newest first). If the field is absent — use
-   `git log origin/main..HEAD --pretty=format:"%H" -- <fixed-files>` to list them.
+1. **Identify fix commits.** Primary source: `git log origin/main..HEAD --pretty=format:"%H" -- <fixed-files>`
+   on the branch — that is the authoritative list of fix commits for the affected files. If the
+   caller passed a hint (e.g. an `<slug>-debug.md` with a "Commit"/"Commits" field, or commit
+   hashes provided in chat), use it to narrow the set; otherwise use the full git-log output.
+   If a single hash → use it directly. If multiple hashes → collect all of them; revert in
+   reverse order (newest first).
 2. **Temporarily revert the fix** without committing. For each fix commit, check if it is a
    merge commit (`git show --no-patch --format="%P" <hash>` returns two hashes):
    ```bash
@@ -266,12 +268,13 @@ Steps:
    ```bash
    git reset --hard HEAD
    ```
-   Record in `swarm-report/<slug>-implement.md` (append one line):
+   Record the verification in the write-tests receipt (`swarm-report/<slug>-write-tests.md`,
+   append one line):
    `Regression contract: VERIFIED — test RED on revert of fix commits (<hash-1>…<hash-N>), GREEN with fix.`
    Proceed to Phase 5.1 (full test suite).
 5. **If GREEN on buggy code** → the test does NOT capture the regression. It is ineffective.
    Discard both the revert changes AND the test file — the test is structurally wrong and
-   should not be salvaged; the next Implement invocation needs a different approach:
+   should not be salvaged; the next implementation pass needs a different approach:
    ```bash
    git reset HEAD -- . && git checkout -- . && git clean -fd
    ```

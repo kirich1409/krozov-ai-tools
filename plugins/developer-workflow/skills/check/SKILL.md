@@ -3,7 +3,7 @@ name: check
 description: >-
   Run all mechanical verification checks on the project — build, static analysis (lint),
   tests, and typecheck — in a single command. Reusable utility called by any skill that
-  modifies code: finalize, migration skills, or directly by the user.
+  modifies code: write-tests, finalize, migration skills, or directly by the user.
 
   Auto-detects project tooling (Gradle, npm/pnpm/yarn, cargo, Swift SPM, Xcode, Python,
   Go, Makefile) and runs the appropriate commands. Does NOT modify code — it only verifies.

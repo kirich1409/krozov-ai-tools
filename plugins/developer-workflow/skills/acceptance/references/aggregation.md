@@ -58,7 +58,7 @@ Save to `swarm-report/<slug>-acceptance.md`. Legacy fields preserved; new sectio
 **Spec source:** [what was used]
 **Test plan:** [resolved permanent path / generated on-the-fly / none]
 **test_plan_source:** receipt | mounted | on-the-fly | absent
-**Context artifacts:** [paths to research.md, debug.md, implement.md, quality.md used as input]
+**Context artifacts:** [paths to upstream artifacts used as input — e.g. research.md, debug.md, write-tests.md, quality.md]
 
 ## Idempotency Hashes
 - `diff_hash`: <sha256 of `git diff <base>...HEAD`>

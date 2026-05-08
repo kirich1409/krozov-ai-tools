@@ -1,6 +1,6 @@
 ---
 name: snapshot
-description: "Captures current behavior of code targets as a shared contract before any migration or refactoring begins. Produces behavior-spec.md using characterization tests (logic), screenshots or manual checklist (ui), and public surface listing (api). Triggers: \"snapshot\", \"зафиксируй поведение\", \"сними базлайн\", \"задокументируй как работает\", \"capture behavior\", \"baseline before migration\", \"record current behavior\". GATE: does not hand control back until user confirms the spec is accurate. Do NOT use for: post-migration verification, writing tests beyond characterization (use write-tests), or codebase discovery (use research)."
+description: "Captures current behavior of code targets as a shared contract before any migration or refactoring begins. Produces behavior-spec.md using characterization tests (logic), screenshots or manual checklist (ui), and public surface listing (api). Triggers: \"snapshot\", \"capture behavior\", \"baseline before migration\", \"record current behavior\", \"document how it works\", \"freeze current behavior\". GATE: does not hand control back until user confirms the spec is accurate. Do NOT use for: post-migration verification, writing tests beyond characterization (use write-tests), or codebase discovery (use research)."
 ---
 
 # Snapshot
@@ -170,9 +170,9 @@ Present the completed spec to the user using this prompt:
 > *(One GATE per file, not one per target — confirm or correct the whole file at once.)*
 
 **Do not return control until the user gives a clear affirmative.** Examples (non-exhaustive):
-"confirmed", "yes", "ok", "looks good", "go", "ship it", "подтверждаю", "хорошо", "готово",
-"погнали" — or any equivalent in the language they are communicating in. Match by intent, not by
-exact phrase. If the response is ambiguous (e.g., "hmm", "maybe", a question, or a comment without
+"confirmed", "yes", "ok", "looks good", "go", "ship it", "approved", "ready" — or any
+equivalent in the language they are communicating in. Match by intent, not by exact phrase.
+If the response is ambiguous (e.g., "hmm", "maybe", a question, or a comment without
 a clear go/no-go), ask ONE clarifying question: "Confirm to proceed, or point out what to fix?".
 A correction ("fix X" or "add Y") is not an affirmative — update the spec and re-present it.
 

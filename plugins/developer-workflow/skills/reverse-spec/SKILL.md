@@ -470,14 +470,14 @@ The spec already lives at `docs/spec/<slug>.md`. Final steps:
   concerns that did not qualify for §9 Known Defects (hardcoded strings, weak PRNG
   for security values, plaintext token storage, log leakage, code-style issues),
   save them to `docs/spec/<slug>-hygiene.md` per `references/analysis-checklist.md`
-  §14. Mention the artefact in the handoff: *"Также сохранил implementation-hygiene
-  findings в `docs/spec/<slug>-hygiene.md` (N items) — это backlog для команды,
-  поведения фичи не касается."* If no hygiene findings exist, mention briefly
-  (*"Hygiene artefact: не понадобился."*) and do not create the file.
+  §14. Mention the artefact in the handoff: *"Also saved implementation-hygiene
+  findings to `docs/spec/<slug>-hygiene.md` (N items) — backlog for the team,
+  unrelated to feature behavior."* If no hygiene findings exist, mention briefly
+  (*"Hygiene artefact: not needed."*) and do not create the file.
 - **Project overview update flag.** If Phase 0.6 surfaced discrepancies between the
   observed code and the existing project-overview document, mention them once:
-  *"В `docs/project-overview.md` поле <X> может быть устаревшим — наблюдаемое <Y>.
-  Обновлять не стал — вне scope текущей фичи."*. The skill never silently edits
+  *"In `docs/project-overview.md`, field <X> may be stale — observed <Y>.
+  Did not update — out of scope for the current feature."*. The skill never silently edits
   the project overview.
 - If the user intends to use this spec for reimplementation on another stack, mention
   that `write-spec` can take this spec as input for the new implementation.

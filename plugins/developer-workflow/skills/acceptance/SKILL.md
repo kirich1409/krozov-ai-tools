@@ -94,18 +94,6 @@ fires when its tested behavior runs. Mismatch (declared but not emitted, or emit
 wrong fields) becomes a P1 acceptance finding routed through the standard FAILED → Implement
 loop. An explicit `N/A: <reason>` in the test-plan section skips this check.
 
-**Persistent UI scenario reuse.** When the chosen test plan contains a Test Case typed
-`ui-scenario`, before driving `manual-tester` for that TC, derive the scenario file name:
-read the TC's optional `Scenario:` field if present; otherwise slugify the TC title
-(lowercase, non-alphanumeric → `-`, collapse runs, trim leading/trailing `-`). Look up
-`tests/ui-scenarios/<scenario-name>.md`. If the file exists, drive `manual-tester` against
-that scenario file as the source of truth for the TC. Record the resolved scenario path
-on the per-TC evidence entry as `ui_scenario_path` (separate from `test_plan_source`,
-which keeps its existing values `receipt | mounted | on-the-fly | absent` describing how
-the test plan itself was sourced). When the scenario file does not exist, the standard
-one-shot `manual-tester` flow runs as before; emit a one-line note pointing to the
-missing file path so authors can decide whether to write the scenario.
-
 ---
 
 ## Step 1.5: Source-Missing Gate
@@ -171,8 +159,9 @@ incomplete step.
 
 ## Step 2.5: Dedup Probe
 
-Read `swarm-report/<slug>-quality.md` (an upstream code-quality receipt, e.g. produced by
-`finalize` or any quality-loop run that wrote it). Three cases:
+Read `swarm-report/<slug>-quality.md` (an upstream code-quality receipt — written by
+any caller that ran a code-review pass on the current diff and chose to persist a
+`<slug>-quality.md` summary, so a follow-up acceptance can dedup that work). Three cases:
 
 - **`Status: PASS`**, receipt from the current branch head → `code-reviewer` is skipped.
   Freshness is inferred from the receipt's `Date:` field vs the branch commit window; if
