@@ -114,20 +114,30 @@ Started: {date}
 - [ ] Docs — {launched | skipped: reason}
 - [ ] Dependencies — {launched | skipped: reason}
 - [ ] Architecture — {launched | skipped: reason}
+
+## Findings
+(populated as each agent reports back — internal working storage for the orchestrator,
+not user-facing)
 ```
 
-The state file is a **progress checklist only** — track which expert launched/finished,
-status (`investigating` / `done`), and a slug for resume. Do **not** dump expert findings
-or clarification answers here; those live in working memory and only the finished report
-ever lands on disk. Update the checklist as each agent completes.
+The state file and any other temp files under `./swarm-report/research/` are for the
+orchestrator's internal use: progress tracking, inter-phase info passing, expert-output
+buffering for compaction resilience. Update the checklist as each agent completes and
+fold raw findings here if it helps survive a compaction.
+
+**What does not go into any file** is the user-facing dialogue — clarification questions
+and the user's answers from Phase 1 / Phase 5.1 round-loops live exclusively in the chat
+session. The polished, finished report lands on disk only in Phase 5.2.
 
 ---
 
 ## Phase 3: Synthesize Findings
 
-Combine findings into a structured synthesis held in working memory. **Do not write any
-file in this phase** — the synthesis is mutable until Phase 5 closes the clarification
-round-loop. Cross-reference findings for:
+Combine findings into a structured synthesis held primarily in working memory. The
+synthesis is mutable until Phase 5 closes the clarification round-loop, so **do not write
+the final report here** — that is exclusively Phase 5.2. Internal temp files under
+`./swarm-report/research/` (state file, inter-phase buffers) are allowed if they help
+survive compaction. Cross-reference findings for:
 - **Convergence** — multiple experts independently agree (strongest signal)
 - **Contradictions** — surface explicitly, do not paper over
 - **Gaps** — what no expert covered
@@ -284,9 +294,10 @@ round**, wait for the answer, fold it into the synthesis, then check if any bloc
 remains. Multiple rounds are fine; multiple questions in one round are not. Stop the
 moment no blocker remains.
 
-The dialogue lives in chat, not in any file. Don't park "pending" questions in the report
-or the state file — those are working buffers for findings, not for unresolved
-clarifications. State-file `Status: investigating` covers the in-progress signal.
+The dialogue lives in chat. Internal temp files (state file, inter-phase buffers) may
+record that a clarification round is in progress via `Status: awaiting-clarification`,
+but the actual question text and the user's answer are not parked there — they belong to
+the chat session.
 
 What does **not** belong in the round-loop:
 - Stylistic preferences that don't change the recommendation.
