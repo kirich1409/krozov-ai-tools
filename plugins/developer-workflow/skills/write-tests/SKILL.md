@@ -1,6 +1,6 @@
 ---
 name: write-tests
-description: "This skill should be used to write retroactive tests for existing code — classes, modules, or directories lacking coverage — and to write a focused regression test for a specific bug fix. Discovers test infrastructure, plans test cases, delegates generation to platform engineer agents (kotlin-engineer, compose-developer, swift-engineer, swiftui-developer), verifies tests pass. Use when: \"write tests for\", \"add tests to\", \"test this class\", \"increase coverage\", \"add unit tests\", \"this code has no tests\", \"cover with tests\", \"retroactive tests\", \"add regression test for this fix\", \"write a test that catches this bug\", \"regression test after fixing\", \"test to verify the fix\". Do NOT use when: user wants a test plan document (use generate-test-plan), run tests on live app (use acceptance), exploratory QA (use bug-hunt), or tests are part of a new feature (engineer agent handles inline)."
+description: "This skill should be used to write retroactive tests for existing code — classes, modules, or directories lacking coverage — and to write a focused regression test for a specific bug fix. Discovers test infrastructure, plans test cases, delegates generation to platform engineer agents (kotlin-engineer, compose-developer, swift-engineer, swiftui-developer), verifies tests pass. Use when: \"write tests for\", \"add tests to\", \"test this class\", \"increase coverage\", \"add unit tests\", \"this code has no tests\", \"cover with tests\", \"retroactive tests\", \"add regression test for this fix\", \"write a test that catches this bug\", \"regression test after fixing\", \"test to verify the fix\". Do NOT use when: user wants a test plan document (use generate-test-plan), run tests on live app (use acceptance), exploratory QA (call manual-tester agent directly), or tests are part of a new feature (engineer agent handles inline)."
 ---
 
 # Write Tests
@@ -14,14 +14,12 @@ delegates to a platform engineer agent: `kotlin-engineer` / `compose-developer` 
 Kotlin/Android targets, or `swift-engineer` / `swiftui-developer` for Swift/iOS targets.
 The skill's job is discovery, planning, delegation, and verification.
 
-**Author fixes broken tests (non-negotiable).** Any test broken by the changes this skill produces — the new test, the file it covers, or a directly adjacent test whose behaviour shifted because of the new assertions — is fixed by the engineer agent in the same `write-tests` run. Tests already failing on `main` before this run are NOT in scope; surface them in the final report and continue. Skipping or `@Ignore`-ing the in-scope set without a recorded follow-up issue is not allowed.
+**Author-fixes-broken-tests rule** — see `~/.claude/rules/qa-and-testing.md` § 4. Skipping or `@Ignore`-ing without a tracked follow-up issue is not allowed.
 
 **Disambiguation:**
 - *Intentional behaviour change* — your new test asserts a different (intentional) outcome from a pre-existing test → update the older test in the same run, with a one-line comment explaining the new contract.
 - *Unintentional break* — a previously green test fails after your change and the change shouldn't have affected that behaviour → the change is wrong; revise it.
 - *Pre-existing failure on main* — a test was already red before this run → out of scope; report it and continue.
-
-The single escape hatch is an explicit skip-marker (e.g., `@Ignore("…")` / `xtest("…")`) with a justification and a recorded follow-up issue. Using it without both is not allowed.
 
 ---
 
@@ -29,109 +27,52 @@ The single escape hatch is an explicit skip-marker (e.g., `@Ignore("…")` / `xt
 
 ### 1.1 Accept target
 
-The user provides one or more of:
-- A file path (`src/main/kotlin/com/example/UserRepository.kt`, `Sources/Auth/LoginService.swift`)
-- A class or type name (`UserRepository`, `LoginService`)
-- A module or directory (`feature/auth`, `:core:network`, `Sources/Auth`, an Xcode target)
-- A vague reference ("the auth module", "this class", "the login view")
+Target may be a file path, class/type name, module or directory, or a vague reference ("the auth module"). Resolve vague references via a code-index tool when available; fall back to `Grep` / `Glob` + `Read`. If still ambiguous, ask **one clarifying question** before proceeding.
 
-**Regression Mode:** the caller may additionally pass a `regression-scenario` — a structured
-description of the bug's root cause, reproduction steps, and expected vs actual behavior
-(typically from `swarm-report/<slug>-debug.md`). When present, the skill enters **Regression
-Mode**: it skips the broad coverage sweep (Phase 1.4), uses the scenario as the sole test
-case (Phase 3.1), and skips the prioritization question (Phase 3.2). The output is one
-focused test that would fail on the original buggy code and passes with the fix applied.
-
-Resolve vague references using a code-index tool when one is available in the environment;
-fall back to `Grep` / `Glob` + `Read` otherwise. If the reference remains ambiguous after
-resolution, ask **one clarifying question** before proceeding.
+**Regression Mode:** the caller may pass a `regression-scenario` — root cause, reproduction steps, expected vs actual behaviour (typically from `swarm-report/<slug>-debug.md`). When present, the skill skips the broad coverage sweep (1.4), uses the scenario as the sole test case (3.1), and skips prioritization (3.2). Output is one focused test that fails on the original buggy code and passes with the fix.
 
 ### 1.1.1 Generate slug
 
-Create a short kebab-case slug from the target name for artifact naming:
-`<slug>` (e.g., `user-repository`, `auth-module`, `network-client`)
-
-Used in: `swarm-report/<slug>-test-findings.md`
+Short kebab-case slug from the target name (e.g. `user-repository`, `auth-module`). Used in `swarm-report/<slug>-test-findings.md`.
 
 ### 1.2 Read target code
 
-Read all source files in the target scope. For each file, identify:
-- Public API surface (public/internal classes, functions, properties)
-- Dependencies (constructor parameters, injected services)
-- Complexity indicators (branching, state management, error handling)
-- Whether the code is UI (Compose composables, SwiftUI views) or non-UI code (Kotlin business
-  logic / data layer, Swift services / models / repositories)
+For each file in scope identify: public API surface, dependencies (constructor params, injected services), complexity indicators (branching, state, error handling), and whether the code is UI (Compose / SwiftUI) or non-UI (business logic / data layer / services / models / repositories).
 
 ### 1.3 Find existing tests
 
-Search for existing tests:
-- Check the corresponding test location — Kotlin/Android: `src/test/`, `src/androidTest/`,
-  `src/commonTest/`; Swift: `Tests/<TargetName>Tests/` (SwiftPM) or the Xcode test target
-  (often `<AppName>Tests/` or `<AppName>UITests/`)
-- Prefer a code-index tool when one is available in the environment to locate test classes
-  that reference the target by symbol (search / usages / class lookups); fall back to
-  `Grep "TargetClass" path/to/test-src-set` when no index is available
-- Check for `@Test` (JUnit / Swift Testing) or `XCTestCase` subclasses that exercise target functions
+Check standard test locations — Kotlin: `src/test/`, `src/androidTest/`, `src/commonTest/`; Swift: `Tests/<TargetName>Tests/` (SwiftPM) or the Xcode test target. Prefer a code-index tool to locate test classes by symbol; fall back to `Grep`. Look for `@Test` (JUnit / Swift Testing) or `XCTestCase` subclasses that exercise the target.
 
 ### 1.4 Identify untested code
 
-**Skip this phase in Regression Mode.** The test case comes from the `regression-scenario`,
-not from a coverage gap analysis.
+**Skip in Regression Mode.** Compare the public API surface against existing test coverage: no references → fully untested; partial references missing edge cases → partially tested; comprehensive coverage → skip.
 
-Compare the public API surface against existing test coverage:
-- Functions/classes with no test references → fully untested
-- Functions with some tests but missing edge cases → partially tested
-- Functions with comprehensive tests → already covered (skip)
+Public-API coverage gate — see `~/.claude/rules/qa-and-testing.md` § 1.
 
 ### 1.5 Check for existing test plan
 
-Look for a test plan in `docs/testplans/` that covers the target feature or module.
-If found, read it and use its test cases as input for Phase 3. If not found, proceed
-without one — a test plan is helpful but not required.
+Look for a test plan in `docs/testplans/` covering the target. If found, read it and feed its test cases into Phase 3. If not found, proceed without one — a test plan is helpful but not required.
 
 ---
 
 ## Phase 2: Discover Test Infrastructure
 
-Inspect 3-5 existing test files plus build configuration (`build.gradle(.kts)`,
-`Package.swift`, Xcode project) to discover the framework, assertion library, mocking /
-test-double approach, async-testing helpers, UI-testing stack, and naming / file-placement
-conventions in use. Compile the results into a structured **Test Infrastructure Summary**
-that the Phase 4 engineer agent consumes verbatim.
+Testing infra detection — see `~/.claude/rules/qa-and-testing.md` § 5 for project-marker files. Inspect 3-5 existing test files plus the relevant build configuration to discover the framework, assertion library, mocking / test-double approach, async-testing helpers, UI-testing stack, and naming / file-placement conventions. Compile results into a structured **Test Infrastructure Summary** that the Phase 4 engineer agent consumes verbatim.
 
-The goal is simple: generated tests must look hand-written. Never introduce a new framework
-or style that isn't already present in the project.
+The goal is simple: generated tests must look hand-written. Never introduce a new framework or style that isn't already present in the project.
 
-See [`references/test-infrastructure-discovery.md`](references/test-infrastructure-discovery.md) for the detection tables (frameworks,
-assertions, mocking, async, UI, DI, naming, placement, setup, assertion style) and the exact
-Test Infrastructure Summary template.
+See [`references/test-infrastructure-discovery.md`](references/test-infrastructure-discovery.md) for the detection tables (frameworks, assertions, mocking, async, UI, DI, naming, placement, setup, assertion style) and the exact Test Infrastructure Summary template.
 
 ### Framework detection (canonical algorithm)
 
 Engineer agents (`kotlin-engineer`, `compose-developer`, `swift-engineer`, `swiftui-developer`) follow this fixed order. Stop at the first step that yields a definite answer.
 
-1. **Inspect existing test files** in the **module being modified** first, then the wider project, in conventional locations: `src/test/`, `src/androidTest/`, `Tests/`, `spec/`. Identify framework, assertion library, mocking approach, naming convention, and arrange-act-assert / given-when-then style. Existing tests are the strongest signal — they win over build-file dependencies, since a project may keep multiple test libraries declared but actually use only one.
-2. **Inspect the build file** for test-framework dependencies (used only when the module under change has no existing tests).
-   - `build.gradle.kts` / `build.gradle` — JUnit 4/5, MockK, Mockito, `kotlin.test`, Kotest, `androidx.compose.ui:ui-test-junit4`, Paparazzi, Robolectric.
-   - `Package.swift` / `Podfile` / `*.xcodeproj` — XCTest, `swift-testing` (Apple), Quick / Nimble, ViewInspector, swift-snapshot-testing.
-   - `pom.xml` — JUnit, Mockito, TestNG.
-3. **Match the existing project**, even when multiple frameworks coexist.
-   - In a mixed project, follow the framework already in use **in the module being modified**.
-   - Never introduce a new framework or style without explicit user approval.
-4. **Apply the platform default** only when no signal exists in the project (no tests, no test-framework deps).
+1. **Inspect existing test files** in the **module being modified** first, then the wider project, in conventional locations (`src/test/`, `src/androidTest/`, `Tests/`, `spec/`). Existing tests are the strongest signal — they win over build-file dependencies, since a project may keep multiple test libraries declared but actually use only one.
+2. **Inspect the build file** for test-framework dependencies — used only when the module under change has no existing tests.
+3. **Match the existing project**, even when multiple frameworks coexist. In a mixed project, follow the framework already in use **in the module being modified**. Never introduce a new framework or style without explicit user approval.
+4. **Apply the platform default** only when no signal exists in the project. Defaults: Android/Kotlin JVM → JUnit 5 + MockK; KMP → `kotlin.test`; Compose UI → `androidx.compose.ui:ui-test-junit4`; iOS toolchain ≥ 5.9 → `swift-testing`; toolchain < 5.9 → XCTest; SwiftUI → engineer asks one question (XCUITest / ViewInspector / snapshot) and records the answer.
 
 Other ecosystems (Java-only, JS/TS, Rust, etc.) are out of scope for `write-tests` delegation in this plugin; surface them to the user.
-
-#### Platform defaults
-
-| Platform | Default |
-|---|---|
-| Android / Kotlin (JVM) | JUnit 5 + MockK |
-| Kotlin Multiplatform | `kotlin.test` (with `expect` / `actual` test doubles) |
-| Compose UI | `androidx.compose.ui:ui-test-junit4` |
-| iOS / Swift, toolchain ≥ 5.9 | `swift-testing` |
-| iOS / Swift, toolchain < 5.9 | XCTest |
-| SwiftUI | engineer asks one question to choose between XCUITest (end-to-end UI flow), ViewInspector (view-tree assertions), or preview-based snapshot — there is no single SwiftUI testing default; record the answer in the Test Infrastructure Summary |
 
 #### Escalation rules
 
@@ -164,26 +105,9 @@ For each untested or partially tested class/function, determine:
 
 ### 3.2 Prioritize
 
-**Skip this phase in Regression Mode** — a regression scenario is always a single focused
-test case; no prioritization is needed.
+**Skip this phase in Regression Mode** — a regression scenario is always a single focused test case; no prioritization is needed.
 
-If the target is large (more than 5 classes to test), ask the user which classes or areas
-to prioritize. Present the list with a brief note on each:
-
-```
-Found 12 untested classes in :feature:auth. Which should I prioritize?
-
-1. LoginUseCase — complex branching, 4 public functions
-2. AuthRepository — network + cache interaction
-3. TokenManager — security-sensitive, encryption
-4. SessionStore — simple data holder, 2 functions
-...
-
-Recommend starting with 1-3 (highest complexity and risk).
-```
-
-Wait for user response before proceeding. If the target is small (5 or fewer classes),
-proceed without asking.
+Test priority — see `~/.claude/rules/qa-and-testing.md` § 2. If the target is large (more than 5 classes to test), present the list with a one-line note on each (complexity, risk surface) and ask the user which to prioritize; recommend starting with the highest-complexity / highest-risk subset. If the target is small (5 or fewer classes), proceed without asking.
 
 ### 3.3 Lightweight plan
 
@@ -299,31 +223,7 @@ Then run step 3. Do NOT resolve toward the fix side — that would produce a fal
 
 ### 5.1 Run tests
 
-Run the test suite for the target module. Pick the command family that matches the project
-build system:
-
-```bash
-# Kotlin / Android (Gradle)
-./gradlew :module:test
-# or more specific: ./gradlew :module:testDebugUnitTest
-
-# Android instrumentation / Compose UI tests (if generated into src/androidTest/)
-./gradlew :module:connectedAndroidTest
-
-# Swift — SwiftPM package
-swift test
-# Narrow by test-product (test target): swift test --test-product <TestTargetName>
-# Narrow by identifier pattern: swift test --filter <Suite>/<method>  (e.g. LoginTests/testSignIn)
-# Note: --filter matches test identifiers/regex, not targets.
-
-# Swift — Xcode project / workspace (iOS, macOS, etc.)
-xcodebuild test -scheme <Scheme> -destination 'platform=iOS Simulator,name=iPhone 15'
-# For a macOS scheme: -destination 'platform=macOS'
-# Narrow with: -only-testing:<TestTarget>/<TestClass>/<testMethod>
-```
-
-Choose the appropriate command based on where tests were generated and what build system the
-project uses. If both unit and UI / instrumentation tests were created, run both.
+Run the test suite for the target module using the build system already in the project — Gradle (`./gradlew :module:test` or `:module:connectedAndroidTest` for instrumentation / Compose UI tests in `src/androidTest/`), SwiftPM (`swift test`, optionally `--filter <Suite>/<method>`), or Xcode (`xcodebuild test -scheme <Scheme> -destination ... -only-testing:<TestTarget>/<TestClass>/<testMethod>`). If both unit and UI / instrumentation tests were created, run both.
 
 ### 5.2 Handle failures
 
@@ -376,51 +276,12 @@ of the permanent history explaining why this test exists.
 
 ## Phase 6: Report
 
-Present a concise report to the user covering:
+Present a concise report covering:
 
-### 6.1 Files created
-
-List all new test files with their paths:
-```
-Created:
-- src/test/kotlin/com/example/auth/LoginUseCaseTest.kt (8 tests)
-- src/test/kotlin/com/example/auth/AuthRepositoryTest.kt (12 tests)
-```
-
-### 6.2 Coverage summary
-
-What is now tested that wasn't before:
-```
-Coverage:
-- LoginUseCase: 4 public functions, all now tested (happy path + error cases)
-- AuthRepository: 3 of 5 functions tested (getUser, login, logout)
-  - Not tested: refreshToken (requires integration test setup), clearCache (trivial)
-```
-
-### 6.3 Test results
-
-```
-Results: 20 tests passed, 0 failed
-```
-
-Or if there were issues:
-```
-Results: 18 tests passed, 2 failed after 3 fix attempts
-- LoginUseCaseTest.`should handle concurrent login attempts` — timing-dependent, needs TestDispatcher configuration
-- AuthRepositoryTest.`should retry on network error` — mock setup issue with suspend functions
-```
-
-### 6.4 Findings (production bugs)
-
-If any tests exposed real bugs in the target code, list them:
-```
-Findings:
-- LoginUseCase.login() does not check for empty password — allows login with blank credentials
-- AuthRepository.getUser() swallows IOException instead of propagating, returns stale cached data silently
-```
-
-Save findings to `swarm-report/<slug>-test-findings.md` only if production bugs were
-discovered. Format:
+- **6.1 Files created** — list of new test files with their paths and per-file test counts.
+- **6.2 Coverage summary** — what is now tested that wasn't before; for partial coverage, list what was skipped and why.
+- **6.3 Test results** — pass/fail counts; for failures after 3 fix attempts, name each failing test with a one-line reason.
+- **6.4 Findings (production bugs)** — list real bugs the tests exposed (do NOT fix). Save to `swarm-report/<slug>-test-findings.md` only when production bugs are discovered. Schema:
 
 ```markdown
 # Test Findings: {target description}
@@ -433,12 +294,9 @@ Target: {file/module path}
 ### 1. {short description}
 - **Location:** {file:line}
 - **Issue:** {what the code does wrong}
-- **Expected:** {what the correct behavior should be}
-- **Test:** {test that exposed this — file:testName}
+- **Expected:** {correct behavior}
+- **Test:** {file:testName that exposed it}
 - **Severity:** Critical / Major / Minor
-
-### 2. {short description}
-...
 ```
 
 ### 6.5 Coverage Diagnosis (Regression Mode — when test could not be completed)

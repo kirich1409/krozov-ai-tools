@@ -245,6 +245,63 @@ Every FAILED or BLOCKED result must have a screenshot or snapshot attached.
 
 ---
 
+## Step 4b: Exploratory mode (no spec)
+
+When no specification is provided and the user simply wants the app probed for problems ("find bugs", "QA the app", "poke around", "check if anything is broken"), switch from spec-verification to heuristic-driven exploration. The structure of Steps 0-3 still applies (provisioning, session ID, target connection); Steps 5-9 still apply unchanged. Replace Step 4 execution with the loop below.
+
+### Scope budget
+
+| Scope | Screens | When |
+|---|---|---|
+| Quick | ~5 | Single flow, fast sanity check |
+| Standard | ~15 | Default — broad coverage of core flows |
+| Deep | 30+ | Pre-release sweep, complex app |
+
+Default to Standard. Use Quick if the user says "quick check" or names a single flow; Deep if the user says "full QA" or "before release". Stop when the budget is hit or all reachable screens are exhausted.
+
+### Exploration heuristics
+
+At every screen, apply these eight heuristics. Pick the input edge case most likely to surface trouble for that screen — do not run all three on every field.
+
+- **Visibility of system status** — loading indicators, progress, success confirmations, error messages. Trigger a slow operation and watch.
+- **Error handling consistency** — invalid input in every field; submit empty forms; airplane-mode the device or kill the dev-server. Helpful error vs silent fail.
+- **Navigation consistency** — back-button works, no dead ends, same screen reachable from multiple paths produces the same result.
+- **State preservation** — rotate the device or resize the browser; background-foreground the app. State preserved?
+- **Input edge cases** — pick one per field: 200+ char string, special characters (emoji 😀 / RTL مرحبا / `<b>HTML</b>`), or empty submission of required fields.
+- **Empty states** — lists/feeds with no data: meaningful empty state vs broken-looking screen.
+- **Performance** — visible lag, janky animation, slow transitions. Flag what feels wrong; precise measurement is out of scope.
+- **Visual consistency** — fonts, spacing, colour, alignment compared to other screens visited.
+
+Accessibility basics (Step 5) still apply — touch-target size and unlabelled controls are part of every exploratory pass.
+
+### Reporting in exploratory mode
+
+Two categories instead of one:
+
+- **Bugs** — clearly wrong behaviour: crashes, broken functionality, data loss, visual defects. Use the standard `BUG-[SESSION_ID]-[n]` format from Step 6.
+- **Observations** — not clearly bugs but noteworthy: confusing UX, inconsistent patterns, missing feedback, slow transitions, questionable design choices. "A reasonable user might struggle here." Format:
+
+```
+OBSERVATION-[SESSION_ID]-[n]: [Title]
+Screen: [where]
+Details: [what you noticed and why it matters to users]
+Heuristic: [which heuristic flagged it]
+```
+
+After each screen, append one row to a Coverage Map alongside the run summary:
+
+```
+| # | Screen / Flow | Heuristics applied | Findings |
+|---|---|---|---|
+| 1 | [name] | [heuristics] | BUG-..., OBS-... or "—" |
+```
+
+Do **not** produce a pass/fail verdict or ship/no-ship recommendation in exploratory mode — there is no spec to verify against, you are discovering, not judging.
+
+Persist the full report at `./swarm-report/exploratory-qa-<SESSION_ID>.md` (first run) or `./swarm-report/exploratory-qa-<SESSION_ID>-run<N>.md` (re-exploration after fixes). Re-exploration: load the prior report, re-verify each previously reported bug (`Fixed` / `Still present` / `Cannot reproduce`), then continue exploring adjacent areas for regressions.
+
+---
+
 ## Step 5: Basic Accessibility Checks
 
 Perform a dedicated but lightweight a11y pass after functional testing. Use `get_ui` (mobile) or `browser_snapshot` (web) to inspect the element tree.

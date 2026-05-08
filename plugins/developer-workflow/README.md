@@ -1,6 +1,6 @@
 # developer-workflow
 
-Toolbox of on-demand skills for the developer workflow — review, finalize, create-pr, drive-to-merge, write-spec, acceptance, generate-test-plan, and more. Platform-neutral; pair with `developer-workflow-kotlin` or `developer-workflow-swift` for platform-specific engineering.
+Toolbox of on-demand skills for the developer workflow — review, finalize, create-pr, drive-to-merge, write-spec, acceptance, generate-test-plan, and more. Exploratory QA without a spec is performed by calling the `manual-tester` agent directly. Platform-neutral; pair with `developer-workflow-kotlin` or `developer-workflow-swift` for platform-specific engineering.
 
 This plugin is the **core** of the `developer-workflow` family:
 
@@ -22,7 +22,7 @@ developer-workflow-kotlin          developer-workflow-swift
 
 Installing this plugin automatically pulls `developer-workflow-experts`. Installing `-kotlin` or `-swift` additionally pulls this plugin.
 
-## Skills (12)
+## Skills (11)
 
 Skills are independent on-demand tools — invoke them when the task calls for the capability. They do not orchestrate each other; the model drives sequencing through plan mode.
 
@@ -46,7 +46,8 @@ Skills are independent on-demand tools — invoke them when the task calls for t
 |---|---|
 | `/generate-test-plan` | Produce a prioritized test plan document (no execution) |
 | `/acceptance` | Verify feature against spec on a running app (via `manual-tester` + mobile MCP) |
-| `/bug-hunt` | Undirected exploratory QA / bug hunting on a running app |
+
+For undirected exploratory QA without a spec — call the `manual-tester` agent directly via the Task tool. Heuristics, scope budget, and OBSERVATION reporting live in `agents/manual-tester.md` § Step 4b.
 
 ### PR workflow
 | Skill | Purpose |
@@ -73,12 +74,12 @@ These are not installed as dependencies — install them yourself if the capabil
 
 For **most skills**, these integrations are optional enhancements: when present, the skill uses them; when absent, the skill still runs with reduced capability.
 
-**QA execution is the exception.** The `manual-tester` agent and the live-execution parts of `acceptance` / `bug-hunt` perform real device/browser automation. If the matching `mobile` / `playwright` MCP server is not installed and enabled, those QA steps cannot run — they stop with a missing-tool message rather than falling back to a dry-run.
+**QA execution is the exception.** The `manual-tester` agent and the live-execution parts of `acceptance` perform real device/browser automation. If the matching `mobile` / `playwright` MCP server is not installed and enabled, those QA steps cannot run — they stop with a missing-tool message rather than falling back to a dry-run.
 
 | Tool | Kind | Used by | Required for |
 |---|---|---|---|
-| `mobile` | MCP server | `manual-tester`, `acceptance`, `bug-hunt` | Live mobile QA execution (iOS/Android UI automation + store management). Required to run mobile-QA steps. |
-| `playwright` | MCP server (from `claude-plugins-official`) | `manual-tester`, `acceptance`, `bug-hunt` | Live browser QA execution. Required to run web-QA steps. |
+| `mobile` | MCP server | `manual-tester`, `acceptance` | Live mobile QA execution (iOS/Android UI automation + store management). Required to run mobile-QA steps. |
+| `playwright` | MCP server (from `claude-plugins-official`) | `manual-tester`, `acceptance` | Live browser QA execution. Required to run web-QA steps. |
 | `ast-index` | CLI + plugin | `research`, `write-spec`, `write-tests`, `reverse-spec` | Optional. Structured code index for symbol / usages / deps / API lookups — non-QA skills use it when available and fall back to `Grep` + `Read` otherwise. |
 | `/code-review` | Slash command (from `claude-plugins-official`) | optional post-PR review | Optional. Standalone GitHub PR review with confidence-based scoring — separate from in-`finalize` `code-reviewer` gate. |
 | `pr-review-toolkit` | Plugin (from `claude-plugins-official`) | `finalize` Phase C | Optional. Enables the `pr-test-analyzer` / `silent-failure-hunter` / `type-design-analyzer` trio. When absent, `finalize` skips Phase C and continues. |

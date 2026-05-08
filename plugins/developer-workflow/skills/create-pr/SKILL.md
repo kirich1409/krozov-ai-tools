@@ -33,17 +33,11 @@ Mode is passed via arguments: `/create-pr --draft`, `/create-pr --refresh`, `/cr
 ## Step 1: Setup (all modes)
 
 ```bash
-# Platform detect
-git remote get-url origin
-# contains github.com → use gh; contains gitlab → use glab
-
-# Base branch
+git remote get-url origin                                        # github.com → gh; gitlab → glab
 BASE=$(git remote show origin 2>/dev/null | grep "HEAD branch" | awk '{print $NF}')
 # Fallback order: main → master → develop
-
 BRANCH=$(git branch --show-current)
 CURRENT_EMAIL=$(git config user.email)
-CURRENT_NAME=$(git config user.name)
 ```
 
 ---
@@ -67,10 +61,8 @@ out=$(glab mr view --output json 2>&1); rc=$?
 ```
 
 **On real error (non-zero rc that is not the "no PR" case):** abort with the captured
-stderr and stop. Do not proceed as if no PR exists — that would try to create a duplicate.
-Typical causes: `gh` / `glab` not installed or not authenticated (`gh auth status`,
-`glab auth status`), API outage, or a sandbox/proxy environment where the Git provider
-token is missing.
+stderr. Do not proceed as if no PR exists — that would create a duplicate. Typical causes:
+`gh` / `glab` not installed or not authenticated, API outage, missing token in sandbox.
 
 Capture on success:
 - `PR_EXISTS` — true/false
@@ -92,28 +84,17 @@ Capture on success:
 ## Step 3: Push branch (all modes — if local has new commits)
 
 ```bash
-# Ensure upstream exists. First push uses -u to set upstream tracking.
 git rev-parse --abbrev-ref @{u} 2>/dev/null || git push -u origin "$BRANCH"
-# Then sync any local commits that aren't on the remote yet.
-# This is a no-op ("Everything up-to-date") if the branch is already in sync,
-# which is the common case for --refresh / --promote between commits.
-git push
+git push   # no-op if in sync; common for --refresh / --promote
 ```
 
-Never force-push here. If the push fails due to non-fast-forward — abort and ask the user to resolve.
+If push fails (non-fast-forward) — abort and ask the user. Force-push policy per globals.
 
 ---
 
 ## Step 4: Analyse branch state (all modes — needed for body)
 
-Run in parallel:
-
-```bash
-git log $BASE..HEAD --oneline          # commits on the branch
-git diff --name-only $BASE...HEAD      # changed files
-git diff $BASE...HEAD --stat           # diff stat
-git diff $BASE...HEAD                  # full diff (for description reasoning)
-```
+Run in parallel: `git log $BASE..HEAD --oneline`, `git diff --name-only $BASE...HEAD`, `git diff $BASE...HEAD --stat`, `git diff $BASE...HEAD`.
 
 ---
 
@@ -129,40 +110,37 @@ Look for artifacts in `./swarm-report/` that match the current branch/task slug.
 | debug | `swarm-report/<slug>-debug.md` | Root cause + reproduction steps — primary context for bug-fix PRs |
 | test plan | `swarm-report/<slug>-test-plan.md` | Reference; test cases become checklist in "How to test" |
 | quality | `swarm-report/<slug>-quality.md` | Gate pass/fail summary for status table |
-| finalize | `swarm-report/<slug>-finalize.md` | Round-by-round summary for status table (available once the `finalize` skill is installed) |
+| finalize | `swarm-report/<slug>-finalize.md` | Round-by-round summary for status table |
 | acceptance | `swarm-report/<slug>-acceptance.md` | Pass/fail + verified scenarios for "Verification" section |
 
 Slug resolution:
-1. Prefer slug if the caller passed it as an argument
-2. Fallback to branch name with common prefix stripped: `feature/`, `fix/`, `hotfix/`, `bug/`, `chore/`, `refactor/`, `docs/`
+1. Prefer slug if the caller passed it as an argument.
+2. Fallback to branch name with common prefix stripped: `feature/`, `fix/`, `hotfix/`, `bug/`, `chore/`, `refactor/`, `docs/`.
 
-Artifacts are gitignored (in `swarm-report/`), so they won't appear in diff — include them as *references* in the body (e.g., "See `swarm-report/my-slug-plan.md`"), not as inlined content. Reviewers working on the PR locally can read them; CI cannot, but the body remains readable without them.
+Artifacts are gitignored — include them as **references** in the body (e.g., "See `swarm-report/my-slug-plan.md`"), never inline content.
 
 ---
 
 ## Step 6: Labels and reviewers (skip for `--refresh`)
 
-Only set labels/reviewers when **creating** (draft or default) or when **promoting** — these rarely need to change mid-flight. `--refresh` does NOT touch labels/reviewers to avoid clobbering user edits.
+Only set labels/reviewers when **creating** (draft or default) or when **promoting**. `--refresh` does NOT touch labels/reviewers to avoid clobbering user edits.
 
 ### 6.1 Labels
 
 Fetch available labels:
 
 - **GitHub:** `gh label list --json name,description --limit 100`
-- **GitLab:** `glab label list` (fetches labels for the current project resolved from
-  `git remote get-url origin`; do NOT use `glab api /projects/:fullpath/labels` — glab
-  does not substitute `:fullpath` and the call will 404)
+- **GitLab:** `glab label list` (resolves project from `git remote get-url origin`; do NOT use `glab api /projects/:fullpath/labels` — glab does not substitute `:fullpath` and the call will 404)
 
-Select from existing only, based on changed file paths, commit types, and scope. Do not
-invent labels.
+Select from existing only, based on changed file paths, commit types, and scope. Do not invent labels.
 
-**Add, don't replace.** When deriving labels during creation (`--draft` or default) or `--promote`, only **add** missing labels computed from the diff; never remove labels set manually by humans. This preserves reviewer / triage / release labels that a maintainer may have applied between draft creation and promote. `--refresh` skips Step 6 entirely (see header), so it never touches labels at all.
+**Add, don't replace.** Only **add** missing labels computed from the diff; never remove labels set manually by humans. This preserves reviewer / triage / release labels applied between draft creation and promote.
 
 ### 6.2 Reviewers
 
-For `--draft` **and** `--promote` modes, skip reviewer assignment — reviewers go on only in default mode or when explicitly requested by the caller. Rationale: draft PRs do not need reviewers yet; when promoting to ready, the pipeline normally has already determined reviewers (or the user assigns manually).
+Skip reviewer assignment for `--draft` and `--promote`. Reviewers go on only in default mode or when explicitly requested.
 
-For the default mode: top 3 authors who touched the changed files recently, filtered to exclude `$CURRENT_EMAIL`, mapped to platform usernames, presented to the user before adding.
+For default mode: top 3 authors who touched the changed files recently, filtered to exclude `$CURRENT_EMAIL`, mapped to platform usernames, presented to the user before adding.
 
 ---
 
@@ -191,30 +169,26 @@ See [`references/body-sections.md`](references/body-sections.md) for the full se
 
 ### 7.2.1 Release Notes section (user-visible changes)
 
-The Release Notes section captures what users of the plugin / library / app will see, in a form ready to paste into the project's changelog at release time. The section appears in the PR body when at least one of the following signals is true:
+Captures what users of the plugin / library / app will see, ready to paste into the project's changelog at release time. Emit when any signal is true:
 
-- **Optional custom frontmatter fields** in the spec / clarify / plan declare any of: `user-facing: true`, `prod-bound: true`, `breaking: true`, or a `release_notes:` block. These keys are **not** part of the canonical `write-spec` template (see `skills/write-spec/references/spec-template.md`); they are optional add-ons that callers may put into their spec frontmatter to force the section. Stages upstream of `create-pr` are not required to emit them.
-- The diff touches a public API surface (`/api/`, public functions, exported types in barrel files, plugin manifests, marketplace metadata) — the default automatic-detection path when no custom frontmatter is set.
-- The user passed `--release-notes "..."` to `create-pr` (always wins).
+- Spec/clarify/plan frontmatter declares `user-facing: true`, `prod-bound: true`, `breaking: true`, or a `release_notes:` block (optional add-ons; not part of the canonical `write-spec` template).
+- Diff touches a public API surface (`/api/`, public functions, exported types in barrel files, plugin manifests, marketplace metadata) — default auto-detection.
+- User passed `--release-notes "..."` (always wins).
 
-When emitted, the section follows the format the repo already uses — detect by file presence:
+Format is detected by file presence in the repo:
 
 | Repo file | Format used in PR body |
 |---|---|
-| `CHANGELOG.md` (root or per-plugin) | Keep-a-Changelog bullet, classified as one of `Added` / `Changed` / `Fixed` / `Deprecated` / `Removed` / `Security`. Breaking changes flagged with a leading `**Breaking:**` |
-| `.changeset/` directory | PR-body shorthand: a `type: patch \| minor \| major` line plus the one-line summary. **This is a PR-body representation only, not a valid `.changeset/` entry**; the actual `.changeset/*.md` file (if any) is created at release time and uses the standard `---` frontmatter mapping packages to bump levels per the [Changesets format](https://github.com/changesets/changesets/blob/main/docs/intro-to-using-changesets.md). Do not paste this snippet directly into a changeset file. |
-| `RELEASE_NOTES.md` or `docs/CHANGELOG.md` | Same Keep-a-Changelog format as `CHANGELOG.md` |
-| None of the above | Plain bullet list under `## Release Notes` — the project owner copies it into whichever changelog mechanism they adopt later |
+| `CHANGELOG.md` | Keep-a-Changelog bullet, classified `Added` / `Changed` / `Fixed` / `Deprecated` / `Removed` / `Security`. Breaking flagged with leading `**Breaking:**` |
+| `.changeset/` directory | PR-body shorthand: `type: patch \| minor \| major` + one-line summary. **PR-body representation only, not a valid `.changeset/` entry**; actual file is created at release time per the [Changesets format](https://github.com/changesets/changesets/blob/main/docs/intro-to-using-changesets.md). |
+| `RELEASE_NOTES.md` / `docs/CHANGELOG.md` | Same Keep-a-Changelog format as `CHANGELOG.md` |
+| None | Plain bullet list under `## Release Notes` |
 
-The section is text only — `create-pr` does NOT modify `CHANGELOG.md`, `.changeset/`, or any release-notes file in the repo. Writing to those files is the project owner's choice at release time. Including the entry in the PR body keeps the change visible at review time without committing format-specific files (which would conflict with release tooling that owns those files).
-
-`--skip-release-notes` opts out of the section even when signals match — recorded in the PR body as `Release notes: skipped (<reason>)`.
-
-The PR receipt records `release_notes: emitted | skipped: <reason> | not-applicable` so downstream stages and audits can tell which path was taken.
+Text only — `create-pr` does NOT modify changelog files. `--skip-release-notes` opts out (`Release notes: skipped (<reason>)`). The PR receipt records `release_notes: emitted | skipped: <reason> | not-applicable`.
 
 ### 7.3 Detect visual changes
 
-Scan the changed file paths for platform-specific UI markers (Android/Compose, Compose Multiplatform, Web, iOS/SwiftUI). If any match, include the "Screenshots / demo" section and prompt the user for attachments in `--draft` and `--promote` modes; `--refresh` preserves existing Screenshots content verbatim.
+Scan changed file paths for platform-specific UI markers (Android/Compose, Compose Multiplatform, Web, iOS/SwiftUI). If any match, include the "Screenshots / demo" section and prompt the user for attachments in `--draft` and `--promote`; `--refresh` preserves existing Screenshots content verbatim.
 
 See [`references/visual-change-patterns.md`](references/visual-change-patterns.md) for the full glob patterns per platform.
 
@@ -222,30 +196,26 @@ See [`references/visual-change-patterns.md`](references/visual-change-patterns.m
 
 When `--refresh` or `--promote` runs and `PR_BODY` is non-empty:
 
-1. Detect manual-edit markers — any content between `<!-- user-edit-start -->` and `<!-- user-edit-end -->` is preserved verbatim
-2. Content in Screenshots / demo section preserved verbatim (users paste images there)
-3. Checklist items that are **checked** are preserved as checked — assume the user or reviewer ticked them
+1. Detect manual-edit markers — content between `<!-- user-edit-start -->` and `<!-- user-edit-end -->` is preserved verbatim.
+2. Content in Screenshots / demo section preserved verbatim (users paste images there).
+3. Checklist items that are **checked** are preserved as checked.
 
 Everything else is regenerated from artifacts + git state.
 
-**Edge case: empty or missing `PR_BODY`.** If `PR_BODY` is empty (e.g., freshly created draft with no body), skip the preserve-step entirely and generate the body from scratch. Do not fail — the preserve-step is an enhancement, not a precondition.
+**Edge case: empty `PR_BODY`** — skip the preserve-step entirely and generate from scratch. Do not fail.
 
 ---
 
 ## Step 8: Generate title
 
-Title generation is mode-aware:
+Mode-aware:
 
-- **`--draft`** — derive from branch name + first commit message; prefix optional `[WIP] ` **only** if the user explicitly asks (draft state itself conveys WIP)
+- **`--draft`** — derive from branch + first commit message
 - **`--refresh`** — keep existing title unchanged
-- **`--promote`** — keep existing title; if user asks for a new title, use the task description or spec
+- **`--promote`** — keep existing title unless user asks otherwise (then use task description or spec)
 - **default** — derive from branch + most meaningful commit
 
-Rules (apply on mode creating or changing title):
-- Strip prefixes: `feature/`, `fix/`, `chore/`, `refactor/`, `docs/`
-- Convert `kebab-case` to sentence case
-- Keep under 70 characters
-- Do not add "WIP:" or "Draft:" — draft state conveys this
+Rules when creating/changing the title: strip `feature/` `fix/` `chore/` `refactor/` `docs/` prefixes, convert kebab-case to sentence case, keep under 70 chars, never add "WIP:" or "Draft:" (draft status conveys it).
 
 ---
 
@@ -325,9 +295,7 @@ Output:
 
 ### 9d. Default mode
 
-Same as current behaviour: ask draft-or-ready if not inferable from conversation, then create with full body + labels + reviewers.
-
-Output differs by status (see "Output templates" below).
+Ask draft-or-ready if not inferable from conversation, then create with full body + labels + reviewers.
 
 ---
 
@@ -350,25 +318,10 @@ Output differs by status (see "Output templates" below).
 
 ---
 
-## Lifecycle integration (informational)
-
-A typical flow:
-
-```
-first commit on the feature branch → push → /create-pr --draft
-finalize (multi-round code-quality loop)
-acceptance
-all local checks PASS → /create-pr --promote
-```
-
-Mid-flow `--refresh` calls are useful when the PR body should reflect intermediate progress (e.g., after each finalize round, after a fix loop). The caller decides *when* to invoke; this skill owns *how*.
-
----
-
 ## Scope rules
 
 - **In scope:** PR create/edit/ready status transitions; body composition; labels and reviewers on create/promote; title generation on create.
 - **Out of scope:** editing code, running tests, running `/check`, managing commits (caller pushes beforehand), merging.
-- **Do not** force-push or rewrite history here. If push fails — report and let caller resolve.
-- **Do not** remove labels or reviewers set by humans. Only add missing ones on `--promote` if the pipeline determined additional reviewers.
+- **Do not** force-push or rewrite history. If push fails — report and let caller resolve.
+- **Do not** remove labels or reviewers set by humans. Only add missing ones on `--promote`.
 - **Do not** strip manually-added content when refreshing — respect `<!-- user-edit-start/end -->` markers and Screenshots section.

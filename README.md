@@ -64,11 +64,11 @@ Four plugins that split the dev-workflow pipeline along coherent lines. `develop
 
 #### developer-workflow (core)
 
-Lifecycle pipeline — research, decomposition, spec, multiexpert review, implementation, debugging, QA, PR workflow.
+Toolbox of on-demand skills — research, spec authoring, multiexpert review, mechanical checks, code-quality finalize, retroactive tests, QA, and PR lifecycle. No forced sequencing; plan mode picks the right skill.
 
-**Skills (17):** `/research`, `/decompose-feature`, `/write-spec`, `/design-options`, `/multiexpert-review`, `/generate-test-plan`, `/implement`, `/check`, `/write-tests`, `/debug`, `/finalize`, `/acceptance`, `/bug-hunt`, `/create-pr`, `/drive-to-merge`, `/feature-flow`, `/bugfix-flow`
+**Skills (11):** `/research`, `/write-spec`, `/reverse-spec`, `/multiexpert-review`, `/check`, `/finalize`, `/write-tests`, `/generate-test-plan`, `/acceptance`, `/create-pr`, `/drive-to-merge`
 
-**Agent:** `manual-tester`
+**Agent:** `manual-tester` (covers exploratory QA without a spec — call directly via the Task tool; heuristics live in the agent file)
 
 **Depends on:** `developer-workflow-experts`
 

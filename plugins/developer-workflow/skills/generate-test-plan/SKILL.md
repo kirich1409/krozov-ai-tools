@@ -9,9 +9,9 @@ description: >-
   before actually running tests. Produces a structured, prioritized test plan document saved to
   docs/testplans/ with risk analysis, coverage matrix, automation candidates, and proper TC format.
   Do NOT trigger when: the user wants to execute tests on a running app (use acceptance or
-  bug-hunt), the user wants automated unit/integration tests written in code (out of scope),
-  or the user wants to run an existing test plan (use acceptance). This skill never launches an
-  app, device, or browser — it only produces a document.
+  the manual-tester agent), the user wants automated unit/integration tests in code (out of scope),
+  or the user wants to run an existing test plan (use acceptance). Never launches an app, device,
+  or browser — only produces a document.
 ---
 
 # Generate Test Plan
@@ -61,86 +61,18 @@ rules.
 
 ## Input Discovery
 
-Determine what the user has provided and gather context accordingly.
+Sources may be a text spec (PRD / AC / user story), a Figma mockup, or existing code — often a combination. Cross-reference them; flag spec/code discrepancies as a finding, mark behaviour inferred from code alone with `[inferred from code]`.
 
-### 1. Text specification (PRD, acceptance criteria, user story)
+**Spec frontmatter.** When the source is a file with YAML frontmatter and contains a `platform:` list, copy it verbatim into the receipt's `platform:` field (canonical values: `android | ios | web | desktop | backend-jvm | backend-node | cli | library | generic`, same as `write-spec`). Otherwise leave `platform:` empty in the receipt — `acceptance` falls back to its project-type heuristic.
 
-Read the document. Extract:
-- Functional requirements (what the feature does)
-- Non-functional requirements (performance, accessibility, security constraints)
-- Acceptance criteria (explicit pass/fail conditions)
-- User roles and permissions mentioned
-
-**Spec frontmatter (when the source is a file with YAML frontmatter).** Read the frontmatter
-block first. If it contains a `platform:` list, copy that list verbatim into the receipt's
-`platform:` field (canonical values: `android | ios | web | desktop | backend-jvm |
-backend-node | cli | library | generic`, same as `write-spec`). When the caller invokes
-this skill without a file-based spec, or the spec has no frontmatter, leave `platform:`
-empty in the receipt — `acceptance` will fall back to its project-type heuristic.
-
-### 2. Figma mockup
-
-Use Figma MCP tools (`get_design_context`, `get_screenshot`) to retrieve the design.
-Extract:
-- Screen states (default, loading, empty, error, populated)
-- Interactive elements and their expected behavior
-- Navigation flows between screens
-- Responsive or platform-specific variants
-
-### 3. Existing code
-
-When code is the primary (or only) source of truth, read the implementation thoroughly:
-- Public API surface — endpoints, functions, UI entry points
-- State transitions and conditional branches
-- Error handling paths and fallback behavior
-- Input validation rules and boundary values
-- Integration points (APIs, databases, third-party services)
-
-When deriving test cases from code alone, be explicit about assumptions. Mark any inferred
-behavior that has no spec backing with `[inferred from code]` so reviewers know what to verify
-against product intent.
-
-### Combining sources
-
-Often the user provides more than one source. Cross-reference them:
-- Spec says X, but code implements Y → flag the discrepancy as a finding, write test cases for both
-- Design shows a state the spec doesn't mention → note it, write a test case
-- Code handles an edge case not in the spec → include it with `[inferred from code]`
+**Figma mockup.** Use Figma MCP tools (`get_design_context`, `get_screenshot`) to extract screen states, interactive elements, navigation flows, and platform variants.
 
 ### Non-UI detector — when to use the lightweight template
 
-Not every feature has a user interface. Pure backend services, CLI tools, internal libraries,
-and data pipelines should use a reduced TC format where the full Steps / Expected Result
-columns add noise without signal — the behavior is fully captured by Given/When/Then.
-
-**Detector (all must hold to trigger lightweight mode):**
-- The spec or input contains **no** references to any of: mockups, wireframes, Figma frames,
-  screens, screen states, UI components, Jetpack Compose composables, SwiftUI views, React /
-  Vue / Svelte / HTML components, CSS selectors, navigation flows, or visible user actions
-  (tap, click, scroll, swipe, type in field).
-- The feature surface is API / library / CLI / background job / data transformation.
-- No `ux-expert` or front-end agent was consulted during research.
-
-If any one of the signals above **is** present, use the standard Test Plan Format
-(with full Steps and Expected Result). Mixed features (backend + thin UI) default to the
-standard format.
+Non-UI test plan trigger — see `~/.claude/rules/qa-and-testing.md` § 3. When the trigger fires, drop mockup-driven sections (Steps / Expected Result columns) and produce TCs whose behaviour is fully captured by Given/When/Then — focus on input validation, state transitions, and error paths. Mixed features (backend + thin UI) default to the standard format.
 
 When the detector triggers, note it in the Findings section of the permanent file:
 `**Lightweight template applied** — no UI surface detected; TCs use Given/When/Then only.`
-
-## Analysis
-
-Before writing test cases, identify:
-
-1. **Risk areas** — parts of the feature most likely to break or cause user-visible issues.
-   Consider: complexity, number of integration points, data sensitivity, new vs. changed behavior.
-
-2. **Edge cases** — boundary values, empty/null inputs, concurrent actions, permission boundaries,
-   network failures, locale/timezone effects, large datasets.
-
-3. **State combinations** — which states interact and which transitions are possible. A simple
-   matrix helps: list states on one axis, user actions on the other, mark which intersections need
-   coverage.
 
 ## Test Plan Format
 
@@ -197,12 +129,7 @@ This heuristic is the canonical reference for picking a TC type within this plug
 
 ### Priority
 
-| Priority | Meaning | Guideline |
-|----------|---------|-----------|
-| **P0 Critical** | Core happy path | If this fails, the feature is unusable |
-| **P1 High** | Important flows | Security, data integrity, key user journeys |
-| **P2 Medium** | Secondary flows | Edge cases with moderate impact |
-| **P3 Low** | Minor scenarios | Cosmetic, rare edge cases, minor UX |
+Priority framework — see `~/.claude/rules/qa-and-testing.md` § 2.
 
 ### Tier
 
@@ -236,14 +163,7 @@ Downstream stages consume this section:
 
 ## Guidelines
 
-- Number test cases sequentially: TC-1, TC-2, TC-3, ...
-  (the manual-tester agent will assign session-scoped IDs when executing)
-- Each test case tests exactly one thing — split multi-outcome verifications
-- Steps must be concrete and actionable — a QA engineer unfamiliar with the feature
-  should follow them without asking questions
-- Expected results describe observable behavior, not implementation details:
-  "user sees error toast with message 'Invalid email'" not "catch block executes"
-- Mark inferred behavior with `[inferred from code]` so reviewers can verify against
-  product intent
-- Target 15-30 test cases for a medium feature; fewer for simple changes, more for
-  complex flows — every test case should earn its place
+- Number test cases sequentially: TC-1, TC-2, TC-3 ... (manual-tester assigns session-scoped IDs at execution time).
+- Each test case asserts exactly one thing — split multi-outcome verifications.
+- Mark inferred behaviour with `[inferred from code]`.
+- Target 15-30 test cases for a medium feature; every TC must earn its place.

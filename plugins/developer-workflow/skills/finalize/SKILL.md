@@ -11,141 +11,89 @@ description: >
 
 # Finalize
 
-Code-quality pass over the current branch. Multi-round review-and-fix loop focused on **how** the code is written (quality, clarity, robustness), not **what** it does (functional acceptance) or **whether it works** (build/tests via `/check`).
+Code-quality pass over the current branch. Multi-round review-and-fix loop focused on **how** the code is written (quality, clarity, robustness), not **what** it does (functional acceptance, owned by `acceptance`) or **whether it works** (build/lint/tests, owned by `/check`).
 
-This skill exists because agent-written code carries recurring patterns worth polishing: over-engineered abstractions, silent failures in catch blocks, weak test coverage, fragile type designs, redundant utilities. `/check` doesn't catch these; `code-reviewer` alone is too narrow; `/simplify` alone is too narrow. `finalize` orchestrates the whole pass.
+`finalize` orchestrates `code-reviewer` + `/simplify` + the optional `pr-review-toolkit` trio + conditional expert reviews — none of those alone catches the full set of recurring patterns (over-engineered abstractions, silent failures, fragile types, weak coverage).
 
----
-
-## Three quality layers — where `finalize` fits
-
-| Question | Answered by |
-|---|---|
-| Does the code work and match the plan? | build/lint/tests via `/check`, plus the implementer's own intent check |
-| **Is the code written well?** | **this skill (`finalize`)** |
-| Does the feature solve the user's problem? | `acceptance` — functional verification via `manual-tester` |
-
-**Author fixes broken tests (non-negotiable).** A `/check` invocation between phases that surfaces test failures triggers an inline fix in the same Finalize round — owned by the engineer agent that produced the change. Round-end exit is impossible while tests remain red. The single escape hatch is an explicit skip-marker with a justification and a recorded follow-up issue.
+**Author fixes broken tests** is enforced per `~/.claude/rules/qa-and-testing.md` § 4. A `/check` between phases that surfaces test failures triggers an inline fix in the same round — owned by the engineer agent that produced the change. Round-end exit is impossible while tests remain red.
 
 ---
 
 ## Inputs
 
-The caller (orchestrator or user) provides:
-- **`slug`** — the task slug used for artifact naming
-- **Branch state** — finalize reads the current branch; it does not switch branches
-- **Context artifact path (optional)** — Phase A's `code-reviewer` anchor. Accepts either a feature plan (`swarm-report/<slug>-plan.md`) or, for bug fixes, the debug artifact (`swarm-report/<slug>-debug.md`). Either works — `code-reviewer` treats whichever is provided as the "what was supposed to happen" document.
-- **Diff artifact path (derived)** — before invoking `code-reviewer`, materialize the diff to `swarm-report/<slug>-diff.txt` and pass that path to the agent. Do **not** hardcode `origin/main`: derive the remote's default branch first (the same way `create-pr` does — `git remote show origin | grep "HEAD branch" | awk '{print $NF}'`, with `main` / `master` / `develop` as ordered fallbacks), then diff `$(git merge-base origin/<base> HEAD)..HEAD`. Works on any repository regardless of default-branch naming.
-- **Tolerance flags (optional):**
-  - `--allow-warn` — stop after 1 round even if WARN findings remain (default: still exit PASS on WARN-only, but keep iterating BLOCKs until resolved or round budget runs out)
-  - `--skip-experts` — omit Phase D (rarely useful; experts auto-skip if no triggers match)
-  - `--max-rounds N` — override the default 3-round cap. Use when the user wants one more round after an ESCALATE, without restarting the whole stage. Must be ≥ 1.
-  - `--coverage-audit` — force-on the Phase D `test-coverage-expert` trigger even when none of the diff conditions match. Useful for explicit pre-release coverage sweeps.
-  - `--skip-coverage-audit` — turn off the Phase D `test-coverage-expert` trigger for this round. Discouraged; recorded verbatim with the user reason in the finalize report's `acknowledged risks` section.
-  - `--skip-security-review "<reason>"` — turn off both the `risk_areas`-based and the pattern-based `security-expert` triggers for this round. The reason is a one-line free-text argument captured verbatim in the finalize report's `acknowledged risks` section (no separate prompt). Discouraged; other Phase D experts still fire on their own triggers.
+- **`slug`** — task slug for artifact naming.
+- **Branch state** — reads the current branch; never switches.
+- **Context artifact (optional)** — Phase A `code-reviewer` anchor: feature plan (`swarm-report/<slug>-plan.md`) or, for bug fixes, debug artifact (`swarm-report/<slug>-debug.md`).
+- **Diff artifact (derived)** — before invoking `code-reviewer`, materialize the diff to `swarm-report/<slug>-diff.txt`. Do not hardcode `origin/main`: derive the remote's default branch (same as `create-pr` — `git remote show origin | grep "HEAD branch" | awk '{print $NF}'`, fallbacks `main` / `master` / `develop`), then `git merge-base origin/<base> HEAD`.
+
+**Tolerance flags (optional):**
+
+- `--allow-warn` — stop after 1 round on WARN-only (default: PASS on WARN-only, keep iterating BLOCKs).
+- `--skip-experts` — omit Phase D (rarely useful; experts auto-skip when no triggers match).
+- `--max-rounds N` (≥ 1) — override the default 3. Use after an ESCALATE for one more round without restarting.
+- `--coverage-audit` / `--skip-coverage-audit` — force-on / force-off Phase D `test-coverage-expert`. Skip is discouraged; recorded verbatim in `acknowledged risks`.
+- `--skip-security-review "<reason>"` — disable both `risk_areas` and pattern triggers for this round. Reason captured verbatim. Discouraged; other Phase D experts still fire.
 
 ---
 
 ## Round structure
 
-Each round runs four phases A → B → C → D sequentially. Between phases and after any auto-fix, invoke `/check` to confirm the build still works. Accumulate findings. At the end of the round, decide: exit, or continue to next round.
+Each round runs phases A → B → C → D sequentially. Between phases and after any auto-fix, invoke `/check`. Accumulate findings; at round end, exit or continue.
 
 ```
 Round N:
-  Phase A  → code-reviewer          → fix BLOCK → /check → continue
-  Phase B  → /simplify (auto-fixes) → /check               → continue
-  Phase C  → pr-review-toolkit trio (parallel, if installed) → fix BLOCK → /check → continue
-  Phase D  → expert reviews (conditional, parallel) → fix BLOCK → /check → continue
-  Round end: did any BLOCK remain unfixed?
-    yes → go to round N+1 (up to max_rounds total — default 3, see §Max round budget)
-    no  → exit with PASS
+  A  → code-reviewer          → fix BLOCK → /check
+  B  → /simplify (auto-fixes) → /check
+  C  → pr-review-toolkit trio (parallel, if installed) → fix BLOCK → /check
+  D  → expert reviews (conditional, parallel)          → fix BLOCK → /check
+  Any unfixed BLOCK → round N+1 (up to max_rounds, default 3); else PASS
 ```
 
-### Exit criteria
+**Exit criteria.** PASS — no BLOCK findings; WARN / NIT listed in report, never block. ESCALATE — after `max_rounds`, BLOCKs remain; dump unresolved findings, caller decides override or return to implementation.
 
-- **PASS (exit):** no BLOCK severity findings from any phase. WARN and NIT findings listed in the report but do not block.
-- **ESCALATE (stop and report to caller):** after `max_rounds` rounds (default 3, see §Max round budget), BLOCK findings still present. Dump unresolved findings, caller decides whether to override or return to implementation.
-
-### Max round budget
-
-Default `max_rounds = 3`, overridable to any integer ≥ 1 via the `--max-rounds N` flag (see §Inputs). The caller's flag wins when present; otherwise the default applies. ESCALATE semantics key off the effective value.
-
-Total budget (per round: 4 phases + fixes + `/check` after each fix) can take non-trivial wall time on large diffs. If a project regularly hits the cap, the BLOCK threshold may be too strict for the project's conventions — tune Phase A's `code-reviewer` confidence threshold (see `developer-workflow-experts/agents/code-reviewer.md`) rather than silently raising `max_rounds`.
+**Max round budget.** Default 3, overridable via `--max-rounds N` (≥ 1). Regularly hitting the cap means Phase A's `code-reviewer` confidence threshold should be tuned (`developer-workflow-experts/agents/code-reviewer.md`), not `max_rounds` silently raised.
 
 ---
 
 ## Phase A — Semantic review (code-reviewer)
 
-Launch the `code-reviewer` agent (from `developer-workflow-experts`) with:
-- Original task description (verbatim)
-- Plan artifact path (`swarm-report/<slug>-plan.md`) if it exists
-- `git diff` of all branch changes
+Launch `code-reviewer` (from `developer-workflow-experts`) with task description verbatim, plan artifact path (`swarm-report/<slug>-plan.md`) if it exists, and `git diff` of all branch changes. Returns PASS / WARN / FAIL with findings on the 0/25/50/75/100 confidence rubric (only above-threshold findings surface).
 
-The agent returns a structured verdict: PASS / WARN / FAIL with findings scored on the 0/25/50/75/100 confidence rubric. Only findings passing the reporting threshold surface.
-
-### Handling findings
-
-Non-negotiables violations (flagged by `code-reviewer` from the `## Non-negotiables` sections in applicable `CLAUDE.md` files) are always BLOCK regardless of any confidence threshold — they cannot be moved to "acknowledged risks".
+Non-negotiables violations from applicable `CLAUDE.md` `## Non-negotiables` are always BLOCK regardless of confidence — never moved to "acknowledged risks".
 
 | Severity × confidence | Action |
 |---|---|
-| critical ≥ 75 | Fix immediately. After fix, re-run `/check`. If `/check` PASSes and the finding is resolved → BLOCK cleared. If the fix does not converge, the finding stays BLOCK — the round ends without exiting PASS; counted against the 3-round budget. Do not silently downgrade a critical finding to "acknowledged risk". |
-| major ≥ 75 | Fix if tractable. On successful fix + `/check` PASS → BLOCK cleared. If fix requires refactoring beyond the diff scope → escalate to caller; the finding remains BLOCK until the caller resolves it or explicitly moves it to "acknowledged risks" at ESCALATE. |
-| minor ≥ 50 | Include in report as NIT. Don't fix automatically; caller/user decides. NIT never blocks PASS. |
+| critical ≥ 75 | Fix immediately, re-run `/check`. PASS + resolved → BLOCK cleared. Doesn't converge → stays BLOCK, round ends without PASS. Never silently downgrade to "acknowledged risk". |
+| major ≥ 75 | Fix if tractable. Refactor beyond diff → escalate; remains BLOCK until caller resolves or moves to "acknowledged risks" at ESCALATE. |
+| minor ≥ 50 | NIT in report. Don't auto-fix; never blocks PASS. |
 
-If `code-reviewer` returns FAIL verdict → this phase has BLOCKs that must be addressed before continuing.
-
-### Output
-
-Summary of this phase's findings goes into the round's log.
+FAIL verdict → this phase has BLOCKs to address before continuing.
 
 ---
 
 ## Phase B — Built-in simplification (`/simplify`)
 
-Invoke the built-in Claude Code skill `/simplify`. It performs a parallel reuse / quality / efficiency pass and **applies fixes directly** for the findings it considers real. The exact implementation (number of sub-agents, internal structure) may evolve — finalize treats `/simplify` as a behavioural contract, not an implementation detail.
+Invoke `/simplify`: parallel reuse / quality / efficiency pass that **applies fixes directly**. Treated as a behavioural contract; internal structure may evolve. Coverage: reuse (duplicated logic), quality (redundant state, parameter sprawl, leaky abstractions, stringly-typed, unnecessary comments), efficiency (redundant work, missed concurrency, hot-path bloat, TOCTOU, leaks). Don't pre-review output — trust it, then `/check`.
 
-`/simplify` focuses on:
-- **Reuse**: duplicated logic that should use an existing utility
-- **Quality**: redundant state, parameter sprawl, copy-paste, leaky abstractions, stringly-typed code, unnecessary comments
-- **Efficiency**: redundant work, missed concurrency, hot-path bloat, TOCTOU, memory leaks
+**On `/check` FAIL after `/simplify`:** revert the simplify commits (or the last commit if unambiguously from `/simplify`), log `phase: B, reason: revert`, continue to Phase C. Do not re-invoke `/simplify` in the same round.
 
-Because `/simplify` is fix-oriented, do not pre-review its output — trust the built-in, then run `/check` to confirm the project still builds and tests pass.
-
-### If `/check` fails after `/simplify`
-
-Revert the simplify commits (or the last commit if unambiguously from `/simplify`), log the failure with `phase: B, reason: revert`, continue to Phase C. Do not re-invoke `/simplify` in the same round — if it broke something once, it's likely to repeat.
-
-**Round-budget semantic.** Phase B is a transformative step, not a finding-generator. A Phase B revert does NOT introduce an unresolved BLOCK and does NOT consume the round budget beyond the single Phase B attempt; the round continues normally through Phases C and D. This is distinct from `/check` failure after a Phase A/C/D fix (§Mechanical verification) — there the originating finding stays BLOCK and counts against the budget.
+**Round-budget semantic.** Phase B is transformative, not a finding-generator. A revert does NOT introduce an unresolved BLOCK and does NOT consume budget — the round continues through C and D. Distinct from `/check` failure after Phase A/C/D fix (§Mechanical verification), where the originating finding stays BLOCK.
 
 ---
 
 ## Phase C — PR review toolkit (parallel, optional)
 
-Phase C is a **soft-reference** to the `pr-review-toolkit` plugin (marketplace: `claude-plugins-official`). It is **not** declared as a hard dependency in `plugin.json` because that marketplace publishes its plugin entries without `version` fields, which makes semver resolution impossible for Claude Code.
+Soft-reference to `pr-review-toolkit` (marketplace `claude-plugins-official`). Not a hard dep — that marketplace publishes plugin entries without `version` fields, breaking semver resolution.
 
-### Detect-and-use
-
-Before invoking Phase C, check whether the three agents are available (for example via the Task tool's agent registry). If any of the three is missing, **skip Phase C** for this round — log `phase: C, status: skipped, reason: pr-review-toolkit not installed` and continue to Phase D. Do not fail the round.
-
-If all three are available, invoke them in **parallel**:
+Before invoking, check whether the three agents are available (e.g. Task agent registry). Any missing → skip Phase C, log `phase: C, status: skipped, reason: pr-review-toolkit not installed`, continue to Phase D. All available → invoke in **parallel**:
 
 | Agent | Focus |
 |---|---|
-| `pr-review-toolkit:pr-test-analyzer` | Quality of tests added in the diff: are edge cases covered? Behavioral vs. implementation testing? |
-| `pr-review-toolkit:silent-failure-hunter` | Empty catch blocks, swallowed errors, catches too broad, errors logged but not surfaced |
-| `pr-review-toolkit:type-design-analyzer` | Can invalid states be represented? Are invariants encoded in types? Missing nullability markers, unsafe unions |
+| `pr-review-toolkit:pr-test-analyzer` | Test quality in diff — edge cases, behavioral vs implementation testing |
+| `pr-review-toolkit:silent-failure-hunter` | Empty catch blocks, swallowed errors, overly broad catches, errors logged but not surfaced |
+| `pr-review-toolkit:type-design-analyzer` | Can invalid states be represented? Invariants in types? Missing nullability, unsafe unions |
 
-Each agent returns findings graded by the same 0–100 confidence rubric used by our `code-reviewer`; agents inherit the convention through prompt sharing.
-
-### Handling Phase C findings
-
-Apply fix-loop rules identical to Phase A:
-- BLOCK (critical/major + confidence ≥ 75) → fix → `/check`
-- WARN (minor ≥ 50) → report, don't auto-fix
-- Below threshold → drop
-
-Fixes for test-quality findings (e.g., "this test doesn't cover the failure path") may require writing new test code — delegate that to the appropriate engineer agent (`kotlin-engineer`, `swift-engineer`, etc.) with the finding as input.
+Findings graded on the same 0–100 rubric as `code-reviewer` (inherited via prompt sharing). Apply Phase A fix-loop: BLOCK (critical/major ≥ 75) → fix → `/check`; WARN (minor ≥ 50) → report only; below threshold → drop. Test-quality fixes that need new test code → delegate to the matching engineer agent.
 
 ---
 
@@ -168,7 +116,7 @@ No trigger matched → skip Phase D entirely for this round.
 
 ### `security-expert` pattern triggers
 
-The default `risk_areas`-based trigger only fires when the spec or plan explicitly declared `auth` / `payment` / `pii` / `data-migration`. Bug fixes, trivial features, and any task that arrives without a spec slip through. To close that gap, Phase D additionally fires `security-expert` when the diff matches the patterns below.
+The default `risk_areas`-based trigger requires an explicit declaration in spec/plan; bug fixes and unspec'd tasks slip through. Phase D additionally fires `security-expert` on diff patterns:
 
 | Category | Pattern (path or diff content) | Tier |
 |---|---|---|
@@ -181,43 +129,32 @@ The default `risk_areas`-based trigger only fires when the spec or plan explicit
 
 **Threshold (false-positive control):**
 
-- **At least one narrow pattern** → full security review (same as `risk_areas` trigger).
-- **Two or more broad patterns** → full security review.
-- **Exactly one broad pattern, no narrow** → **scoped review** — launch `security-expert` with a narrowed prompt that names the specific surface (e.g. "audit the network layer for regressions only"), not a full audit. The intent is to reduce false-positive review cost on diffs that touch a security-relevant area only incidentally.
-- **No pattern + no `risk_areas`** → security-expert does not fire. Other Phase D experts may still trigger.
+- ≥ 1 narrow pattern → full security review (same as `risk_areas` trigger).
+- ≥ 2 broad patterns → full security review.
+- Exactly 1 broad pattern, no narrow → **scoped review**: launch `security-expert` with a narrowed prompt that names the specific surface (e.g. "audit the network layer for regressions only"), not a full audit. Reduces false-positive cost on incidental touches.
+- No pattern + no `risk_areas` → security-expert does not fire. Other Phase D experts may still trigger.
 
-**Override.** `--skip-security-review` on `finalize` (Tolerance flags above) turns off both `risk_areas` and pattern-based security triggers for the round. Recorded verbatim in `<slug>-finalize.md`'s `acknowledged risks` section with the user's reason. Discouraged.
+**Override.** `--skip-security-review` (Tolerance flags) turns off both `risk_areas` and pattern triggers for the round. Recorded verbatim in `<slug>-finalize.md` `acknowledged risks` with user reason. Discouraged.
 
-**Source.** Patterns are evaluated against the unified diff between the remote default branch's merge-base and `HEAD` (same derivation as Phase A's diff materialisation). Generate the diff with rename detection enabled (`git diff -M`) so a moved file appears under its new path. Path-based patterns match against the **new** path of each diff entry. Diff-content patterns match only against added/modified hunks — a pure rename without content change inserts no hunks, so it cannot match content patterns; it can, however, match path patterns when the rename moves the file into a security-relevant directory (e.g. into `/auth/`). Pure rename metadata alone (mode change, perms) is not a content trigger.
+**Source.** Patterns evaluated against the unified diff between the remote default branch's merge-base and `HEAD` (same derivation as Phase A). Generate with rename detection (`git diff -M`). Path patterns match against the **new** path. Diff-content patterns match only added/modified hunks — a pure rename without content change cannot match content patterns but can match path patterns when the rename moves a file into a security-relevant directory.
 
 ### Handling expert findings
 
-Experts produce deeper, higher-risk findings. Apply the same severity × confidence gate as Phase A:
+Same severity × confidence gate as Phase A. Specifics:
 
-- For security-critical findings that come in at confidence 50, rely on the code-reviewer's **Critical-risk exception** (see `developer-workflow-experts/agents/code-reviewer.md` § Critical-risk exception): the finding is included with a `[please verify]` marker prefixed to the `issue` field. Treat such findings as BLOCK and attempt a fix; if fix is out-of-scope, escalate.
-- performance / architecture + critical at confidence ≥ 75: fix if local to the diff; escalate if requires broader rework.
-- Do not introduce a parallel "always fix at 50" rule — the rubric is defined once in `code-reviewer.md` and inherited by Phase D experts.
+- Security-critical at confidence 50 — rely on `code-reviewer`'s **Critical-risk exception** (`developer-workflow-experts/agents/code-reviewer.md` § Critical-risk exception): finding is included with a `[please verify]` marker prefixed to `issue`. Treat as BLOCK; fix or escalate.
+- Performance / architecture + critical ≥ 75: fix if local to the diff; escalate if broader rework needed.
+- No parallel "always fix at 50" rule — the rubric is defined once in `code-reviewer.md` and inherited.
 
 ### `test-coverage-expert` (conditional)
 
-Late-stage coverage audit that complements the early `/check` Phase 3.5 gate (#154). Catches cases the early gate cannot — declared Test Cases that were not implemented, data-layer changes that landed without integration tests, and gaps that the engineer agent missed.
+Late-stage coverage audit complementing the early `/check` Phase 3.5 gate (#154). Catches declared TCs not implemented, data-layer changes without integration tests, and gaps the engineer agent missed. Public-API rule is defined in `~/.claude/rules/qa-and-testing.md` § 1; priority framework (P0–P3) in § 2.
 
-**Trigger when ANY:**
+**Trigger when ANY:** (1) diff adds a public API symbol with no matching test file (per § 1); (2) `docs/testplans/<slug>-test-plan.md` declares TCs without matching implementation in test sources for this slug — cross-reference by TC `Type` (#153) plus name / file mention, interpreted by the agent, not regex; (3) diff touches data-layer / repository / service / use-case files without introducing or updating tests; (4) `--coverage-audit`.
 
-1. The diff adds a new public API symbol that has no matching test file.
-2. `docs/testplans/<slug>-test-plan.md` declares Test Cases that have no matching implementation in the test sources for this slug. Cross-reference is by Test Case `Type` (#153) plus name / file mention — interpreted by the engineer agent, not regex.
-3. The diff touches data layer / repository / service / use-case files without introducing or updating tests for them.
-4. The caller passed `--coverage-audit` (force-on).
+**Skip when ANY:** (1) trivial diff (single file, < 50 LOC, no new public API, refactor-only); (2) `--skip-coverage-audit` (recorded verbatim in finalize report); (3) no test infrastructure for the affected module — short-circuit with a follow-up issue ("add test harness for X"). Never silently skip.
 
-**Skip when ANY:**
-
-1. The diff is trivial (single file, < 50 LOC, no new public API, refactor-only).
-2. The caller passed `--skip-coverage-audit` (recorded in the finalize report verbatim with the user reason).
-3. The project has no test infrastructure for the affected module — short-circuit with a follow-up issue ("add test harness for X"). Do NOT silently skip.
-
-**Implementation note — no new agent role.** This trigger reuses the existing engineer agents. Phase D launches the matching engineer (`kotlin-engineer` / `swift-engineer` / `compose-developer` / `swiftui-developer`) with a coverage-audit prompt instead of a code-review prompt. The platform routing follows standard project-detection rules. The existing agents already understand the codebase's test conventions; a new agent role would duplicate them.
-
-**What the audit produces.** The engineer agent reads `docs/testplans/<slug>-test-plan.md`, the diff, and the test files in the diff, then produces `swarm-report/<slug>-coverage-audit.md` with the schema below. If gaps are found, the agent (in the same Task call) writes the missing tests and re-runs `/check` — author-fixes-tests rule applies.
+Reuses existing engineer agents (`kotlin-engineer` / `swift-engineer` / `compose-developer` / `swiftui-developer`) with a coverage-audit prompt. The agent reads `docs/testplans/<slug>-test-plan.md`, the diff, and test files; writes `swarm-report/<slug>-coverage-audit.md`; on gaps, writes missing tests in the same Task call and re-runs `/check` (author-fixes-tests, qa-and-testing.md § 4).
 
 **Schema for `swarm-report/<slug>-coverage-audit.md`:**
 
@@ -230,7 +167,6 @@ Late-stage coverage audit that complements the early `/check` Phase 3.5 gate (#1
 **Verdict:** PASS | GAPS_RESOLVED | ESCALATE
 
 ## Inputs
-
 - Test plan: `docs/testplans/<slug>-test-plan.md` (or `N/A: no test plan`)
 - Diff against: `origin/<base>` (commit hash range)
 - Test files in diff: <list>
@@ -241,7 +177,6 @@ Late-stage coverage audit that complements the early `/check` Phase 3.5 gate (#1
 |---|---|---|---|
 | TC-1 | unit | covered | `src/test/.../FooSpec.kt` |
 | TC-2 | ui-instrumentation | gap | — |
-| ... |
 
 ## Public API audit
 
@@ -251,36 +186,34 @@ Late-stage coverage audit that complements the early `/check` Phase 3.5 gate (#1
 | `RateLimiter.allow()` | `core/.../RateLimiter.kt` | gap | — |
 
 ## Gaps and resolution
-
-- (gap-1) TC-2 `Login error state` (ui-instrumentation) — added `LoginScreenInstrumentedTest` covering the error state.
-- (gap-2) `RateLimiter.allow()` had no unit test — added `RateLimiterTest.allow_blocks_after_threshold`.
+- (gap-1) TC-2 `Login error state` — added `LoginScreenInstrumentedTest`.
+- (gap-2) `RateLimiter.allow()` — added `RateLimiterTest.allow_blocks_after_threshold`.
 
 ## /check after fixes
-
 verdict: PASS
 passed: [build, lint, typecheck, tests, coverage]
 ```
 
-The verdict drives Phase D outcome:
+Verdict → Phase D outcome:
 
-- `PASS` — all cross-reference and public-API rows covered before audit. Phase D continues with other experts.
-- `GAPS_RESOLVED` — gaps existed, agent wrote missing tests, `/check` returned PASS. Treated as PASS for Phase D round-end exit; the audit file lists the fixes for the finalize report.
-- `ESCALATE` — gaps existed, agent could not write a viable test in 3 attempts, OR a gap is structurally untestable (covered by the same diagnosis path the regression-test stage uses). Treated as a BLOCK finding; round budget rules apply.
+- `PASS` — all rows covered before audit; Phase D continues with other experts.
+- `GAPS_RESOLVED` — agent wrote missing tests, `/check` PASS. Treated as PASS; audit file lists fixes for the finalize report.
+- `ESCALATE` — agent could not produce a viable test in 3 attempts, OR a gap is structurally untestable. Treated as BLOCK; round budget applies.
 
-The override flag `--skip-coverage-audit` is documented in §Inputs (Tolerance flags); when set it records the skip reason in the finalize report's `acknowledged risks` section.
+`--skip-coverage-audit` is documented in §Inputs; when set, it records the skip reason in `acknowledged risks`.
 
 ---
 
 ## Mechanical verification between phases
 
-After **any** code modification within a round (Phase A fix, Phase B auto-fix, Phase C fix, Phase D fix), re-invoke `/check`. If `/check` returns FAIL:
+After **any** code modification within a round, re-invoke `/check`. On FAIL:
 
 1. Log which phase's fix introduced the failure.
-2. Attempt a narrow repair — **1 attempt max**. At the finalize stage the code already passed `/check` once, so a regression from a finalize fix signals that the fix itself was wrong; repeated retry usually compounds the problem rather than converging.
-3. If still failing → revert the fix and keep the originating finding **as BLOCK** on the round's list — the finding is not resolved, so it counts against the round budget. Continue with the remaining phases of the round (they may still find other issues), but do not mark the reverted finding as "acknowledged risk" — that label is reserved for items the user knowingly accepts at the end.
-4. If the round ends with any such unresolved BLOCK, go to the next round. If round 3 ends with unresolved BLOCKs, exit with ESCALATE.
+2. Narrow repair — **1 attempt max**. At finalize stage the code already passed `/check` once, so a regression signals the fix itself was wrong; retrying compounds rather than converges.
+3. Still failing → revert the fix and keep the originating finding **as BLOCK** for the round (not resolved, counts against budget). Continue remaining phases; never relabel a reverted BLOCK as "acknowledged risk".
+4. Round ends with unresolved BLOCKs → next round. Round 3 ends with unresolved BLOCKs → ESCALATE.
 
-Do not let `/check` failures cascade — a broken build blocks further review and creates noise. But also do not use "revert + continue" as a way to silently ship a BLOCK.
+Do not let `/check` failures cascade, and do not use revert-and-continue to silently ship a BLOCK.
 
 ---
 
@@ -299,101 +232,60 @@ Save `swarm-report/<slug>-finalize.md` on exit (PASS or ESCALATE):
 ## Rounds
 
 ### Round 1
-- Phase A (code-reviewer): verdict, N findings (K BLOCK, M WARN, L NIT). Fixes applied: X.
+- Phase A (code-reviewer): verdict, N findings (K BLOCK, M WARN, L NIT). Fixes: X.
 - Phase B (/simplify): Y files changed, auto-fixed.
-- Phase C (pr-review-toolkit): breakdown per agent, or `skipped` if plugin not installed.
+- Phase C (pr-review-toolkit): per-agent breakdown, or `skipped` if plugin not installed.
 - Phase D (experts): triggered: [security-expert, ...]; findings, fixes.
 - `/check` after round: PASS | FAIL (reason)
 
-### Round 2
-...
+### Round 2 ...
 
-## Unresolved BLOCKs (on ESCALATE only)
-
-Findings that could not be fixed and were NOT downgraded. Populated only when the
-finalize stage exits ESCALATE — lists BLOCKs that remain after `max_rounds` rounds, or BLOCKs
-whose fix broke `/check` and was reverted (per §Mechanical verification). The user
-must decide: return to implementation, accept as risk, or re-scope.
+## Unresolved BLOCKs (ESCALATE only)
+Findings that could not be fixed and were NOT downgraded — populated only on ESCALATE; lists BLOCKs after `max_rounds` rounds OR BLOCKs whose fix broke `/check` and was reverted. User decides: return to implementation, accept as risk, or re-scope.
 
 | Severity | Confidence | Category | Finding | Phase | Round | File:Line |
 |---|---|---|---|---|---|---|
 | BLOCK (critical) | 75 | security | Token logged in clear | D | 3 | src/auth/Logger.kt:23 |
 
 ## Remaining findings (not auto-fixed)
-
-Non-BLOCK items surfaced for reviewer awareness — they do not block exit with PASS.
+Non-BLOCK items for reviewer awareness — never block PASS.
 
 | Severity | Confidence | Category | Finding | Phase | File:Line |
 |---|---|---|---|---|---|
 | WARN | 60 | quality | Inconsistent error logging | A | src/foo/Bar.kt:142 |
-| NIT  | 75 | consistency | Unused import of X in new file | B | ... |
+| NIT  | 75 | consistency | Unused import in new file | B | ... |
 
 ## Acknowledged risks
-
-Findings that the user explicitly decided to accept (e.g., during escalation). Not auto-populated — the user marks items here when handing control back for the run to continue. Distinct from "Unresolved BLOCKs" (which the finalize stage could not close).
+Findings the user explicitly decided to accept (e.g. at escalation). Not auto-populated — distinct from "Unresolved BLOCKs".
 
 ## Commits added during finalize
-
 - <hash> <message>
 ```
 
-### Chat summary on exit
+### Chat summary on exit (≤20 lines)
 
-After saving the report, post a chat summary (≤20 lines):
+**PASS:** "Finalize: PASS after N round(s). Code is ready for acceptance." Bullets — N findings fixed by category (security X, quality Y, style Z); if 0, state so. Next step: `/acceptance`.
 
-**PASS exit:**
-- One sentence: "Finalize: PASS after N round(s). Code is ready for acceptance."
-- Bullets: N findings fixed (by category: security X, quality Y, style Z). If 0 findings: state that.
-- One line: "Next step: `/acceptance`"
+**ESCALATE:** "Finalize: ESCALATE after N round(s). X unresolved BLOCK(s) require decision." Bullets (max 5, top by severity): one BLOCK per bullet with category + one-line description. ONE question: which BLOCK first, or pick accept-risk / continue-implementing / re-scope. Options — proceed to `/acceptance` accepting risks, or return to implementation with a new task.
 
-**ESCALATE exit:**
-- One sentence: "Finalize: ESCALATE after N round(s). X unresolved BLOCK(s) require decision."
-- Bullets (max 5): unresolved BLOCKs — one bullet per BLOCK with category + one-line description. If >5 BLOCKs: list top 5 by severity.
-- ONE question: which BLOCK to resolve first, or ask user to choose: accept risk / continue implementing / re-scope.
-- One line: options — "Accept risks and proceed to `/acceptance`" OR "Return to implementation with a new task".
-
-Do NOT paste the report table into chat. The file is for reference only.
+Never paste the report table into chat — the file is for reference.
 
 ---
 
-## Scope rules
+## Scope and escalation
 
-- **In scope:** reviewing and improving the quality of code *related to the current diff*. Delegating fixes to engineer agents. Invoking `/check` after each mutation.
-- **Out of scope:** writing new features, changing task scope, verifying functional correctness (acceptance), architectural redesign (escalate — this is a new task).
-- **Prefer** to keep fixes inside the files touched by the original change. Minimal, necessary edits in adjacent files are allowed when a finding explicitly requires them — e.g., Phase C's `pr-test-analyzer` may demand adding tests in a sibling test file, and Phase B's `/simplify` may extract a duplicated helper into an existing utility module. In every such case, keep the edit narrowly scoped to what the finding requires.
-- **Never** re-scope the task under the guise of "cleanup". If a finding points to a structural issue beyond narrow-fix reach → escalate, do not refactor.
-- **Never** silently skip Phase A — `code-reviewer`'s plan-conformance check is the anchor. If the agent fails to launch for infrastructure reasons, stop and escalate.
-- **Never** run forever. Stop after `max_rounds` rounds (default 3) and report.
+- **In scope:** improving quality of code *related to the current diff*; delegating fixes to engineer agents; `/check` after each mutation.
+- **Out of scope:** new features, scope changes, functional acceptance, architectural redesign.
+- Keep fixes inside files touched by the original change. Adjacent-file edits only when a finding explicitly requires them (e.g., `pr-test-analyzer` adding a sibling test, `/simplify` extracting a helper).
+- Never re-scope under "cleanup" — structural issues beyond narrow-fix reach escalate.
+- Never silently skip Phase A — `code-reviewer`'s plan-conformance check is the anchor. If it fails to launch for infrastructure reasons, stop and escalate.
 
----
-
-## Escalation
-
-Stop and report to caller when:
-
-- After `max_rounds` rounds (default 3), BLOCK findings remain unresolved
-- `/check` fails and the fix doesn't converge after 1 retry
-- A BLOCK finding requires refactoring beyond the diff scope
-- An expert finding demands architectural changes (new modules, dependency reorg)
-- Required engineer agent (e.g., `kotlin-engineer`) is not installed but needed for a fix
-
-When escalating: state which phase escalated, what the unresolved findings are, and what the caller needs to decide (accept risks, return to implementation with a new task, architectural redesign, etc.).
+**Escalate (stop and report) when:** unresolved BLOCKs after `max_rounds`; `/check` fix doesn't converge after 1 retry; BLOCK requires refactoring beyond diff scope; expert finding demands architectural change; required engineer agent (e.g. `kotlin-engineer`) is not installed but needed for a fix. State which phase escalated, what is unresolved, and what the caller must decide.
 
 ---
 
-## Integration notes
+## Dependencies
 
-- **Manual invocation** is the primary mode: pre-PR cleanup on a feature branch, periodic quality audit on an old branch, review of a branch before marking draft PR ready.
-- The skill requires `code-reviewer` from `developer-workflow-experts` (sibling hard dependency). The `pr-review-toolkit` trio is optional: if the plugin is installed (from `claude-plugins-official`), Phase C runs; otherwise Phase C is skipped with a log entry and the round continues through Phases D and beyond.
-
----
-
-## Dependencies this skill requires
-
-- Hard deps (declared in `plugins/developer-workflow/.claude-plugin/plugin.json`):
-  - `developer-workflow-experts` — for `code-reviewer`, `security-expert`, `performance-expert`, `architecture-expert`
-- Optional soft-ref (install separately, Phase C auto-skips when absent):
-  - `pr-review-toolkit` (marketplace: `claude-plugins-official`) — for `pr-test-analyzer`, `silent-failure-hunter`, `type-design-analyzer`
-- Built-in skills:
-  - `/simplify` — Claude Code's built-in reuse/quality/efficiency pass
-  - `/check` — this plugin's mechanical verification utility
+- **Hard** (`plugin.json`): `developer-workflow-experts` — `code-reviewer`, `security-expert`, `performance-expert`, `architecture-expert`.
+- **Optional soft-ref** (Phase C auto-skips when absent): `pr-review-toolkit` (marketplace `claude-plugins-official`) — `pr-test-analyzer`, `silent-failure-hunter`, `type-design-analyzer`.
+- **Built-in:** `/simplify`, `/check`.

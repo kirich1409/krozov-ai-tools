@@ -152,9 +152,9 @@ Execute strictly in table order. Branches:
 - **Ask-in-thread rows** — post verbatim question, do not resolve.
 - **Dismiss rows** — canned template + sanitized slot, resolve thread.
 
-Commit with `Address review: …`, push plain or `--force-with-lease` (never plain
-`--force`). Re-request review from any reviewer whose state was `CHANGES_REQUESTED` when
-code changed; Copilot via GraphQL mutation.
+Commit with `Address review: …` and push (force-push policy per globals). Re-request review
+from any reviewer whose state was `CHANGES_REQUESTED` when code changed; Copilot via
+GraphQL mutation.
 
 Full procedure, safety rules (stdin-piped bodies, rate-limit handling, pre-POST
 thread-ownership verify), and Copilot node-id resolution in
@@ -215,7 +215,7 @@ The skill decides these without asking, in any mode:
 
 **Approval gate ≠ merge gate.** `--auto` removes the round-level approval gate. It does not remove the merge gate — by design, final merge always requires explicit user confirmation.
 
-**Safe by construction.** Replies go through the sanitize pipeline; thread ownership is re-verified before every POST; POST bodies go through stdin, never shell args; force-push uses `--force-with-lease` only.
+**Safe by construction.** Replies go through the sanitize pipeline; thread ownership is re-verified before every POST; POST bodies go through stdin, never shell args. Force-push policy per globals.
 
 **Respect the reviewer.** Push back on wrong suggestions (record as DISCUSSION, draft a counter-reply); do not dress a broken suggestion up as FIXABLE and ship the broken fix.
 

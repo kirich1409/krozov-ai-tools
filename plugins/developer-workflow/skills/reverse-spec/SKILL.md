@@ -18,57 +18,37 @@ ship the same feature.
 
 **Core principles:**
 
-1. **Zero code identifiers in the body.** The body of the spec (Sections 1–8 and
-   10–11) must not contain any name that only exists in the current codebase. That
-   includes class names, method names, type names, field names, sealed-class cases,
-   enum values, package paths, file paths, and framework idioms. The spec describes
-   *what the feature does*, in language a PM/BA can read. Implementation names live
-   in Section 13 (Code map) — as location pointers, not as the subject of
-   description. See `references/behavior-translation.md` for the full rule and
-   before/after examples.
+1. **Zero code identifiers in the body.** Sections 1–8 and 10–11 must not contain any
+   name that only exists in the current codebase (classes, methods, types, fields,
+   sealed-class cases, enum values, package or file paths, framework idioms).
+   Implementation names live in Section 13 (Code map) as location pointers, not as
+   the subject of description.
 
-   Sanity check a sentence by asking: *"If I renamed every class in the codebase, would
-   this sentence still describe the same feature?"* If the sentence breaks, it is
-   talking about code, not behavior — rewrite it.
+   Sanity check: *"If I renamed every class in the codebase, would this sentence still
+   describe the same feature?"* If it breaks, rewrite. See
+   [`references/behavior-translation.md`](references/behavior-translation.md) for the
+   full rule, recipes, and before/after examples.
 
-   Quick examples of what this forbids in the body:
-   - ❌ "`OAuthClient.authorize()` returns an `OAuthResult.Success(tokens)` or
-     `OAuthResult.Error(exception)`"
-     ✅ "Authorization returns either a valid token set or a structured failure."
-   - ❌ "An observable `StateFlow<AuthState>` with cases `Unauthenticated`,
-     `Authenticating`, `Authenticated(tokens)`, `Error(exception)` drives the UI."
-     ✅ "The UI reflects the current authentication state: not authenticated, authorizing,
-     authenticated, or failed."
-   - ❌ "`TokenStorage.save(tokens)` persists the `OAuthTokens` to KV storage."
-     ✅ "The token set is persisted in platform key-value storage after a successful
-     exchange."
+2. **Tech stays in only when load-bearing.** "Uses Jetpack Compose" is noise (any UI
+   toolkit could render this). "Uses Google ML Kit face detection" matters (swapping
+   changes capability, accuracy, latency, licensing). Tech belongs in §12 only when
+   removing it would change the feature's behavior, constraints, or cost — phrased as
+   a capability with acceptable substitutes, not a direct SDK reference. See
+   [`references/tech-abstraction.md`](references/tech-abstraction.md).
 
-2. **Tech stays in only when it is load-bearing.** Keeping "Uses Jetpack Compose" in the
-   spec is noise — any UI toolkit can render the same result. Keeping "Uses Google ML
-   Kit face detection" matters — swapping changes capability, accuracy, latency, or
-   licensing. Rule of thumb: a technology stays in the spec only if removing it would
-   change the feature's behavior, constraints, or cost. Even when kept, it belongs in
-   Section 12 (Tech-specific constraints), phrased as a *capability* with acceptable
-   substitutes — not as a direct SDK reference. See `references/tech-abstraction.md`.
+3. **Inferred intent is flagged, not guessed.** When the code shows *what* but not
+   *why* (retry=3, debounce=250 ms, specific error copy), write it as observed fact
+   and raise a clarification question. Do not invent rationale.
 
-3. **Inferred intent is flagged, not guessed silently.** When the code reveals *what*
-   happens but not *why* (a retry count of 3, a 250 ms debounce, a specific error copy),
-   write it into the spec as an observed fact and raise a clarification question. Do not
-   invent rationale.
+4. **Project conventions fill cross-cutting gaps.** Accessibility, error-copy style,
+   analytics naming, localization, logging are usually project-wide. Check the project
+   before asking the user: reference an existing convention, or explicitly mark its
+   absence. See [`references/analysis-checklist.md`](references/analysis-checklist.md).
 
-4. **Project conventions fill the gaps the feature does not own.** Things like
-   accessibility, error copy style, analytics naming, localization coverage, logging
-   levels are usually project-wide rather than feature-specific. Before asking the user,
-   check the project: if a convention exists, reference it ("error states follow project
-   convention X, see `<path>`"); if not, explicitly mark the absence ("no accessibility
-   handling — consistent with project-wide absence"). See
-   `references/analysis-checklist.md` for the full list of cross-cutting concerns.
-
-5. **One question per round.** After each interview question, new answers change which
-   question is most valuable next. Batching locks in assumptions prematurely. The user
-   can always override ("just ask me everything at once") — respect that, but the default
-   is one-by-one. After the main interview is complete, offer the user a freeform round
-   to add anything that was not covered.
+5. **One question per round.** Each answer reshapes which question matters next.
+   Batching locks in assumptions prematurely. The user may override ("ask me everything
+   at once") — respect that, but default is one-by-one. Offer a final freeform round
+   when the curated queue is empty.
 
 ---
 
@@ -122,47 +102,23 @@ the feature: [in scope]. Dependencies: [deps]. Out of scope: [out]. Do these bou
 look right?"*. Adjust based on the answer before proceeding. A wrong boundary at this
 step cascades: too narrow misses behaviors, too wide drowns the spec in unrelated detail.
 
-**Scope sanity check** (soft gate). After the boundary is confirmed, evaluate against
-these heuristics:
-
-- Scope covers **more than one user-facing flow** (e.g., both sign-in AND sign-up AND
-  password reset) — probably an aggregate, not a feature.
-- Scope spans **more than one top-level feature directory** in the project's module
-  tree — probably more than one feature.
-- Scope includes **more than one screen** with distinct purposes (onboarding carousel
-  across 4 screens is one flow; sign-in + profile-edit + settings is three).
-
-If any of these trip, surface to the user: *"This scope covers [N flows / N features
-/ N screens] — that's more like a set of features than one. Do you want one big spec
-or per-flow specs? Recommendation: split — each separate spec is more useful to the
-re-implementer than an aggregate."*. A large aggregate spec produces a Phase 1 state
-file and §10.1 Network operations table that are unusable in practice. Split first,
-then spec each piece.
+**Scope sanity check** (soft gate). After the boundary is confirmed, flag aggregates:
+multiple user-facing flows (sign-in + sign-up + password reset), multiple top-level
+feature directories, or multiple screens with distinct purposes. If tripped, recommend
+splitting into per-flow specs — aggregates produce unusable §10.1 tables and state files.
 
 Generate a kebab-case slug from the feature name: `payment-checkout`, `search-bar`,
 `onboarding-welcome`.
 
 ### 0.3 Create or resume state file
 
-State lives in `./swarm-report/reverse-spec-<slug>-state.md`. It persists across
-context compaction and holds:
+State lives in `./swarm-report/reverse-spec-<slug>-state.md` and holds: target
+location(s), confirmed boundary, spec language, open-questions queue, per-phase
+checklist, draft fragments.
 
-- target location(s) and confirmed boundary
-- spec language (see 0.4)
-- open questions queue
-- per-phase checklist (pending / in progress / done)
-- draft fragments as they accumulate
-
-**If the state file already exists** when the skill starts — that means this feature
-has been started before. Read the file and present a one-line summary to the user:
-*"Found an unfinished state for feature `<slug>` (Phase N, queue: K open questions).
-Continue from where we left off, or start over?"*. Default is **continue**; restart wipes
-answers already given and is rarely what the user wants.
-
-If the user confirms restart, delete the old state file and start fresh. Otherwise
-resume from the first unchecked phase.
-
-Re-read this file at the start of each phase so that work survives compaction.
+**If the file already exists**, summarize in one line (*"Found unfinished state — Phase
+N, K open questions. Continue or restart?"*) and default to **continue** — restart
+wipes prior answers. Re-read at the start of each phase for compaction resilience.
 
 ### 0.4 Determine spec language
 
@@ -203,119 +159,53 @@ Override: *"skip project-overview"* (or any equivalent phrasing) skips this phas
 
 ## Phase 1: Static Analysis
 
-No interview yet. Extract everything the code itself answers.
+No interview yet. Walk through
+[`references/analysis-checklist.md`](references/analysis-checklist.md) section by
+section, capture findings into the state file. The checklist covers entry points,
+user-visible states, data in/out, external dependencies, side effects, code-enforced
+constraints, platform capabilities, navigation, localization, and accessibility.
 
-Go through `references/analysis-checklist.md` section by section and capture findings
-into the state file. The checklist covers:
-
-- entry points and triggers (how the user reaches this feature)
-- user-visible states (happy path, loading, empty, error, offline, permission-denied,
-  degraded)
-- data in / data out (API calls, persistence, events emitted)
-- external dependencies (SDKs, native APIs, third-party services)
-- side effects (analytics, logging, notifications, inter-feature messages)
-- constraints enforced by the code (rate limits, retries, timeouts, debounces, maxima)
-- platform capabilities used (camera, location, biometrics, file system, background
-  work)
-- navigation in and out
-- localization and accessibility treatment
-
-For each item, note: *what happens*, *under which condition*, *with which concrete
-parameters*. Do not yet decide what is feature-specific vs project-wide — that happens in
-Phase 2.
-
-When the code shows a concrete number or string (retry = 3, debounce = 250 ms, error
-copy = "Something went wrong"), write it down verbatim. The spec will carry these exact
-values so a reimplementation matches.
+For each finding: *what happens*, *under which condition*, *with which concrete parameters*. Capture concrete numbers and strings verbatim (retry=3, debounce=250 ms, "Something went wrong") — the spec carries these exact values so a reimplementation matches. Defer feature-specific vs project-wide judgments to Phase 2.
 
 ---
 
 ## Phase 2: Convention Mapping
 
-For every cross-cutting concern not owned by the feature (error handling, a11y,
-analytics naming, localization, logging, pagination, caching), check how the rest of the
-project handles it.
+For every cross-cutting concern not owned by the feature (error handling, a11y, analytics naming, localization, logging, pagination, caching), check the rest of the project. Four outcomes:
 
-Decision table:
+- **Follows project convention** — reference it; do not redescribe.
+- **Deviates** — call out explicitly; rationale → Open Questions if unknown.
+- **No project convention, feature absent too** — mark absent honestly. Most commonly forgotten case.
+- **No project convention, feature present** — describe; flag the missing shared pattern.
 
-- **Feature follows project convention** — reference the convention in the spec
-  ("Error states follow the project's standard ErrorBanner pattern; see
-  `docs/<path>`"). Do not redescribe the convention itself.
-- **Feature deviates** — call it out explicitly ("This screen overrides the project
-  error banner with an inline snackbar; rationale unknown — see Open Questions").
-- **Project has no convention and feature does not address it either** — mark absent
-  ("No accessibility labels; consistent with project-wide absence."). This is the most
-  commonly forgotten case; mark it honestly rather than inventing requirements.
-- **Project has no convention but feature does something** — describe the feature
-  behavior; flag that the project lacks a shared pattern.
-
-These judgments live in the state file. They become cross-references in the spec.
+Judgments live in the state file and become cross-references in the spec.
 
 ---
 
 ## Phase 3: Clarification Loop
 
-Now the user gets involved. Goal: close gaps the code cannot answer on its own.
+Close gaps the code cannot answer.
 
-**Default pacing: one question per round.** Each question is chosen based on the highest
-remaining uncertainty after the previous answer. This is deliberately slower than batch
-interviews — it produces better questions because each follow-up is informed by the
-previous answer.
-
-**Before the first question, set expectation.** Announce the queue size in one line so
-the user can make an informed choice about pacing: *"Found ~N gaps after the analysis.
-I'll go one question per round (follow-ups land better that way). Say "batch" if you'd
-rather get them all at once."*. This prevents the common failure mode where the user
-patiently answers 10 questions in a row, then at the end says "could have done that in
+**Default pacing: one question per round.** Each question is informed by the previous
+answer — batching locks in assumptions prematurely. Before the first question, announce
+queue size: *"Found ~N gaps. One question per round; say 'batch' to switch."* Prevents
+the failure mode where the user patiently answers 10 questions then says "could've been
 one message".
 
-For each open question in the state queue:
+Per question:
 
-1. Re-read the state file.
-2. Pick the single most valuable open question — typically one that unblocks the most
-   downstream spec sections or one whose assumed answer would be most expensive to get
-   wrong.
-3. Ask it, with a **pre-filled default** derived from the code or from project
-   convention. Example: *"Retry count is 3 in code. Is that an intentional product
-   requirement, or an implementation default? (default: intentional — keep in spec as
-   requirement)"*. The user accepts, overrides, or says "don't know" (which itself is a
-   valid answer and goes into Open Questions).
-4. Update the state file with the answer.
-5. Repeat until the queue is empty.
+1. Re-read state file.
+2. Pick the single highest-uncertainty item — one that unblocks the most downstream sections, or whose wrong answer is most expensive.
+3. Ask with a **pre-filled default** derived from code or project convention. Example: *"Retry count is 3 in code. Intentional product requirement or implementation default? (default: intentional)"*. Accept / override / "don't know" (→ Open Questions) all valid.
+4. Update state file. Repeat.
 
-If the queue is large (>8 questions) and the user signals impatience or explicitly asks
-to batch ("ask them all at once" / "batch"), switch to batched mode for the remainder.
-Always respect an explicit override.
+Switch to batch mode if queue > 8 and the user explicitly asks. Respect overrides.
 
-Question categories that typically need user input:
-
-- **Intent behind observed behavior** — is that 3-second timeout a product decision or
-  copy-paste default?
-- **Out of scope confirmation** — "these related screens are not in scope; confirm?"
-- **Missing business context** — success metric, target user segment, historical
-  context ("this was built for X partner integration").
-- **Design source** — is there a Figma / design doc? Analytics plan? PRD?
-- **Deviation rationale** — why does this feature bypass the project's standard error
-  handler?
+Common question categories: intent behind observed behavior, out-of-scope confirmation, missing business context, design source (Figma/PRD/analytics), deviation rationale.
 
 ### 3.1 Freeform round
 
-When the curated queue is empty, ask one final open question: *"Any additional context
-that I have not asked about? (design links, analytics plan, PRD, constraints,
-history…)"*.
-
-Offer a menu of common inputs the user can supply:
-
-- Figma or design links
-- Screenshots / screen recordings
-- API contract documents (OpenAPI, Protobuf, sample payloads)
-- Analytics event taxonomy
-- Localization glossary
-- Product requirements document (PRD) or brief
-- Historical context (who owns it, which partner requested it, prior incidents)
-
-Anything the user supplies is treated as authoritative over inferred-from-code
-information and is referenced in the spec.
+When the curated queue is empty, ask: *"Any additional context I haven't asked about? (design links, analytics plan, PRD, constraints, history…)"*. Common authoritative inputs: Figma/design links, screenshots, API contracts (OpenAPI/Protobuf), analytics taxonomy, localization glossary, PRD, historical context (owner, partner, incidents). User-supplied inputs override inferred-from-code data and are referenced in the spec.
 
 ---
 
@@ -349,98 +239,53 @@ Preserve literally, from the state file into the spec:
 
 ### Phase 4.1: Write the spec
 
-Produce a draft at `docs/spec/<slug>.md` following `references/spec-template.md`.
+Produce the draft at `docs/spec/<slug>.md` following
+[`references/spec-template.md`](references/spec-template.md). Template structure
+(product first, tech last):
 
-Writing rules:
+- **Part A (§§1-7) Product behavior** — Overview, User-facing behavior, UI, States, Navigation, L10n & a11y, Analytics.
+- **Part B (§§8-9) Decisions & risks** — Open Questions (body uses `[OQ-N]` cross-refs), Known Defects (identifiers allowed as evidence).
+- **Part C (§§10-12.5) Technical integration** — Data & integrations (network ops / persistence / platform events / flags / services / contracts / collaborators / domain model), Platform capabilities, Tech-specific constraints, External references.
+- **Part D (§13) Appendix** — Code map (the only place code identifiers are allowed).
 
-- **Zero code identifiers in the body** (see Principle 1 and
-  `references/behavior-translation.md`). Sections 1–8 and 10–11 must read as if no
-  particular codebase exists. Code identifiers belong only in §13 (Code map) as
-  location pointers; §9 (Known defects) allows identifiers as evidence.
-- **Tech only when load-bearing.** Technology names appear only in §12, and only when
-  they pass the four-question test in `references/tech-abstraction.md`. Even then,
-  phrase as a capability with acceptable substitutes, not as a direct SDK reference.
-- **Concrete observable facts.** "On tap, the list refreshes" beats "the refresh flow
-  is invoked". Include exact copy, exact numbers, exact states.
-- **Cross-references instead of duplication.** When a section relies on a project
-  convention, link to the existing doc or code rather than inlining.
-- **Every claim is verifiable.** A reviewer with access to the code should be able to
-  confirm or refute each bullet. Speculation goes under Open Questions, not in the
-  body.
-- **Appendix: code map.** At the end of the spec, include a table mapping each spec
-  section to the file(s) that implement it. This is the only place where code paths
-  appear. It enables round-trip verification and future maintenance.
+Writing rules (enforced by Phase 5 verification):
 
-Template structure — product first, tech at the end, defined in full at
-`references/spec-template.md`:
-
-- **Part A (§§1-7) Product behavior** — Overview, User-facing behavior, UI, States,
-  Navigation, L10n & a11y, Analytics.
-- **Part B (§§8-9) Product decisions & risks** — Open Questions (body uses `[OQ-N]`
-  cross-refs), Known Defects.
-- **Part C (§§10-12.5) Technical integration** — Data & integrations (8
-  subsections: network ops / persistence / platform events at capability level /
-  flags / services / contracts / collaborators at business level / domain model),
-  Platform capabilities, Tech-specific constraints, External references (links to
-  provider docs / RFCs).
-- **Part D (§13) Appendix** — Code map (the only place code identifiers are
-  allowed).
-
-Sections that are genuinely not applicable are written as "N/A — reason", not
-omitted. Missing sections look like oversight; explicit N/A shows intent.
+- Zero code identifiers in §§1–8 and 10–11 (Principle 1).
+- Tech only when load-bearing, in §12, phrased as capability (Principle 2).
+- Concrete observable facts: exact copy, numbers, states.
+- Cross-reference project conventions instead of inlining.
+- Every claim verifiable against code, user answer, convention, or `[OQ-N]`. Speculation goes to Open Questions, not body.
+- Inapplicable sections are written `N/A — reason`, not omitted.
 
 ---
 
 ## Phase 5: Coverage Verification
 
-Before presenting the draft to the user, run a five-pass self-review plus a typo
-sweep. The governing rule is the **proof standard** (full definition in
-`references/coverage-verification.md`): every factual claim in the spec body traces
-to one of four sources — code location, recorded user answer, project convention, or
-an explicit Open Questions entry. Speculation — "it probably does X because that
-would make sense" — is not a proof and must be removed or escalated.
+Run five passes plus a typo sweep against the **proof standard**: every factual claim
+in the body traces to code location, recorded user answer, project convention, or an
+explicit Open Questions entry. Speculation is not a proof — remove or escalate.
 
-Procedure (detailed steps in `references/coverage-verification.md`):
+Passes (detailed procedure in
+[`references/coverage-verification.md`](references/coverage-verification.md)):
 
-1. **Pass 1 — code → spec** (coverage). Every significant code branch maps to a spec
-   section, or is explicitly recorded in §13 as intentionally omitted. Fix gaps.
-2. **Pass 2 — spec → code** (grounding). Every spec claim traces to code, a user
-   answer, a project convention, or §8 Open Questions. Remove or escalate
-   untraceable claims. §9 Known Defects entries have an extra bar: code pointer +
-   defect class + consequence all required.
-3. **Pass 3 — identifier-leak scan** (vocabulary). Scan §§1-8 and 10-11 for tokens
-   that exist only because this codebase exists. **Zero tolerance** — every hit is
-   translated, moved to §13, or kept only if it is an external contract. §9, §12,
-   §13 are excluded — they exist specifically for implementation detail.
-4. **Pass 4 — reference integrity.** Every `[OQ-N]` marker in the body has a
-   matching §8 entry; every §8 entry with body impact has at least one `[OQ-N]`
-   in the body. Scriptable via grep.
-5. **Pass 5 — code-map validity.** Every `path:line` in §13 points to an existing
-   file, and the line (or end-of-range) is within the file's total lines. Scriptable
-   via `test -f` + `wc -l`. Does not verify content match — that is covered
-   indirectly by Pass 1 + Pass 2.
+1. **Code → spec** (coverage) — every significant code branch maps to a spec section or is explicitly omitted in §13.
+2. **Spec → code** (grounding) — every claim traces to one of the four proof sources. §9 Known Defects requires code pointer + defect class + consequence.
+3. **Identifier-leak scan** (vocabulary) — §§1-8 and 10-11, zero tolerance for codebase-only tokens. §9, §12, §13 excluded.
+4. **Reference integrity** — every body `[OQ-N]` has a §8 entry, every body-impacting §8 entry has ≥1 `[OQ-N]`. Grep-scriptable.
+5. **Code-map validity** — every `path:line` in §13 points to an existing file with the line within bounds. `test -f` + `wc -l` scriptable.
 
-Plus a **typo / formatting sweep** at the end: orphan spaces inside words,
-doubled-word typos, mixed Latin/Cyrillic characters, inconsistent punctuation around
-quotes. Light but mandatory — a spec with typos erodes reader trust in substantive
-claims.
+Plus a **typo / formatting sweep**: orphan spaces, doubled words, mixed Latin/Cyrillic, inconsistent punctuation around quotes. Light but mandatory — typos erode reader trust.
 
-The verification output — passed items, gaps fixed, identifier leaks cleaned,
-reference-integrity resolutions, code-map validity count, typo sweep result,
-unresolved gaps — goes into the state file and is summarized in one line when the
-draft is presented.
+Verification output (passed items, gaps fixed, leaks cleaned, ref-integrity resolutions, code-map count, typo result, unresolved gaps) goes into the state file and is summarized in one line at draft presentation.
 
 ### Definition of Done
 
-The five passes plus the typo sweep above are mechanical checks. The spec is only ready
-to hand off when the full **Definition of Done** checklist passes — eleven binary gates
-covering section presence, the five Pass results plus typo sweep, Open Questions and
-Known Defects completeness, Code map coverage, header fill, and user review. See
-`references/definition-of-done.md` for the detailed gates, rationale, and the
-handoff-format rules.
-
-A half-satisfied checklist is not a ready spec — it is a progress report. Never
-declare the draft ready unless all eleven gates pass.
+The five passes plus the typo sweep are mechanical. The spec is hand-off-ready only
+when all **eleven Definition-of-Done gates** pass — section presence, the six checks
+above, Open Questions and Known Defects completeness, Code map coverage, header fill,
+user review. See
+[`references/definition-of-done.md`](references/definition-of-done.md). Half-satisfied
+is a progress report, not a ready spec.
 
 ---
 

@@ -298,7 +298,7 @@ flowchart LR
     TP["/generate-test-plan"]
     I["/implement<br/>(gate: /check<br/>+ intent)"]
     F["/finalize<br/>(code-reviewer →<br/>simplify → trio →<br/>experts)"]
-    A["/acceptance<br/>или /bug-hunt"]
+    A["/acceptance<br/>(exploratory: manual-tester)"]
     CPR["/create-pr"]
     DM["/drive-to-merge"]
 
@@ -352,7 +352,7 @@ flowchart LR
 |-------|---------|------------|
 | generate-test-plan | `/generate-test-plan` | Создание тест-плана и QA-сценариев |
 | acceptance | `/acceptance` | Верификация фичи на живом приложении по спецификации |
-| bug-hunt | `/bug-hunt` | Undirected QA: поиск багов без спецификации |
+| (exploratory) | call `manual-tester` agent | Undirected QA без спецификации — heuristics в `agents/manual-tester.md` § Step 4b |
 
 #### Skills: PR
 
@@ -446,8 +446,7 @@ flowchart TB
         finalize[/finalize/]
         writeTest[/write-tests/]
         testFeat[/acceptance/]
-        explTest[/bug-hunt/]
-        mt[manual-tester]
+        mt[manual-tester<br/>covers exploratory QA]
     end
 
     subgraph kotlin_p ["developer-workflow-kotlin"]
@@ -545,7 +544,7 @@ flowchart LR
 ### Требования
 
 - **gh CLI / glab CLI** — обязательно для `create-pr` и `drive-to-merge`. Без рабочей авторизации скилл не может автономно пушить фиксы, постить ответы и резолвить треды; при отсутствии CLI — попросит установить и авторизоваться, затем повторно запустить
-- **mobile MCP** — обязательно для live mobile QA (`acceptance`, `bug-hunt`, `manual-tester`); при отсутствии QA-скиллы останавливаются с просьбой включить
+- **mobile MCP** — обязательно для live mobile QA (`acceptance`, `manual-tester`); при отсутствии QA-скиллы останавливаются с просьбой включить
 - **playwright MCP** — рекомендуется для browser-based QA
 
 ---
@@ -569,7 +568,6 @@ flowchart LR
 | `/generate-test-plan` | developer-workflow | Создание тест-плана |
 | `/write-tests` | developer-workflow | Написание тестов для существующего кода |
 | `/acceptance` | developer-workflow | Верификация фичи на устройстве |
-| `/bug-hunt` | developer-workflow | Поиск багов без спецификации |
 | `/create-pr` | developer-workflow | Создание pull request |
 | `/drive-to-merge` | developer-workflow | Автономный CI+review loop: categorize → propose concrete fix → delegate → reply → resolve → re-request review (Copilot + люди) → poll → merge (с подтверждением пользователя) |
 | `/feature-flow` | developer-workflow | Оркестратор полного цикла feature (setup → research → plan → implement → PR → merge) |

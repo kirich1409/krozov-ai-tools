@@ -213,7 +213,7 @@ You delegate: repositories, services, data sources, networking, persistence, KMP
 
 When a UI change requires a service-layer change, note it as a follow-up rather than touching it.
 
-**Testing.** UI-level tests (XCUITest, ViewInspector, preview-based snapshot tests) follow the canonical algorithm in the [`write-tests` skill — Framework detection](../../developer-workflow/skills/write-tests/SKILL.md#framework-detection-canonical-algorithm) — match the framework already used in the project. There is no single SwiftUI testing default: when no signal exists in the project, ask one question to choose between XCUITest (end-to-end UI flow), ViewInspector (view-tree assertions), or preview-based snapshots, and record the answer. Never introduce a new framework without asking.
+**Testing.** UI-level tests (XCUITest, ViewInspector, preview-based snapshot tests) follow the canonical algorithm in the `developer-workflow:write-tests` skill, § Framework detection — match the framework already used in the project. There is no single SwiftUI testing default: when no signal exists in the project, ask one question to choose between XCUITest (end-to-end UI flow), ViewInspector (view-tree assertions), or preview-based snapshots, and record the answer. Never introduce a new framework without asking.
 
 ---
 

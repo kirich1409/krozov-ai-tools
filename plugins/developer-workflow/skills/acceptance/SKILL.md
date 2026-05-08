@@ -12,13 +12,9 @@ disable-model-invocation: true
 
 # Acceptance
 
-Choreographer skill. Detects project type, confirms a verification source exists, fans out
-parallel checks to specialized agents, aggregates verdicts into one receipt. Acceptance
-executes a pre-existing verification contract — it does not invent checks. When no contract
-is available, it halts and proposes the correct upstream skill.
+Choreographer skill. Detects project type, confirms a verification source exists, fans out parallel checks to specialized agents, aggregates verdicts into one receipt. Acceptance executes a pre-existing verification contract — it does not invent checks. No contract → halt and propose the correct upstream skill.
 
-Procedural detail lives in reference files loaded only when the corresponding phase runs.
-SKILL.md stays the stable orchestration contract.
+Procedural detail lives in reference files loaded only when the corresponding phase runs. SKILL.md stays the stable orchestration contract.
 
 | File | Covers |
 |---|---|
@@ -100,101 +96,48 @@ loop. An explicit `N/A: <reason>` in the test-plan section skips this check.
 
 Fires only on `test_plan_source: absent`.
 
-### Proposal table
-
 | Situation | Proposal |
 |---|---|
-| No spec, no test plan (feature) | Run `/write-spec` (requirements doc) or `/generate-test-plan` (tests only), then re-run acceptance. |
-| Spec exists without acceptance criteria, no test plan, UI project | Run `/generate-test-plan` to produce executable TCs, or add acceptance criteria to the spec. |
-| Bugfix path with no reproduction notes | Capture root-cause + reproduction steps in `swarm-report/<slug>-debug.md` (plan-mode investigation), then re-run acceptance. |
-| Only `design.figma` in spec, no test plan, UI project | Design-only review possible via `ux-expert`; for functional acceptance also run `/generate-test-plan`. |
+| No spec, no test plan (feature) | Run `/write-spec` (requirements) or `/generate-test-plan` (tests only), then re-run. |
+| Spec without AC, no test plan, UI project | Run `/generate-test-plan` for executable TCs, or add AC to the spec. |
+| Bugfix without reproduction notes | Capture root cause + reproduction in `swarm-report/<slug>-debug.md` (plan-mode investigation), then re-run. |
+| Only `design.figma` in spec, no test plan, UI project | Design-only review via `ux-expert`; for functional acceptance also run `/generate-test-plan`. |
 
-### Options
+Options: (1) create the missing source via the proposed upstream skill, then re-run; (2) abort without a receipt.
 
-1. **Create the missing source** — invoke the proposed upstream skill, then re-run
-   acceptance.
-2. **Abort acceptance** — exit without a receipt; user re-invokes when ready.
+Exploratory QA without a scenario is performed by calling the `manual-tester` agent directly (see § Step 4b in `agents/manual-tester.md`) — never offered as a fallback inside acceptance.
 
-Exploratory QA without a scenario is the `bug-hunt` skill's responsibility. Do not offer
-it as a fallback inside acceptance.
-
-When acceptance is invoked after a structured upstream step (`write-spec`,
-`generate-test-plan`, captured `debug.md`), this gate rarely fires — those steps
-already produced a source. Standalone invocations are the main case.
+After a structured upstream step (`write-spec`, `generate-test-plan`, captured `debug.md`) this gate rarely fires; standalone invocations are the main case.
 
 ---
 
 ## Step 2: Persist E2E Scenario
 
-**Only relevant if `has_ui_surface == true` and a scenario source exists** (test plan,
-spec with AC, or `debug.md`). Re-anchoring against this file is enforced by
-`manual-tester` — acceptance writes it once here; re-reads during aggregation only.
+Only relevant when `has_ui_surface == true` and a scenario source exists (test plan, spec with AC, or `debug.md`). `manual-tester` enforces re-anchoring against this file; acceptance writes it here and re-reads during aggregation. Running-app environment (device, simulator, emulator, browser) is **owned by `manual-tester`** (its Step 0); this skill does not probe devices, run installs, or start dev servers.
 
-The running-app environment (device, simulator, emulator, browser) is **owned by
-`manual-tester` itself** — see its Step 0 Environment Setup. This skill does not probe
-devices, run `gradlew installDebug`, or start dev servers; it delegates that
-responsibility wholesale to the agent.
+Save to `swarm-report/<slug>-e2e-scenario.md` using the canonical template in `~/.claude/CLAUDE.md` § Context compaction resilience (E2E Scenario file). Add fields `Project type: <project_type>` and `Spec source: <what was used>` at the head.
 
-Save to `swarm-report/<slug>-e2e-scenario.md`:
-
-```markdown
-# E2E Scenario: <task name>
-Type: Feature / Bug fix
-Project type: <project_type>
-Spec source: <what was used>
-
-## Steps
-- [ ] 1. <concrete user action> → Expected: <result>
-- [ ] 2. <concrete user action> → Expected: <result>
-```
-
-For bug fixes, steps come from `debug.md` reproduction steps inverted:
-- Original: "Step X triggers the bug" → E2E: "Step X no longer triggers the bug".
-
-Compaction-resilience (enforced by `manual-tester`, not by this skill): checkbox marks
-survive compaction; completed steps (`[x]`) are not repeated; resume from the first
-incomplete step.
+Bug-fix-specific rule: steps come from `debug.md` reproduction inverted — "Step X triggers the bug" → "Step X no longer triggers the bug".
 
 ---
 
 ## Step 2.5: Dedup Probe
 
-Read `swarm-report/<slug>-quality.md` (an upstream code-quality receipt — written by
-any caller that ran a code-review pass on the current diff and chose to persist a
-`<slug>-quality.md` summary, so a follow-up acceptance can dedup that work). Three cases:
+Read `swarm-report/<slug>-quality.md` (an upstream code-quality receipt that lets follow-up acceptance dedup work). Three cases:
 
-- **`Status: PASS`**, receipt from the current branch head → `code-reviewer` is skipped.
-  Freshness is inferred from the receipt's `Date:` field vs the branch commit window; if
-  it cannot be confirmed, do **not** skip — run `code-reviewer` normally. On skip, write a
-  stub at `swarm-report/<slug>-acceptance-code.md` with `verdict: SKIPPED`,
-  `blocked_on: null`, one-line body referencing `<slug>-quality.md`.
-- **`Status: FAIL`** → upstream quality loop failed. Run `code-reviewer` anyway, surface
-  `blocked_on: quality-loop failed — see <slug>-quality.md` in the Step 4 Summary. The
-  aggregated Status is forced to `PARTIAL` at minimum (or `FAILED` if `code-reviewer`
-  itself returns `FAIL`).
-- **Receipt missing** → run `code-reviewer` normally. No skip.
+- **`Status: PASS`**, receipt from current branch head → skip `code-reviewer`. Freshness inferred from receipt `Date:` vs the branch commit window; if unconfirmable, do **not** skip. On skip, write a stub at `swarm-report/<slug>-acceptance-code.md` with `verdict: SKIPPED`, `blocked_on: null`, one-line body referencing `<slug>-quality.md`.
+- **`Status: FAIL`** → upstream quality loop failed. Run `code-reviewer` anyway; surface `blocked_on: quality-loop failed — see <slug>-quality.md` in Step 4 Summary. Aggregated Status is forced to `PARTIAL` minimum (or `FAILED` if `code-reviewer` itself returns FAIL).
+- **Receipt missing** → run `code-reviewer` normally.
 
-Note: `code-reviewer` skipping here is decoupled from the Re-verification Loop's
-`diff_hash` policy (see [`references/re-verification.md`](references/re-verification.md))
-— the dedup here is about "an upstream pass already ran code-review on this diff",
-whereas `diff_hash` idempotency is about "previous acceptance run covered this same diff".
+Decoupled from the Re-verification Loop `diff_hash` policy ([`references/re-verification.md`](references/re-verification.md)): dedup here is "upstream already ran code-review on this diff"; `diff_hash` idempotency is "previous acceptance run covered this same diff".
 
-This probe is synchronous — it decides the Step 3 fan-out composition and emits the stub
-before fan-out.
+Synchronous probe — decides Step 3 fan-out composition and emits the stub before fan-out.
 
 ---
 
 ## Step 2.6: Persist Fan-out State
 
-Before issuing the Step 3 fan-out — but **after** the full check plan has been finalized
-(Step 3 intro resolves base + all conditional triggers) — save the plan and
-compaction-resilient progress to `swarm-report/<slug>-acceptance-state.md`. Symmetric to
-`multiexpert-review`'s state file. This file carries the acceptance run across context
-compaction — it is never a receipt, just operational state.
-
-Step ordering: 2.5 dedup probe → Step 3 intro resolves conditional triggers → write the
-state file here (Step 2.6) with the complete `Planned Checks` list → Step 3 body
-dispatches the fan-out.
+Save fan-out plan and compaction-resilient progress to `swarm-report/<slug>-acceptance-state.md` — operational state, never a receipt. Step ordering: 2.5 dedup probe → Step 3 intro resolves conditional triggers → write state file with complete `Planned Checks` → Step 3 body dispatches the fan-out.
 
 ```markdown
 # Acceptance State: <slug>
@@ -212,11 +155,9 @@ Test-plan hash: <sha256 of permanent test plan, or null>
 - [ ] code (triggered by dedup miss)
 - [ ] ac-coverage (triggered by spec.acceptance_criteria_ids)
 - [ ] security (triggered by spec.risk_areas: [auth])
-- ...
 
 ## Completed Checks
 - [x] code — swarm-report/<slug>-acceptance-code.md — PASS
-- [x] build — swarm-report/<slug>-acceptance-build.md — PASS
 
 ## Aggregated Verdict History
 ### Cycle 1
@@ -226,27 +167,13 @@ Blockers: <copy from aggregated receipt>
 
 **Rules:**
 
-1. Create and populate the file only after the full check plan is finalized — base
-   fan-out plus all conditional triggers (spec-driven and diff-driven) — and before any
-   agent batch is spawned. The initial `Planned Checks` list must reflect that complete
-   plan.
-2. Before each major action (spawning an agent batch, aggregating, writing the final
-   receipt) — **re-read** the state file via Read tool. Completed checks (`[x]`) are not
-   re-spawned on resume after compaction.
-3. Mark each check `[x]` with the artifact path and verdict as soon as the per-check file
-   is written.
-4. On Re-verification Loop re-entry
-   ([`references/re-verification.md`](references/re-verification.md)), increment `Cycle`,
-   reset the `Planned Checks` list using the new diff/spec/test-plan hashes, move checks
-   to be skipped to a **`## Re-used from previous cycle`** section (with artifact
-   pointers), and append a new entry under `Aggregated Verdict History` when the cycle
-   completes.
-5. When `Status: done` is written, the state file becomes read-only operational history —
-   it is not deleted automatically.
+1. Populate only after the full check plan is finalized (base + all conditional triggers, spec- and diff-driven), before any agent batch spawns.
+2. Re-read before each major action (spawn batch, aggregate, write final receipt). Completed `[x]` checks are not re-spawned on resume after compaction.
+3. Mark each check `[x]` with artifact path and verdict as soon as the per-check file is written.
+4. On Re-verification Loop re-entry ([`references/re-verification.md`](references/re-verification.md)): increment `Cycle`, reset `Planned Checks` using new hashes, move skipped checks to a `## Re-used from previous cycle` section with artifact pointers, append new `Aggregated Verdict History` entry on cycle completion.
+5. `Status: done` makes the file read-only operational history (not deleted automatically).
 
-The state file and the e2e-scenario file (`<slug>-e2e-scenario.md`) are independent — the
-latter is `manual-tester`'s internal re-anchor, owned by the agent; the state file is
-acceptance's own fan-out cursor, owned by this skill.
+The state file and `<slug>-e2e-scenario.md` are independent — the latter is `manual-tester`'s internal re-anchor; the state file is acceptance's own fan-out cursor.
 
 ---
 
@@ -280,41 +207,25 @@ Triggers read either from spec frontmatter or directly from the diff.
 | diff touches any build file (`build.gradle*`, `settings.gradle*`, `pom.xml`, `package.json`, `Cargo.toml`, `go.mod`, `pyproject.toml`, `Makefile`) | `build-engineer` | Build config sanity — plugin versions, task wiring, dependency additions |
 | diff touches CI / release config (`.github/workflows/*`, `.gitlab-ci.yml`, `Dockerfile`, `docker-compose*`, `.circleci/config.yml`, `release.yml`) | `devops-expert` | Pipeline/release health, secret handling, rollout gates |
 
-**Diff-based trigger detection.** Two cached passes over the same diff:
+**Diff-based trigger detection.** Two cached passes:
 
-1. **Path pass** — run `git diff --name-only <base>...HEAD` once and cache the path set.
-   Use the cached set for all path-only rules (build files, CI/release config,
-   cross-module span).
-2. **Content pass (on demand)** — when the `architecture-expert` rule needs to decide
-   "diff touches a public API symbol", read the diff body once via
-   `git diff --unified=0 <base>...HEAD -- <cached-paths>` and cache it for the whole run.
-   Evaluate public-API heuristics against those patch hunks.
+1. **Path pass** — `git diff --name-only <base>...HEAD` once, cache the path set; used for all path-only rules (build files, CI/release config, cross-module span).
+2. **Content pass (on demand)** — when `architecture-expert` needs to decide "diff touches a public API symbol", read the diff body once via `git diff --unified=0 <base>...HEAD -- <cached-paths>` and cache for the whole run.
 
-Both caches live for the duration of the acceptance run — do not re-probe per agent.
+Both caches live for the duration of the acceptance run — never re-probe per agent.
 
 **Public API detection heuristic** for `architecture-expert`:
-- **Kotlin/Java**: changes under `src/main/` that add/remove/rename a `public` / `open`
-  symbol, or touch module-level files (`settings.gradle*`, `Module.kt`, `Dependencies.kt`).
-- **TypeScript/JavaScript**: changes to `export` / re-export lines, `index.ts` public
-  entrypoints, or `package.json` `"exports"` field.
-- **Swift**: changes to `public` / `open` declarations or `Package.swift`
-  `products` / `targets`.
-- **HTTP/RPC surface**: changes to files matching `**/routes/**`, `**/controllers/**`,
-  `**/handlers/**`, `**/api/**`, `*.proto`, `*.graphql`, `openapi.yaml`.
-- **Cross-module threshold**: `git diff --name-only` spans ≥ 3 top-level module
-  directories discovered from `settings.gradle*` / `package.json` workspaces /
-  `Cargo.toml` `[workspace]` members.
+- **Kotlin/Java**: changes under `src/main/` that add/remove/rename `public` / `open` symbols, or touch module-level files (`settings.gradle*`, `Module.kt`, `Dependencies.kt`).
+- **TypeScript/JavaScript**: changes to `export` / re-export lines, `index.ts` public entrypoints, or `package.json` `"exports"`.
+- **Swift**: `public` / `open` declarations or `Package.swift` `products` / `targets`.
+- **HTTP/RPC**: files matching `**/routes/**`, `**/controllers/**`, `**/handlers/**`, `**/api/**`, `*.proto`, `*.graphql`, `openapi.yaml`.
+- **Cross-module threshold**: `git diff --name-only` spans ≥ 3 top-level module directories from `settings.gradle*` / `package.json` workspaces / `Cargo.toml` `[workspace]`.
 
-If the heuristic is ambiguous, default to **not** spawning `architecture-expert` — a false
-negative is safer than a false positive (the skill exists to catch high-risk changes, not
-every diff).
+Ambiguous heuristic → default to **not** spawning `architecture-expert` (false negative is safer than false positive).
 
-When both design-review and a11y triggers fire, combine into one `ux-expert` invocation
-with mode `both`. When no trigger fires, acceptance runs the base plan only — preserving
-backward compatibility with specs written before iteration 2.
+Both design-review and a11y triggers firing → combine into one `ux-expert` invocation with mode `both`. No trigger fires → base plan only (backward compatible with pre-iteration-2 specs).
 
-**Future iterations** will add `visual-check` as a separate sibling skill (not a fan-out
-member) for pixel-level regression.
+**Future iterations** add `visual-check` as a separate sibling skill (not a fan-out member) for pixel-level regression.
 
 ### Per-check artifact schema (shared by all sub-checks)
 
@@ -334,64 +245,33 @@ blocked_on: <optional — what the user must resolve; also used when a planned p
 ---
 ```
 
-**`diff_hash` semantics.** Computed once per acceptance run from
-`git diff <base>...HEAD | sha256sum`; every check written during that run records the same
-value. The Re-verification Loop uses it to decide which checks to re-run (see
-[`references/re-verification.md`](references/re-verification.md)). Bash-only checks (build
-smoke) record the same hash because their input is the same diff. Checks whose verdict
-does not depend on the diff at all may write `diff_hash: null` — the Re-verification Loop
-never skips such a check purely on hash match.
+**`diff_hash` semantics.** Computed once per run from `git diff <base>...HEAD | sha256sum`; every check records the same value. Used by Re-verification Loop ([`references/re-verification.md`](references/re-verification.md)) to decide which checks to re-run. Bash-only checks (build smoke) record the same hash. Checks whose verdict does not depend on the diff may write `diff_hash: null` — Re-verification Loop never skips them purely on hash match.
 
-File naming is **one file per `check` value**: `swarm-report/<slug>-acceptance-<check>.md`
-(e.g. `-manual.md`, `-code.md`, `-design.md`, `-a11y.md`). When a single agent invocation
-covers multiple concerns (see `ux-expert` in subcheck-prompts.md), it writes separate
-files per concern to keep the one-file-per-check invariant intact.
+**File naming.** One file per `check` value: `swarm-report/<slug>-acceptance-<check>.md`. A single agent covering multiple concerns (e.g. `ux-expert`) writes separate files per concern.
 
-`severity`, `confidence`, `domain_relevance` are required when `verdict` is `WARN` or
-`FAIL`; null for `PASS` / `SKIPPED`. These drive the PoLL aggregation in Step 4.
+`severity`, `confidence`, `domain_relevance` are required when `verdict` is `WARN` or `FAIL`; null for `PASS` / `SKIPPED`. These drive the PoLL aggregation in Step 4.
 
 ### Per-agent prompt contracts
 
-Prompt contents, output paths, and verdict rules for every sub-check —
-`manual-tester` (3.1), `code-reviewer` (3.2), build smoke (3.3), `business-analyst` (3.4),
-`ux-expert` (3.5), `security-expert` (3.6), `performance-expert` (3.7),
-`architecture-expert` (3.8), `build-engineer` (3.9), `devops-expert` (3.10) — live in
-[`references/subcheck-prompts.md`](references/subcheck-prompts.md).
+Prompt contents, output paths, and verdict rules for every sub-check (3.1 `manual-tester`, 3.2 `code-reviewer`, 3.3 build smoke, 3.4 `business-analyst`, 3.5 `ux-expert`, 3.6 `security-expert`, 3.7 `performance-expert`, 3.8 `architecture-expert`, 3.9 `build-engineer`, 3.10 `devops-expert`) live in [`references/subcheck-prompts.md`](references/subcheck-prompts.md).
 
 ---
 
 ## Step 4: Aggregate and Write Receipt
 
-Apply the PoLL rules and the Aggregated Status table in
-[`references/aggregation.md`](references/aggregation.md) — same protocol as
-`multiexpert-review` but with per-check input shape. Read frontmatter of each per-check
-artifact first; read the body only if `verdict != PASS`. Missing per-check artifact →
-treat as `verdict: FAIL` with `blocked_on: per-check artifact missing`; never silently
-drop.
+Apply PoLL rules and the Aggregated Status table from [`references/aggregation.md`](references/aggregation.md) — same protocol as `multiexpert-review`, per-check input shape. Read frontmatter of each per-check artifact first; body only when `verdict != PASS`. Missing per-check artifact → `verdict: FAIL` with `blocked_on: per-check artifact missing`; never silently drop.
 
-Save the aggregated receipt at `swarm-report/<slug>-acceptance.md` using the receipt
-template in [`references/aggregation.md`](references/aggregation.md) §Receipt format.
-Routing for downstream orchestrators (VERIFIED / FAILED / PARTIAL branches) lives in the
-same reference §Routing.
+Save aggregated receipt at `swarm-report/<slug>-acceptance.md` using the template in `references/aggregation.md` §Receipt format. Downstream routing (VERIFIED / FAILED / PARTIAL) lives in the same reference §Routing.
 
-After saving the receipt, post a chat summary (≤20 lines):
+Post a chat summary after saving the receipt (≤20 lines):
 
-**VERIFIED:**
-- One sentence: "Acceptance: VERIFIED. N checks passed."
-- Bullets (max 3): which checks ran (code, build, manual-test, etc.), any that were skipped and why.
-- One line: "Next step: `/create-pr`" (or `/drive-to-merge` if PR already exists).
+**VERIFIED:** "Acceptance: VERIFIED. N checks passed." Bullets (max 3): which checks ran, any skipped and why. Next step: `/create-pr` (or `/drive-to-merge` if PR exists).
 
-**FAILED:**
-- One sentence: "Acceptance: FAILED. N check(s) failed."
-- Bullets (max 5): failed checks — one bullet per failure with check name + one-line description of what failed.
-- ONE question: ask if user wants to fix and re-run, or ship as-is accepting the risk.
+**FAILED:** "Acceptance: FAILED. N check(s) failed." Bullets (max 5): one failure per bullet with check name + one-line description. ONE question: fix and re-run, or ship as-is accepting risk.
 
-**PARTIAL:**
-- One sentence: "Acceptance: PARTIAL. N passed, M inconclusive."
-- Bullets: list inconclusive checks and why.
-- ONE question: proceed to PR or re-run inconclusive checks?
+**PARTIAL:** "Acceptance: PARTIAL. N passed, M inconclusive." Bullets: inconclusive checks and why. ONE question: proceed to PR or re-run inconclusive?
 
-Do NOT paste acceptance receipt tables into chat. The file is for audit trail only.
+Never paste receipt tables into chat — the file is the audit trail.
 
 ---
 
