@@ -1,0 +1,21 @@
+{
+  "skill_name": "research",
+  "evals": [
+    {
+      "id": "kmp-sync",
+      "name": "kmp-data-sync-with-user-blockers",
+      "prompt": "Research data sync approaches for our existing Kotlin Multiplatform app (Android + iOS). We have local-only storage (Room on Android, SwiftData on iOS), no sync today. Compare: SQLDelight with custom sync layer, Realm Atlas, Firebase Firestore, and a custom REST backend with conflict resolution. Constraint: must work offline-first.",
+      "expected_behavior": "After synthesis, skill must surface user-resolvable trade-offs (e.g. real-time vs eventual consistency, self-hosted vs managed, expected data size) via AskUserQuestion in chat. Final report under ./swarm-report/research/ must NOT contain any question directed at the user, no 'TBD — ask user' placeholders, and use 'Known Unknowns' (not 'Open Questions') only for external factual gaps.",
+      "assertions": [
+        {"text": "Final report file exists at ./swarm-report/research/research-<slug>.md"},
+        {"text": "Final report has no '## Open Questions' heading"},
+        {"text": "Final report has '## Known Unknowns' only if external factual gaps exist; otherwise omitted"},
+        {"text": "Final report contains no 'TBD — ask user' or '(ask user)' or 'needs user input' phrases"},
+        {"text": "Final report contains no rhetorical questions targeting the user (e.g. 'What is your preference for X?')"},
+        {"text": "Subagent surfaced at least one WOULD_ASK_USER entry covering a real user trade-off (proxy for AskUserQuestion invocation)"},
+        {"text": "Subagent did NOT write any user-directed question into any file under swarm-report/"}
+      ],
+      "files": []
+    }
+  ]
+}

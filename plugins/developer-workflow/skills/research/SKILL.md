@@ -20,6 +20,16 @@ A second, optional layer is the post-synthesis review: in product-angled topics 
 in purely technical topics the orchestrator runs a self-check against a fixed checklist
 (`tech-sanity` mode). The reviewer layer is a defense-in-depth, not the core value.
 
+**Communication policy — non-negotiable.** All clarification with the user happens in the
+chat session via the `AskUserQuestion` tool — never through files. The saved report under
+`./swarm-report/research/` is a **handoff artifact** consumed by downstream skills/agents
+(`/write-spec`, `/multiexpert-review`, Plan Mode, a future research re-run); the user does
+not have to open it to participate in the research. The in-chat summary at Phase 5.3 is what
+the user reads to make decisions. Every blocker the user can answer is resolved in dialogue
+**before** the report is written; the file is never a parking lot for pending questions,
+draft hedges, or "TBD — ask user" placeholders. If something needs the user's input, fire
+`AskUserQuestion` now — do not write it to disk and hope the user opens it.
+
 ---
 
 ## Phase 1: Scope the Research
@@ -50,14 +60,22 @@ something that adds signal.
 
 ### Clarifying questions (round-loop)
 
-Use plan-mode pacing for any clarification: **one question per round** in chat, wait for the answer, then re-evaluate. Multiple rounds are fine; multiple questions in one round are not. Each question must be the single most blocking ambiguity right now — not a checklist of mild curiosities. The dialogue stays in chat — questions and answers are not parked in any artifact.
+Use the `AskUserQuestion` tool for clarification — never plain prose that the user has to
+parse and answer in their own format, and never a written question parked in any file.
+`AskUserQuestion` with 2–4 concrete options surfaces the decision space and gives a
+machine-checkable answer; use free-text (the implicit "Other" option) only when the option
+space is genuinely open. **One question per round** still applies — fire `AskUserQuestion`
+with exactly one question, wait for the answer, fold it into the scope, then fire the next
+round only if a blocker still remains. Multiple rounds are fine; multiple questions in one
+round are not. Each question must be the single most blocking ambiguity right now — not a
+checklist of mild curiosities.
 
 When to ask:
 - **Scope is genuinely ambiguous** (multiple valid interpretations that lead to different expert tracks or different success criteria).
 - **A constraint is missing without which the redirect / consortium decision flips** (e.g. KMP-only vs Android-only changes which tracks are relevant).
 
 When NOT to ask:
-- Mild gaps the consortium can fill itself (let agents gather, surface gaps in Open Questions).
+- Mild gaps the consortium can fill itself (let agents gather, surface anything blocking later in Phase 5.1 dialogue).
 - Stylistic preferences that don't change the recommendation.
 - Anything the auto-review step (Phase 4) would catch.
 
@@ -198,11 +216,13 @@ Skip the table when one approach dominates on every dimension.
 ## Recommendation
 {Preferred approach with reasoning, citing specific expert findings.}
 
-## Open Questions
-- {Items the research itself cannot answer — user decisions, external SLA/cost data,
-  future-dated dependencies, etc. NOT a parking lot for clarifications already resolved
-  in dialogue, and NOT a queue of pending questions — those are handled in Phase 5.1 and
-  do not survive into the final report.}
+## Known Unknowns
+- {External factual gaps that no party in the chat session could resolve right now — e.g.
+  "vendor SLA pending contract renegotiation", "library Y v3 GA date TBD", "pricing not
+  publicly available". Each entry names what is unknown and who/when could resolve it.
+  Omit this section entirely if there are no such gaps. NEVER use this section to record
+  questions for the user — those are always resolved via `AskUserQuestion` in Phase 5.1
+  before the report is written.}
 
 ## Sources
 - {URLs, doc references, codebase locations}
@@ -251,7 +271,12 @@ Check:
 2. Any obvious alternatives missed?
 3. Do risks cover both technical and product concerns?
 4. Is the recommendation well-supported by evidence?
-5. Are open questions the right ones — nothing critical missing?
+5. Does the "Known Unknowns" section list only external factual gaps that no party in the
+   chat session could resolve right now (vendor SLA, unpublished pricing, future-dated
+   GA, etc.) — and contain NO questions directed at the user, NO "TBD — ask user"
+   placeholders, NO rhetorical asks? Any user-resolvable trade-off must have been
+   surfaced in Phase 5.1 chat dialogue via `AskUserQuestion` and folded into the
+   recommendation, not parked in the report.
 6. Does the recommendation align with practical constraints (time, team skills, maintenance)?
 
 List gaps with severity (critical / major / minor).
@@ -282,8 +307,12 @@ with the gather-agent prompts).
 
 - **No issues** → proceed to Phase 5
 - **Minor** → incorporate inline, note changes, proceed to Phase 5
-- **Major/critical, fillable** → re-run the relevant expert track, then re-review
-- **Major/critical, not fillable from research alone** → record in the synthesis as an Open Question (semantics defined in the report template — not a chat-time clarification)
+- **Major/critical, fillable from research** → re-run the relevant expert track, then re-review
+- **Major/critical, the user can resolve** → carry into Phase 5.1 and ask via
+  `AskUserQuestion` in chat; never pre-park the question in any file under `./swarm-report/`
+- **Major/critical, no party in the session can resolve right now** (e.g. pending vendor SLA,
+  unpublished pricing) → record under "Known Unknowns" in the final report as a factual gap,
+  not as a question for anyone
 
 The report is not saved at this phase; saving happens in Phase 5 after any user-blocking
 clarifications have been resolved in dialogue.
@@ -298,29 +327,36 @@ is on disk yet. This phase walks through three steps in order.
 ### 5.1 Clarification round-loop (dialogue)
 
 If the synthesis surfaces a question whose answer would materially change the recommendation
-or a key finding, ask it in chat — same plan-mode round-loop as Phase 1: **one question per
-round**, wait for the answer, fold it into the synthesis, then check if any blocker
-remains. Multiple rounds are fine; multiple questions in one round are not. Stop the
-moment no blocker remains.
+or a key finding, ask it in chat via the `AskUserQuestion` tool — 2–4 concrete options when
+the option space is enumerable, free-text "Other" otherwise. Same pacing as Phase 1: **one
+question per round**, wait for the answer, fold it into the synthesis, then check if any
+blocker remains. Stop the moment no blocker remains. Multiple rounds are fine; multiple
+questions in one round are not.
 
-The dialogue lives in chat. Internal temp files (state file, inter-phase buffers) may
-record that a clarification round is in progress via `Status: awaiting-clarification`,
-but the actual question text and the user's answer are not parked there — they belong to
-the chat session.
+The dialogue lives in chat. The state file may flip to `Status: awaiting-clarification` as
+process metadata, but the question text and the user's answer are never written to any file
+under `./swarm-report/`. Writing a question into a file and waiting for the user to open it
+is a violation of the communication policy — fire `AskUserQuestion` instead.
 
 What does **not** belong in the round-loop:
 - Stylistic preferences that don't change the recommendation.
 - Mild gaps the consortium could plausibly fill on a re-run (re-run instead).
-- Items unresolvable-by-research → land in the report's Open Questions (semantics in the
-  report template).
+- Items no party in the session can answer right now (pending vendor SLA, unpublished
+  pricing, future-dated dependency GA) → surface them in the report's "Known Unknowns"
+  section as factual gaps, not as questions for anyone.
 
 ### 5.2 Save the final report
 
 Once the loop exits, ensure `./swarm-report/research/` exists (`mkdir -p` it if needed —
 fresh repos won't have the nested subdir), then write `./swarm-report/research/research-<slug>.md`.
-The report is a finished deliverable, not a scratchpad — every section reflects the
-post-clarification synthesis, and Open Questions contains only the
-genuinely-not-resolvable-by-research items from above. Mark the state file `Status: done`.
+The report is a finished deliverable for downstream consumers (`/write-spec`,
+`/multiexpert-review`, Plan Mode, a future research re-run) — not a scratchpad and not a
+discussion vehicle with the user. Every section reflects the post-clarification synthesis;
+"Known Unknowns" holds only external factual gaps from above (and is omitted entirely when
+empty); no section contains a question, "TBD — ask user" marker, or any other hook that
+would force the user to open the file to make progress. If you catch yourself wanting to
+write such a hook, return to Phase 5.1 and fire `AskUserQuestion` instead. Mark the state
+file `Status: done`.
 
 ### 5.3 Chat summary
 
@@ -338,7 +374,7 @@ lets the user decide without opening the file:
 | Feature is clear, single task, ready to build | Plan mode + start implementing |
 | Complex approach, needs validation | Plan mode → `/multiexpert-review` |
 | Research revealed a bug, not a feature need | Plan mode for the fix |
-| Open Questions remain (by-design unresolvable by research) | Note them in the summary, suggest who/when can resolve |
+| Known Unknowns remain (external factual gaps no party in the session could resolve) | Surface them in the summary, suggest who/when could fill them |
 | Multiple viable approaches, no clear winner | Present trade-offs, ask user to pick |
 
 Frame as actionable proposal, not a question.
@@ -360,9 +396,9 @@ Stop and escalate when:
 
 | Artifact | Path | Purpose |
 |---|---|---|
-| Research report | `./swarm-report/research/research-<slug>.md` | Final synthesized findings |
+| Research report | `./swarm-report/research/research-<slug>.md` | Handoff artifact for downstream skills/agents (not a user-facing discussion vehicle) |
 | State file | `./swarm-report/research-<slug>-state.md` | Compaction-resilient progress tracking |
-| Chat summary | — | ≤30-line user-facing post-save output |
+| Chat summary | — | ≤30-line user-facing post-save output — the primary thing the user reads |
 
-The research report is the primary deliverable. The state file is operational and may be
-deleted after completion.
+The chat summary is what the user consumes; the research report is what the next skill
+or agent consumes. The state file is operational and may be deleted after completion.
