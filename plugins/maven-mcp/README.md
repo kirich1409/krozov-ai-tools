@@ -26,6 +26,8 @@ An MCP server registers tools that Claude can call during a conversation. The se
 |-------|-------------|
 | `/latest-version <groupId:artifactId>` | Find latest version of a Maven artifact |
 | `/check-deps` | Scan project for outdated dependencies and update them |
+| `/check-deps-vulnerabilities` | Scan project dependencies for known CVEs/GHSA via OSV (includes Gradle/Maven submodules) |
+| `/dependency-changes` | Show release notes/changelog between two versions of a Maven/Gradle dependency |
 
 ### Supported build systems
 

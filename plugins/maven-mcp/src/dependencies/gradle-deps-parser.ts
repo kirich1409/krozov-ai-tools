@@ -7,13 +7,16 @@ export interface GradleDependency {
   catalogRef?: string;
 }
 
-const CONFIGURATIONS = [
+export const PRODUCTION_CONFIGURATIONS = [
   "implementation", "api", "compileOnly", "runtimeOnly",
+] as const;
+
+export const NON_PRODUCTION_CONFIGURATIONS = [
   "testImplementation", "testCompileOnly", "testRuntimeOnly",
   "kapt", "ksp", "annotationProcessor",
-];
+] as const;
 
-const CONFIG_PATTERN = CONFIGURATIONS.join("|");
+const CONFIG_PATTERN = [...PRODUCTION_CONFIGURATIONS, ...NON_PRODUCTION_CONFIGURATIONS].join("|");
 
 export function parseGradleDependencies(content: string, source: string = "build.gradle.kts"): GradleDependency[] {
   const deps: GradleDependency[] = [];

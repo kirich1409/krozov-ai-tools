@@ -29,6 +29,22 @@ function mockGradleProject(content: string) {
   mockedFs.readFileSync.mockReturnValue(content);
 }
 
+// Mock fs for multi-module fixtures: files keyed by absolute path → content.
+// existsSync returns true iff the path exists in the map; readFileSync returns
+// the matching content or throws (mirrors real node:fs behavior).
+function mockFileSystem(files: Record<string, string>) {
+  mockedFs.existsSync.mockImplementation((p: fs.PathLike) =>
+    Object.prototype.hasOwnProperty.call(files, p.toString()),
+  );
+  mockedFs.readFileSync.mockImplementation((p: fs.PathOrFileDescriptor) => {
+    const key = p.toString();
+    if (!Object.prototype.hasOwnProperty.call(files, key)) {
+      throw new Error(`ENOENT: no such file '${key}'`);
+    }
+    return files[key];
+  });
+}
+
 describe("auditProjectDependenciesHandler", () => {
   beforeEach(() => vi.clearAllMocks());
 
@@ -139,6 +155,7 @@ dependencies {
     const result = await auditProjectDependenciesHandler(repos, {
       projectPath: "/project",
       includeVulnerabilities: false,
+      productionOnly: false,
     });
 
     expect(result.dependencies).toHaveLength(2);
@@ -172,6 +189,7 @@ dependencies {
     const result = await auditProjectDependenciesHandler(repos, {
       projectPath: "/project",
       includeVulnerabilities: true,
+      productionOnly: false,
     });
 
     // Only one OSV query should be made (deduplicated)
@@ -183,6 +201,127 @@ dependencies {
     expect(result.dependencies[1].vulnerabilities).toHaveLength(1);
     expect(result.dependencies[1].vulnerabilities![0].id).toBe("GHSA-5678");
     expect(result.summary.vulnerable).toBe(2);
+  });
+
+  it("excludes testImplementation/kapt/ksp when productionOnly is true (default)", async () => {
+    mockGradleProject(`
+dependencies {
+    implementation("io.ktor:ktor-client-core:3.0.0")
+    testImplementation("junit:junit:4.13")
+    kapt("com.google.dagger:dagger-compiler:2.50")
+    ksp("androidx.room:room-compiler:2.6.0")
+}`);
+
+    const repos = [mockRepo(["3.0.0", "3.1.1"])];
+    const result = await auditProjectDependenciesHandler(repos, {
+      projectPath: "/project",
+      includeVulnerabilities: false,
+    });
+
+    expect(result.dependencies).toHaveLength(1);
+    expect(result.dependencies[0].artifactId).toBe("ktor-client-core");
+  });
+
+  it("includes test configurations when productionOnly is false", async () => {
+    mockGradleProject(`
+dependencies {
+    implementation("io.ktor:ktor-client-core:3.0.0")
+    testImplementation("junit:junit:4.13")
+    kapt("com.google.dagger:dagger-compiler:2.50")
+}`);
+
+    const repos = [mockRepo(["3.0.0", "3.1.1"])];
+    const result = await auditProjectDependenciesHandler(repos, {
+      projectPath: "/project",
+      includeVulnerabilities: false,
+      productionOnly: false,
+    });
+
+    expect(result.dependencies).toHaveLength(3);
+    const artifacts = result.dependencies.map((d) => d.artifactId).sort();
+    expect(artifacts).toEqual(["dagger-compiler", "junit", "ktor-client-core"]);
+  });
+
+  it("scans Gradle multi-module project with :app and :lib", async () => {
+    mockFileSystem({
+      "/project/settings.gradle.kts": `include(":app", ":lib")`,
+      "/project/app/build.gradle.kts": `implementation("io.ktor:ktor-client-core:3.0.0")`,
+      "/project/lib/build.gradle.kts": `api("io.ktor:ktor-client-core:3.1.0")`,
+    });
+
+    const repos = [mockRepo(["3.0.0", "3.1.0", "3.1.1"])];
+    const result = await auditProjectDependenciesHandler(repos, {
+      projectPath: "/project",
+      includeVulnerabilities: false,
+    });
+
+    expect(result.buildSystem).toBe("gradle");
+    expect(result.dependencies).toHaveLength(2);
+    const byModule = Object.fromEntries(
+      result.dependencies.map((d) => [d.module, d.currentVersion]),
+    );
+    expect(byModule).toEqual({ ":app": "3.0.0", ":lib": "3.1.0" });
+  });
+
+  it("scans Maven multi-module project with two <module> entries", async () => {
+    mockFileSystem({
+      "/project/pom.xml": `
+<project>
+  <modules>
+    <module>core</module>
+    <module>app</module>
+  </modules>
+</project>`,
+      "/project/core/pom.xml": `
+<project>
+  <dependencies>
+    <dependency>
+      <groupId>io.ktor</groupId>
+      <artifactId>ktor-client-core</artifactId>
+      <version>3.0.0</version>
+    </dependency>
+  </dependencies>
+</project>`,
+      "/project/app/pom.xml": `
+<project>
+  <dependencies>
+    <dependency>
+      <groupId>io.ktor</groupId>
+      <artifactId>ktor-client-core</artifactId>
+      <version>3.1.0</version>
+    </dependency>
+  </dependencies>
+</project>`,
+    });
+
+    const repos = [mockRepo(["3.0.0", "3.1.0", "3.1.1"])];
+    const result = await auditProjectDependenciesHandler(repos, {
+      projectPath: "/project",
+      includeVulnerabilities: false,
+    });
+
+    expect(result.buildSystem).toBe("maven");
+    expect(result.dependencies).toHaveLength(2);
+    const byModule = Object.fromEntries(
+      result.dependencies.map((d) => [d.module, d.currentVersion]),
+    );
+    expect(byModule).toEqual({ core: "3.0.0", app: "3.1.0" });
+  });
+
+  it("propagates module field through audit output", async () => {
+    mockFileSystem({
+      "/project/settings.gradle.kts": `include(":app")`,
+      "/project/app/build.gradle.kts": `implementation("io.ktor:ktor-client-core:3.0.0")`,
+    });
+
+    const repos = [mockRepo(["3.0.0", "3.1.1"])];
+    const result = await auditProjectDependenciesHandler(repos, {
+      projectPath: "/project",
+      includeVulnerabilities: false,
+    });
+
+    expect(result.dependencies).toHaveLength(1);
+    expect(result.dependencies[0].module).toBe(":app");
   });
 
   it("assigns different vulns to correct versioned entries for same GA", async () => {
@@ -216,6 +355,7 @@ dependencies {
     const result = await auditProjectDependenciesHandler(repos, {
       projectPath: "/project",
       includeVulnerabilities: true,
+      productionOnly: false,
     });
 
     expect(mockFetch).toHaveBeenCalledTimes(1);

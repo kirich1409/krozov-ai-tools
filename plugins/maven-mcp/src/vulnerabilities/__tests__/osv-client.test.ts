@@ -72,4 +72,85 @@ describe("queryOsvBatch", () => {
     expect(results).toHaveLength(1);
     expect(results[0].vulnerabilities).toHaveLength(0);
   });
+
+  it("normalizes MODERATE severity to MEDIUM", async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: () => Promise.resolve({
+        results: [{
+          vulns: [{
+            id: "GHSA-mod-erat-eeee",
+            summary: "moderate severity",
+            database_specific: { severity: "MODERATE" },
+            affected: [],
+            references: [],
+          }],
+        }],
+      }),
+    });
+
+    const results = await queryOsvBatch([
+      { groupId: "com.example", artifactId: "lib", version: "1.0.0" },
+    ]);
+
+    expect(results[0].vulnerabilities).toHaveLength(1);
+    expect(results[0].vulnerabilities[0].severity).toBe("MEDIUM");
+  });
+
+  it("rejects unknown severity strings", async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: () => Promise.resolve({
+        results: [{
+          vulns: [{
+            id: "GHSA-unkn-own1",
+            summary: "unknown severity",
+            database_specific: { severity: "BOGUS" },
+            affected: [],
+            references: [],
+          }],
+        }],
+      }),
+    });
+
+    const results = await queryOsvBatch([
+      { groupId: "com.example", artifactId: "lib", version: "1.0.0" },
+    ]);
+
+    expect(results[0].vulnerabilities[0].severity).toBeUndefined();
+  });
+
+  it("filters out withdrawn vulnerabilities before mapping", async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: () => Promise.resolve({
+        results: [{
+          vulns: [
+            {
+              id: "GHSA-active-active",
+              summary: "active",
+              database_specific: { severity: "HIGH" },
+              affected: [],
+              references: [],
+            },
+            {
+              id: "GHSA-with-drawn",
+              summary: "withdrawn",
+              database_specific: { severity: "CRITICAL" },
+              withdrawn: "2024-01-01T00:00:00Z",
+              affected: [],
+              references: [],
+            },
+          ],
+        }],
+      }),
+    });
+
+    const results = await queryOsvBatch([
+      { groupId: "com.example", artifactId: "lib", version: "1.0.0" },
+    ]);
+
+    expect(results[0].vulnerabilities).toHaveLength(1);
+    expect(results[0].vulnerabilities[0].id).toBe("GHSA-active-active");
+  });
 });

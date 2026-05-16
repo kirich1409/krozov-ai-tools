@@ -169,10 +169,11 @@ server.tool(
 
 server.tool(
   "audit_project_dependencies",
-  "Full project dependency audit: scans build files, compares versions against latest, checks for vulnerabilities. One-stop tool for dependency health check.",
+  "Full project dependency audit: scans build files (including Gradle/Maven submodules), compares versions against latest, checks for vulnerabilities. One-stop tool for dependency health check.",
   {
     projectPath: z.string().optional().describe("Path to project root (default: auto-detect)"),
     includeVulnerabilities: z.boolean().optional().describe("Check for CVEs via OSV (default: true)"),
+    productionOnly: z.boolean().optional().describe("Exclude test/build configurations (default: true)"),
   },
   async (params) => {
     const result = await auditProjectDependenciesHandler(getRepositories(), params);

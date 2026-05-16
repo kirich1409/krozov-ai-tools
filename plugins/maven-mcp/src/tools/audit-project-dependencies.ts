@@ -1,7 +1,9 @@
 import type { MavenRepository } from "../maven/repository.js";
 import type { MavenMetadata } from "../maven/types.js";
 import type { UpgradeType } from "../version/types.js";
-import { scanDependencies } from "../dependencies/scan.js";
+import { scanProjectWithSubmodules } from "../dependencies/scan.js";
+import type { ScanResult } from "../dependencies/scan.js";
+import { PRODUCTION_CONFIGURATIONS } from "../dependencies/gradle-deps-parser.js";
 import { findProjectRoot } from "../project/find-project-root.js";
 import { resolveAll } from "../maven/resolver.js";
 import { findLatestVersionForCurrent } from "../version/classify.js";
@@ -11,7 +13,11 @@ import { queryOsvBatch } from "../vulnerabilities/osv-client.js";
 export interface AuditInput {
   projectPath?: string;
   includeVulnerabilities?: boolean;
+  productionOnly?: boolean;
 }
+
+// CVEs in test / kapt / ksp / annotationProcessor are not deployed risks — exclude by default.
+const PRODUCTION_CONFIGS = new Set<string>(PRODUCTION_CONFIGURATIONS);
 
 export interface AuditDependency {
   groupId: string;
@@ -20,10 +26,14 @@ export interface AuditDependency {
   latestVersion?: string;
   upgradeType?: UpgradeType;
   vulnerabilities?: { id: string; severity?: string; fixedVersion?: string }[];
+  // Submodule label: ":foo" / ":foo:bar" for Gradle, "foo" / "foo/sub" for Maven,
+  // undefined for the root project. The two formats differ by design (Gradle paths are
+  // colon-separated by spec); consumers must handle both shapes.
+  module?: string;
 }
 
 export interface AuditResult {
-  buildSystem: ReturnType<typeof scanDependencies>["buildSystem"];
+  buildSystem: ScanResult["buildSystem"];
   dependencies: AuditDependency[];
   summary: {
     total: number;
@@ -40,13 +50,18 @@ export async function auditProjectDependenciesHandler(
   input: AuditInput,
 ): Promise<AuditResult> {
   const projectRoot = input.projectPath ?? findProjectRoot(process.cwd()) ?? process.cwd();
-  const scan = scanDependencies(projectRoot);
+  const scan = scanProjectWithSubmodules(projectRoot);
   const includeVulns = input.includeVulnerabilities !== false;
+  const productionOnly = input.productionOnly !== false;
+
+  const filteredScanDeps = productionOnly
+    ? scan.dependencies.filter((d) => PRODUCTION_CONFIGS.has(d.configuration))
+    : scan.dependencies;
 
   const auditDeps: AuditDependency[] = [];
 
-  const depsWithVersion = scan.dependencies.filter((d) => d.version !== null);
-  const depsWithoutVersion = scan.dependencies.filter((d) => d.version === null);
+  const depsWithVersion = filteredScanDeps.filter((d) => d.version !== null);
+  const depsWithoutVersion = filteredScanDeps.filter((d) => d.version === null);
 
   // Memoize resolveAll per GA to avoid redundant metadata fetches for duplicate deps
   const metadataCache = new Map<string, Promise<MavenMetadata>>();
@@ -75,11 +90,12 @@ export async function auditProjectDependenciesHandler(
       currentVersion: dep.version!,
       latestVersion: latest,
       upgradeType,
+      module: dep.module,
     });
   }
 
   for (const dep of depsWithoutVersion) {
-    auditDeps.push({ groupId: dep.groupId, artifactId: dep.artifactId });
+    auditDeps.push({ groupId: dep.groupId, artifactId: dep.artifactId, module: dep.module });
   }
 
   // Vulnerability check — deduplicate OSV queries by GAV, then map results back
