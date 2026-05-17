@@ -316,7 +316,13 @@ Date: <YYYY-MM-DD>
 
 ## `<slug>-cleanup-checklist.md`
 
-See `references/cleanup.md` — the template at the end is canonical.
+The cleanup checklist template is in `references/cleanup.md`. The Status column uses three states only: **done**, **N/A** (with reason in Notes), or **deferred: YYYY-MM-DD** (with tracker link in Notes). Example rows:
+
+```markdown
+| 1 | No FROM imports outside :legacy:* | done | grep clean |
+| 9 | APK/AAB size reduced | N/A | library-only migration, no APK build |
+| 6 | Lint baseline / Konsist updated | deferred: 2026-08-01 | lint rules shared with another active migration — JIRA-4521 |
+```
 
 ---
 

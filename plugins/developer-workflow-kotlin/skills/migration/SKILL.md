@@ -112,15 +112,13 @@ After approval, the document becomes immutable. Any later change in scope or app
 
 Execute the migration according to the strategy. The four approaches differ in mechanics but share the same hand-off pattern: this skill produces a brief; an engineer agent (`developer-workflow-kotlin:kotlin-engineer` or `developer-workflow-kotlin:compose-developer` depending on layer) writes the code; the main session reviews.
 
-**Branch by Abstraction.** Introduce the abstraction first, route all use-sites through it (system still runs on the old impl), build the new impl, switch incrementally, then remove the old impl. The interface is the boundary; tests cover the boundary.
+**Branch by Abstraction.** Introduce a shared interface, route all use-sites through it, build the new implementation behind it, then switch and remove the old. See `references/approaches.md` for mechanics, trade-offs, and ordering.
 
-**Strangler Fig vertical slice.** Migrate one self-contained slice (screen, module, feature) end-to-end on the new stack. Other slices keep using the old stack. Coexistence via interop (ComposeView/AndroidView for UI, Dagger/Metro interop for DI). No long-lived hybrid screens.
+**Strangler Fig vertical slice.** Migrate one self-contained slice end-to-end on the new stack while the rest of the system continues on the old stack via interop. See `references/approaches.md` for mechanics, trade-offs, and ordering.
 
-**Duplicate-then-delete.** Copy the file/class/module under a new name or in a new package, freeze the original, migrate the copy, switch routing (feature flag, navigation, build variant), then delete the original. The simplest rollback mechanism — delete the copy.
+**Duplicate-then-delete.** Copy the file/class/module, freeze the original, migrate the copy, switch routing, then delete the original. See `references/approaches.md` for mechanics, trade-offs, and ordering.
 
-**Utility refactor.** Enable the new technology alongside the old (`viewBinding = true` next to `dataBinding = true`), convert use-sites in batches (manually or via IntelliJ plugin / scripted codemod), then remove the old flag. The compiler is the safety net.
-
-For full mechanics, trade-offs, and "when which" — see `references/approaches.md`.
+**Utility refactor.** Enable the new technology alongside the old, convert use-sites in batches, then remove the old flag — the compiler is the safety net. See `references/approaches.md` for mechanics, trade-offs, and ordering.
 
 Delegate the actual implementation work. The main session orchestrates, agents implement. See `~/.claude/rules/orchestration.md` for the routing matrix.
 
@@ -148,18 +146,7 @@ For Android device automation, an agent-oriented Android CLI (such as Google's `
 
 Remove the FROM technology fully. Until this phase completes, the migration is not done — coexistence is technical debt, not a milestone.
 
-Use the universal checklist in `references/cleanup.md`. Walk it top to bottom for the specific migration:
-
-1. No imports of the FROM technology remain outside explicitly-frozen `:legacy:*` modules.
-2. `libs.versions.toml` no longer references the FROM technology version.
-3. `build.gradle*` plugin declarations removed (`kotlin("kapt")` if no other processors remain, `dataBinding = true`, etc.).
-4. Bridge / adapter / interop layers removed or registered as long-term public API with an ADR.
-5. Generated-code directories no longer populate for FROM.
-6. Lint baseline / Konsist rules for the migration removed or updated.
-7. Documentation (`CLAUDE.md`, ADRs, onboarding) updated.
-8. CI passes without legacy-related warnings.
-9. APK/AAB size reduced (Android only — sanity check that the dependency really left).
-10. Release notes list any intentional behavioral changes from Phase 4.
+Walk the ten-item checklist in `references/cleanup.md` top to bottom; each item ends in done / N/A with reason / deferred with sunset date and tracker link.
 
 Cleanup uses an engineer agent for code edits; review the deletions with `developer-workflow-experts:architecture-expert` if the migration was horizontal (DI, async, build) — these have the highest risk of leaving invisible coupling.
 
@@ -181,16 +168,7 @@ Optionally request a `developer-workflow-experts:code-reviewer` pass on the clea
 
 ---
 
-## Approach selection — quick reference
-
-| Migration class | Default approach | Why |
-|---|---|---|
-| Horizontal: DI, async runtime, build plugin | Branch by Abstraction | Global contract; copies cannot coexist |
-| Vertical: UI screen, feature module | Strangler Fig + Duplicate-then-delete | Self-contained; common abstraction is artificial |
-| Self-contained utility, single class | Duplicate-then-delete | Cheapest rollback, no abstraction overhead |
-| Idiom swap (Databinding → ViewBinding, KAPT → KSP, kotlin-android-extensions removal) | Utility refactor | Compiler enforces parity; full BBA is overkill |
-
-Full decision tree, mechanics, and trade-offs are in `references/approaches.md`. Consult it before locking in Phase 4.
+See `references/approaches.md` for the decision tree.
 
 ---
 

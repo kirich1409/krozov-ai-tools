@@ -2,18 +2,6 @@
 
 Four approaches to migrating from one technology to another, with the criteria that select between them and the mechanics of each. Consult this document during Phase 4 (Strategy) — the choice of approach is the most consequential decision of the entire migration.
 
-## Table of contents
-
-- Decision tree
-- Approach 1: Branch by Abstraction
-- Approach 2: Strangler Fig (vertical slice)
-- Approach 3: Duplicate-then-delete
-- Approach 4: Utility refactor
-- Side-by-side comparison
-- Common FROM/TO pairs and where to find authoritative docs
-
----
-
 ## Decision tree
 
 Use this order of questions to pick an approach. Stop at the first match.
