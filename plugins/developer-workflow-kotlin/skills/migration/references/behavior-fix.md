@@ -1,7 +1,5 @@
 # Behavior-Fix — three planes
 
-Phase 3 fixes current FROM behavior across three independent planes. Each plane catches what the others miss. The investment per plane is calibrated to migration risk — over-investing wastes effort, under-investing lets regressions through.
-
 ## Why three planes
 
 A single test pyramid (Plane A) is not enough for migrations:
@@ -20,7 +18,7 @@ The three planes work together: Plane A is the regression sentinel in CI, Plane 
 
 **Sub-types.**
 
-- **Characterization tests** (Feathers, *Working Effectively with Legacy Code*, ch. 13). Run the FROM implementation against typical inputs, record actual outputs, assert against the recording. The test is the specification — it documents what the code *does*, not what it *should* do. Strangenesses (bugs-as-features) become visible as `expected = "weird value"`.
+- **Characterization tests.** Record what the FROM implementation actually does, then assert against that recording — bugs-as-features included. See `developer-workflow-kotlin:snapshot` for the canonical characterization-test methodology; apply it here to the FROM-stack targets.
 - **Contract tests.** Tests on an interface that run against both `OldImpl` and `NewImpl` (parameterized matrix). Idiomatic for Branch by Abstraction.
 - **Integration tests.** Wire components and run end-to-end against the test harness (Robolectric, JVM in-memory DB, fake network). Cover DI graph assembly, serialization round-trip, repository → use-case wiring.
 - **Golden snapshots.** UI screenshot tests (Paparazzi, Roborazzi) for visual parity. Stored alongside the test; CI fails on diff.
@@ -40,27 +38,19 @@ The three planes work together: Plane A is the regression sentinel in CI, Plane 
 
 **Format.** Prose test cases in `<slug>-test-cases.md`, each with steps and expected outcome. Numbered: TC-1, TC-2, … . One test case per behavior, not per UI element.
 
-**Template:**
+**Template fields:**
 
 ```markdown
-# Test Cases: <slug>
-
-## TC-1: <short title>
-**Preconditions:** <state before the test>
-**Steps:**
-1. <action>
-2. <action>
-**Expected:** <observable outcome>
-**Priority:** P0 / P1 / P2 / P3 (P0 = release-critical, P3 = edge case)
+**Preconditions:** ...
+**Priority:** P0 / P1 / P2 / P3
+**Steps:** ...
+**Expected:** ...
 **Verification source:** Plane A test name (if any), or "manual only".
 ```
 
-**Priority framework** (matches `~/.claude/rules/qa-and-testing.md`):
+See `references/artifacts.md` for a fill-in template with worked examples.
 
-- **P0** — release-critical. Failure blocks release. Crashes, data loss, security, payment, auth.
-- **P1** — acceptance-criteria driven. Each "given X then Y" from the migration scope maps to one TC.
-- **P2** — happy path. The single most common successful flow per surface.
-- **P3** — edges. Boundary values, empty inputs, locale, timezone, large inputs.
+**Priority framework:** P0–P3 as defined in `~/.claude/rules/qa-and-testing.md § 2`. Do not redefine here.
 
 **Investment cost.** Low to medium. Writing 20–40 test cases for one migration takes a few hours; reading and running them takes much less than writing them.
 
@@ -89,21 +79,7 @@ The three planes work together: Plane A is the regression sentinel in CI, Plane 
 - **Process death** — kill app, return — state restoration.
 - **Permissions** — grant/revoke each runtime permission; verify graceful handling.
 
-**Template:**
-
-```markdown
-# Manual Scenarios: <slug>
-
-## MS-1: Accessibility
-- TalkBack on login screen: focus order should be email → password → login button → forgot password link.
-- Each control announces its label and state.
-- Decorative icons are excluded from focus.
-
-## MS-2: RTL
-- Switch device to Arabic.
-- Login screen: form fields right-aligned, navigation icons flipped.
-- Forgot-password link wraps correctly.
-```
+See `references/artifacts.md` for the Manual Scenarios template (MS-1..MS-5 worked examples).
 
 **Investment cost.** Low for the document; the cost is the time spent walking through during Phase 6.
 
