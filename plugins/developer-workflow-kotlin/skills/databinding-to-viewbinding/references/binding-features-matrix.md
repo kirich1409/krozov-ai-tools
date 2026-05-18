@@ -53,12 +53,12 @@ binding, any `Observable*`-typed variable, a `<ViewStub>`, a `<merge>` root layo
 | `<ViewStub>` | escalate | DataBinding's `OnInflateListener` integration has no ViewBinding equivalent; manual `setOnInflateListener` + typed binding access required | escalation-patterns.md §viewstub |
 | `<import>` declarations | mechanical | Consumed during expression resolution; no emission into host code | expression-resolution.md §static_ref |
 | `<variable>` declarations | — | Not a property-map row; feeds `<slug>-variables-map.md` and informs lifecycle and escalation strategy | property-map-spec.md §variables-map |
-| `@BindingMethods` / `@BindingConversion` | depends | If resolved adapter and conversion are both mechanical → mechanical; if conversion chain is ambiguous or type mismatch → escalate | adapter-resolution.md §BindingConversion |
-| `BR` class references in host code (`binding.setVariable(BR.user, user)`, `notifyPropertyChanged(BR.x)`) | partial | `BR` disappears with DataBinding; see `escalation-patterns.md` Recipe 7 (`BR` class references) for the decision recipe | escalation-patterns.md §BR-refs |
+| `@BindingMethods` / `@BindingConversion` | partial | Bucket confirmed during Discovery based on adapter chain result: if resolved adapter and conversion are both mechanical → mechanical; if conversion chain is ambiguous or type mismatch → escalate | adapter-resolution.md §BindingConversion |
+| `BR` class references in host code (`binding.setVariable(BR.user, user)`, `notifyPropertyChanged(BR.x)`) | partial | `BR` disappears with DataBinding; see `escalation-patterns.md §BR references` for the decision recipe | escalation-patterns.md §BR references |
 | `executePendingBindings()` calls | mechanical | Remove the call; ViewBinding has no pending-binding queue | mechanical-transforms.md §pending-bindings |
 | `lifecycleOwner = viewLifecycleOwner` on the binding object | mechanical | Remove the line; if a `LiveData` row on the same screen is `partial`, lifecycle wiring is owned by that row | mechanical-transforms.md §lifecycle-owner |
 | `DataBindingUtil.setContentView` / `DataBindingUtil.inflate` / `DataBindingUtil.bind` | mechanical | Replace with `XxxBinding.inflate(layoutInflater)` + `setContentView(binding.root)` for Activity; Fragment / ViewHolder variants per `mechanical-transforms.md` | mechanical-transforms.md §inflate |
-| Project-local `@BindingAdapter` with all its callsites migrated — post-migration cleanup | depends | Cleanup bucket follows the disposal option chosen (keep / delete / extract to util / convert to extension / move to separate module); see adapter disposal matrix | escalation-patterns.md §adapter-cleanup |
+| Project-local `@BindingAdapter` with all its callsites migrated — post-migration cleanup | partial | Bucket confirmed during Discovery based on disposal option chosen (keep / delete / extract to util / convert to extension / move to separate module); see adapter disposal matrix | escalation-patterns.md §Adapter cleanup |
 
 ## Reading the table during Discovery
 

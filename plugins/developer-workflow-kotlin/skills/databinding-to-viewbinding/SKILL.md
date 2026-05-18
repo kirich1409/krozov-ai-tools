@@ -121,7 +121,7 @@ The single mandatory blocking step. The skill presents the following summary to 
 
 - Total binding count and layout count in scope.
 - Count per bucket: `mechanical` / `partial` / `escalate`.
-- Count per `adapter_origin` (project-local, monorepo, binary-library, unresolved).
+- Count per `adapter_origin` (project-local, monorepo, binary-library, implicit-setter, unresolved).
 - Full list of every `escalate` row — layout, attribute, and a one-line recipe pointer
   referencing `references/escalation-patterns.md` (e.g., `two-way §EditText.text`,
   `observable-decommission §ObservableField<T>`, `unresolved-adapter §my:customAttr`).
@@ -145,7 +145,7 @@ Cross-reference: `references/property-map-spec.md` §USER-GATE-handoff.
 
 ## Phase 4 — Conversion (per screen)
 
-For each in-scope layout, in order:
+For each in-scope layout, in order. Steps 2–4 describe per-row bucket handling; steps 5–6 describe layout-wide and host-class transforms; they execute concurrently per screen, not sequentially.
 
 1. The `developer-workflow-kotlin:kotlin-engineer` agent (sonnet) receives a brief naming the
    layout file, the relevant rows from `<slug>-property-map.md` and `<slug>-variables-map.md`,
@@ -166,9 +166,11 @@ For each in-scope layout, in order:
 4. **`escalate` rows.** The engineer stops on that row and emits the recipe context per
    `references/escalation-patterns.md` (recipe name, options, trade-offs). The user picks the
    recipe — or asks Claude to pick based on visible project convention — before any code is
-   written for that row. Escalation recipes include: `two-way`, `two-way-inverse`, `LiveData
-   wiring`, `Observable decommission`, `ViewStub`, `<merge>`, `BR references`, `ambiguous
-   overload`, `unresolved adapter`, `multi-method listener`, `adapter cleanup`.
+   written for that row. Escalation recipes include: `two-way`, `two-way-inverse`,
+   `Observable decommission`, `ViewStub`, `<merge>`, `BR references`, `ambiguous overload`,
+   `unresolved adapter`, `multi-method listener`, `adapter cleanup`. (`LiveData wiring` is
+   `partial`, not escalate — `escalation-patterns.md §LiveData wiring` carries the replacement
+   scaffold and is not blocked.)
 
 5. **XML transforms.** Per `references/mechanical-transforms.md` §XML. Applied in a single
    ordered pass: remove `<layout>`, delete `<data>`, replace or remove `@{…}` attribute values,
@@ -185,12 +187,7 @@ For each in-scope layout, in order:
 
 Once every in-scope screen in a module has been converted and any desired `/check` runs pass:
 
-**Residual scan.** Run the scan defined in `references/gradle-and-lint-gate.md` "Residual scan per module" against
-XML layouts, Kotlin/Java host code, and build files. Any remaining `<layout>` elements,
-`androidx.databinding.*` imports, `DataBindingUtil.*` references, `Observable*` subtype uses,
-`BR.*` references, `@BindingAdapter` annotations, `dataBinding = true` flags, or `kapt(
-"androidx.databinding:databinding-compiler:…")` declarations count as residuals and block
-cleanup for that module. Results are written to `./swarm-report/<slug>-cleanup-status.md`.
+**Residual scan.** Run the residual scan defined in `references/gradle-and-lint-gate.md "Residual scan per module"` against XML layouts, Kotlin/Java host code, and build files. Any hit blocks cleanup for that module. Results are written to `./swarm-report/<slug>-cleanup-status.md`.
 
 **Cleanup package** (applied only when residual count is zero). The
 `developer-workflow-kotlin:kotlin-engineer` agent applies per `references/gradle-and-lint-gate.md` "Cleanup package per module":

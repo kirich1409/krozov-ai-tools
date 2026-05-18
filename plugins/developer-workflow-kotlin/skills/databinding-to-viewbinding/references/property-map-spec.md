@@ -30,7 +30,7 @@ identifier used throughout the session (e.g. `databinding-to-viewbinding`).
 | `binding_kind` | enum | `one_way` / `two_way` / `listener_lambda` / `event_callback` |
 | `expression_raw` | string | The literal `@{…}` or `@={…}` text from the layout |
 | `expression_type` | Kotlin type | Resolved Kotlin type from `expression-resolution.md` step 4; nullability marked with `?` |
-| `adapter_origin` | enum | `project-local` / `monorepo:<gradle-path>` / `binary:<group:artifact:version>` / `implicit-setter` / `unresolved` |
+| `adapter_origin` | enum | `project-local` / `monorepo:<gradle-path>` / `binary:<group>:<artifact>:<version>` / `implicit-setter` / `unresolved` |
 | `adapter_symbol` | FQN | FQN of the resolved `@BindingAdapter` method or implicit setter |
 | `replacement_fragment` | Kotlin snippet | Host-Kotlin call built by the replacement-template builder in `adapter-resolution.md` |
 | `bucket` | enum | `mechanical` / `partial` / `escalate` |
@@ -74,7 +74,7 @@ by `adapter_origin` in the property map.
 
 | Column | Type | Description |
 |---|---|---|
-| `origin` | enum | `project-local` / `monorepo:<gradle-path>` / `binary:<group:artifact:version>` |
+| `origin` | enum | `project-local` / `monorepo:<gradle-path>` / `binary:<group>:<artifact>:<version>` |
 | `symbol` | FQN | FQN of the `@BindingAdapter`-annotated method |
 | `attributes` | string list | Comma-separated XML attribute strings the adapter handles |
 | `parameter_signature` | string | Kotlin parameter list, e.g. `(View, String, Drawable?)` |
@@ -93,7 +93,7 @@ Three rows from a hypothetical `feature/profile/res/layout/fragment_profile.xml`
 |---|---|---|---|---|---|---|---|---|---|---|---|
 | feature/profile/res/layout/fragment_profile.xml | name_label | TextView | android:text | one_way | `@{viewModel.user.name}` | `String` | implicit-setter | `android.widget.TextView#setText` | `binding.nameLabel.text = viewModel.user.name` | mechanical | — |
 | feature/profile/res/layout/fragment_profile.xml | avatar | ImageView | app:imageUrl | one_way | `@{viewModel.user.avatarUri ?? "default"}` | `String` | binary:androidx.databinding:databinding-adapters:8.3.2 | `androidx.databinding.adapters.ImageViewBindingAdapter#setImageUrl` | `ImageViewBindingAdapter.setImageUrl(binding.avatar, viewModel.user.avatarUri ?: "default")` [1] | mechanical | — |
-| feature/profile/res/layout/fragment_profile.xml | notifications_switch | SwitchMaterial | android:onCheckedChanged | two_way | `@={viewModel.notificationsEnabled}` | `Boolean` | — | — | — | escalate | Two-way binding — apply recipe TWO_WAY_BOOLEAN from `escalation-patterns.md` |
+| feature/profile/res/layout/fragment_profile.xml | notifications_switch | SwitchMaterial | android:onCheckedChanged | two_way | `@={viewModel.notificationsEnabled}` | `Boolean` | — | — | — | escalate | Two-way binding — apply `escalation-patterns.md §Two-way` |
 
 **Footnotes:**
 
