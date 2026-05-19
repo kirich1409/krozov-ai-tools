@@ -251,7 +251,7 @@ All artifacts live in `./swarm-report/`. Mandatory artifacts are marked **(M)**.
 - `<slug>-custom-adapters.md` — custom adapter draft **(M)**
 - `<slug>-property-map.md` — resolved property map **(M)**
 - `<slug>-variables-map.md` — variable declarations **(M)**
-- `<slug>-adapter-sources.md` — binary adapter provenance (optional; when binary adapters present)
+- `<slug>-adapter-sources.md` — resolved adapter sources (optional; when adapter resolution ran and found non-trivial entries)
 
 **Phase 3 — USER GATE**
 - `<slug>-property-map.md` appended with approval footer **(M)**
