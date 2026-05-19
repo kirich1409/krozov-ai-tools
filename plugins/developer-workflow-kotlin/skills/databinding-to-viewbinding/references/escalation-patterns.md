@@ -38,9 +38,15 @@ presented to the user explicitly via the prompt template in
 **Underlying semantic.** DataBinding generates a listener (widget→variable) and an observer
 (variable→widget) with loop suppression. ViewBinding has neither.
 
-**Option A — manual listener + coroutine collect (recommended).** (Fragment-scoped; for Activity replace `viewLifecycleOwner` with `this`.)
+**Option A — Fragment-scoped state holder (StateFlow or LiveData).** (For Activity replace `viewLifecycleOwner` with `this`.) Pick the variant that matches the project's existing convention:
+
+**A1 — `MutableStateFlow`** (modern / KMP-ready):
 
 ```kotlin
+// ViewModel
+val email: MutableStateFlow<String> = MutableStateFlow("")
+
+// Fragment (in onViewCreated, after binding inflation)
 var suppressUpdate = false
 binding.emailInput.addTextChangedListener { editable ->
     if (!suppressUpdate) viewModel.email.value = editable?.toString() ?: ""
@@ -56,7 +62,25 @@ viewLifecycleOwner.lifecycleScope.launch {
 }
 ```
 
-Same shape for `Switch` / `CompoundButton` (`setOnCheckedChangeListener`) and `SeekBar`
+**A2 — `MutableLiveData`** (Java-friendly, observer pattern):
+
+```kotlin
+// ViewModel
+val email: MutableLiveData<String> = MutableLiveData("")
+
+// Fragment
+var suppressUpdate = false
+binding.emailInput.addTextChangedListener { editable ->
+    if (!suppressUpdate) viewModel.email.value = editable?.toString() ?: ""
+}
+viewModel.email.observe(viewLifecycleOwner) { value ->
+    if (binding.emailInput.text?.toString() != value) {
+        suppressUpdate = true; binding.emailInput.setText(value); suppressUpdate = false
+    }
+}
+```
+
+Both A1 and A2 use the same re-entry guard (`suppressUpdate`) to break the listener→observer→listener loop. Same shape for `Switch` / `CompoundButton` (`setOnCheckedChangeListener`) and `SeekBar`
 (`setOnSeekBarChangeListener`).
 
 **Option B — Compose state holder.** Only when the screen is also migrating to Compose.

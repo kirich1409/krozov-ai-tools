@@ -115,7 +115,10 @@ scan the rest of the build. The Explore agent runs `ast-index search '@BindingAd
 all modules not already covered.
 
 Collect results into `./swarm-report/<slug>-custom-adapters.md` (draft at this stage; the
-cleanup decisions migrate to `<slug>-adapter-sources.md` after the USER GATE). Columns:
+`<slug>-adapter-sources.md` file is created and enriched by the adapter-resolution sub-phase
+during Discovery — before the USER GATE. At the USER GATE, the user's per-adapter disposal
+decisions fill in the `cleanup_status` and `placement_target` columns of existing rows — no
+new rows are added post-gate). Columns:
 origin_module / method_fqn / attribute_strings / signature / in_scope_usage_count.
 
 Scope-discovery seeds the property map with `layout`/`view_id`/`view_type`/`attribute`/
