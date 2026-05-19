@@ -59,7 +59,7 @@ viewLifecycleOwner.lifecycleScope.launch {
 Same shape for `Switch` / `CompoundButton` (`setOnCheckedChangeListener`) and `SeekBar`
 (`setOnSeekBarChangeListener`).
 
-If this pattern repeats in ≥ 2 host classes in scope, the skill aggregates it into the reuse-extraction step and prompts for placement per `gradle-and-lint-gate.md "Placement options"`.
+If this pattern repeats in ≥ 2 host classes in scope OR if its inline form runs longer than about 6 lines, the skill aggregates or flags it into the reuse-extraction step and prompts for placement per `gradle-and-lint-gate.md "Placement options"`.
 
 **Option B — Compose state holder.** Only when the screen is also migrating to Compose.
 
@@ -104,7 +104,7 @@ viewModel.userLiveData.observe(viewLifecycleOwner) { binding.name.text = it.name
 For screens with many reactive bindings, group multiple `collect` calls in one
 `repeatOnLifecycle` block.
 
-If this pattern repeats in ≥ 2 host classes in scope, the skill aggregates it into the reuse-extraction step and prompts for placement per `gradle-and-lint-gate.md "Placement options"`.
+If this pattern repeats in ≥ 2 host classes in scope OR if its inline form runs longer than about 6 lines, the skill aggregates or flags it into the reuse-extraction step and prompts for placement per `gradle-and-lint-gate.md "Placement options"`.
 
 **Kotlin/Java generics interop — extension functions on Java-defined generic types.**
 `LiveData<T>` is defined in Java and carries no nullability annotation on its type parameter.

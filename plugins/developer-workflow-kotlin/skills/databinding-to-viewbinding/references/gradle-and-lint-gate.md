@@ -143,8 +143,9 @@ is written or rewritten. There is no silent default.
 
 ```
 Adapter / Helper: <FQN of original method, or helper description (e.g. "two-way EditText with TextWatcher suppress guard")>
-Reason: <disposal (convert-to-extension | duplicate-from-sources) | helper-extraction>
-Used by: <count> in-scope screens across <list of module paths>
+Reason: disposal (convert-to-extension | duplicate-from-sources) | helper-extraction-aggregate | helper-extraction-single
+Occurrences: <count>
+Host classes: <list>
 
 Placement options:
 1. In-module: <single module path>       (used only by this module)
@@ -152,7 +153,12 @@ Placement options:
 3. Shared module (existing): <path>      (alternative — reachable from N consumers)
 4. New module: <suggested name>          (only if --allow-new-module was set)
 5. Custom path                           (you provide)
+6. Keep inline                           (do not extract — primarily for helper-extraction-single)
 ```
+
+Option 6 ("Keep inline") is meaningful only for helper-extraction cases. For disposal prompts
+(`convert-to-extension`, `duplicate-from-sources`), option 6 is omitted — the function already
+exists at its source and disposal does not have a keep-inline meaning.
 
 **Ranking.** In-module wins when the adapter or helper is consumed by exactly one in-scope
 module. A shared module wins when two or more in-scope modules are consumers and one shared

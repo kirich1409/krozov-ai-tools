@@ -127,8 +127,9 @@ discovery pass creates a separate corrected artifact — it does not edit the ap
 ## `<slug>-reused-helpers.md`
 
 Created during Phase 4 (Conversion), before Phase 5 cleanup. Populated when the engineer
-identifies a multi-line code shape that appears in ≥ 2 property-map rows across distinct host
-classes. One row per candidate group.
+identifies a multi-line code shape that is either repeated across ≥ 2 distinct host classes
+(auto-aggregate) or flagged for extraction even at a single occurrence (engineer-flagged). One
+row per candidate group.
 
 | Column | Type | Description |
 |---|---|---|
@@ -136,13 +137,15 @@ classes. One row per candidate group.
 | `description` | string | One-line gloss of the pattern (e.g. "two-way EditText with TextWatcher suppress guard") |
 | `occurrences` | int | Count of property-map rows where this shape appears |
 | `host_classes` | string list | Distinct host class names the pattern appears in |
+| `surfaced_via` | enum | `auto-aggregate` (occurrences ≥ 2 across distinct host classes) or `engineer-flag` (occurrences = 1 with a specific reason) |
 | `proposed_signature` | Kotlin snippet | Function signature the extracted helper would have (e.g. `fun EditText.bindTwoWayText(state: MutableStateFlow<String>)`) |
-| `placement_decision` | string | Filled after the user prompt; records the chosen path (e.g. `helper-extraction → :core:ui`) |
-| `notes` | string | Any relevant context (licence, existing similar utility, `—` if none) |
+| `placement_decision` | string | Filled after the user prompt; records the chosen path (e.g. `helper-extraction → :core:ui`) or `keep-inline` |
+| `notes` | string | Any relevant context; when `surfaced_via = engineer-flag`, records the specific reason (e.g. "TextWatcher + lifecycleScope > 6 lines", "matches project's :core:ui helper convention") |
 
 The `placement_decision` column is filled via the prompt template in
 `gradle-and-lint-gate.md "Placement options"`. The file is created only when at least one
-candidate group exists; it is omitted when no repeated patterns are detected.
+candidate group exists (auto-aggregate or engineer-flagged); it is omitted when no candidates
+are identified.
 
 ---
 
