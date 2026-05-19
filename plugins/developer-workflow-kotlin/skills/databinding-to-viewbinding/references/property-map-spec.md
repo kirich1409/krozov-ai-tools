@@ -122,37 +122,10 @@ discovery pass creates a separate corrected artifact — it does not edit the ap
 
 ---
 
----
-
-## `<slug>-reused-helpers.md`
-
-Created during Phase 4 (Conversion), before Phase 5 cleanup. Populated when the engineer
-identifies a multi-line code shape that is either repeated across ≥ 2 distinct host classes
-(auto-aggregate) or flagged for extraction even at a single occurrence (engineer-flagged). One
-row per candidate group.
-
-| Column | Type | Description |
-|---|---|---|
-| `pattern_id` | string | Short generated ID for the candidate group (e.g. `h-two-way-edittext`, `h-stateflow-collect`) |
-| `description` | string | One-line gloss of the pattern (e.g. "two-way EditText with TextWatcher suppress guard") |
-| `occurrences` | int | Count of property-map rows where this shape appears |
-| `host_classes` | string list | Distinct host class names the pattern appears in |
-| `surfaced_via` | enum | `auto-aggregate` (occurrences ≥ 2 across distinct host classes) or `engineer-flag` (occurrences = 1 with a specific reason) |
-| `proposed_signature` | Kotlin snippet | Function signature the extracted helper would have (e.g. `fun EditText.bindTwoWayText(state: MutableStateFlow<String>)`) |
-| `placement_decision` | string | Filled after the user prompt; records the chosen path (e.g. `helper-extraction → :core:ui`) or `keep-inline` |
-| `notes` | string | Any relevant context; when `surfaced_via = engineer-flag`, records the specific reason (e.g. "TextWatcher + lifecycleScope > 6 lines", "matches project's :core:ui helper convention") |
-
-The `placement_decision` column is filled via the prompt template in
-`gradle-and-lint-gate.md "Placement options"`. The file is created only when at least one
-candidate group exists (auto-aggregate or engineer-flagged); it is omitted when no candidates
-are identified.
-
----
-
 ## Cross-references
 
 - `expression-resolution.md` — produces `expression_raw`, `expression_type`, and `replacement_fragment`
 - `adapter-resolution.md` — produces `adapter_origin`, `adapter_symbol`, and finalizes `replacement_fragment`
 - `binding-features-matrix.md` — defines the bucket taxonomy and per-feature escalation thresholds
-- `mechanical-transforms.md` — consumes `replacement_fragment` to weave Kotlin into the host file; defines the helper-extraction step
+- `mechanical-transforms.md` — consumes `replacement_fragment` to weave Kotlin into the host file
 - `escalation-patterns.md` — recipes for each `escalate` bucket entry, including two-way bindings

@@ -122,12 +122,11 @@ licence blocks duplication, or the adapter requires DataBinding runtime infrastr
 
 ---
 
-## Placement options for `convert-to-extension`, `duplicate-from-sources`, and helper-extraction candidates
+## Placement options for `convert-to-extension` and `duplicate-from-sources`
 
-Two cleanup options (`convert-to-extension`, `duplicate-from-sources`) AND every helper-extraction
-candidate from `mechanical-transforms.md "Helper extraction for repeated patterns"` route through
-this prompt. For each, the skill stops and presents placement choices to the user before any file
-is written or rewritten. There is no silent default.
+The two disposal options (`convert-to-extension` and `duplicate-from-sources`) for `@BindingAdapter`
+sources route through this prompt. For each adapter, the skill stops and presents placement choices
+to the user before any file is written or rewritten. There is no silent default.
 
 **Candidate-discovery procedure.** The skill builds the candidate list by:
 - Counting in-scope modules that use the adapter (from the property map's `adapter_origin` and
@@ -139,11 +138,11 @@ is written or rewritten. There is no silent default.
 - The "new module" option is shown only if the user explicitly chose `--allow-new-module` (or
   equivalent) at scope intake; otherwise it is omitted entirely.
 
-**Prompt template (adapter disposal and helper-extraction candidates):**
+**Prompt template:**
 
 ```
-Adapter / Helper: <FQN of original method, or helper description (e.g. "two-way EditText with TextWatcher suppress guard")>
-Reason: disposal (convert-to-extension | duplicate-from-sources) | helper-extraction-aggregate | helper-extraction-single
+Adapter: <FQN of original method>
+Reason: disposal
 Occurrences: <count>
 Host classes: <list>
 
@@ -153,18 +152,12 @@ Placement options:
 3. Shared module (existing): <path>      (alternative — reachable from N consumers)
 4. New module: <suggested name>          (only if --allow-new-module was set)
 5. Custom path                           (you provide)
-6. Keep inline                           (do not extract — primarily for helper-extraction-single)
 ```
 
-Option 6 ("Keep inline") is meaningful only for helper-extraction cases. For disposal prompts
-(`convert-to-extension`, `duplicate-from-sources`), option 6 is omitted — the function already
-exists at its source and disposal does not have a keep-inline meaning.
-
-**Ranking.** In-module wins when the adapter or helper is consumed by exactly one in-scope
-module. A shared module wins when two or more in-scope modules are consumers and one shared
-parent is already reachable from all of them. Reach is determined the same way for disposal
-and helper-extraction candidates. A new module is offered only as the last option and never as
-a default.
+**Ranking.** In-module wins when the adapter is consumed by exactly one in-scope module. A
+shared module wins when two or more in-scope modules are consumers and one shared parent is
+already reachable from all of them. A new module is offered only as the last option and never
+as a default.
 
 **After the user picks.** The decision is recorded in `<slug>-adapter-sources.md` under the
 `cleanup_status` column as the chosen placement path (e.g., `convert-to-extension → :core:ui`,

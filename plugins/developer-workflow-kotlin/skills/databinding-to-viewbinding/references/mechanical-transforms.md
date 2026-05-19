@@ -215,45 +215,7 @@ applies the batch for that screen.
 
 ---
 
-## Helper extraction for repeated patterns
-
-A multi-line code shape qualifies as a helper-extraction candidate under either of these conditions:
-
-- **Auto-aggregate (N ≥ 2 across distinct host classes).** The same structural shape appears in
-  two or more distinct host classes. Structural similarity is the criterion — identical control
-  flow with varying identifiers (different `binding.fieldName` values, different ViewModel
-  property names) still counts. Always surfaced; user picks placement.
-- **Engineer-flagged single occurrence (N = 1).** Even one occurrence may be surfaced when at
-  least one of the following holds: the inline form exceeds ~6 lines of host-class code (e.g., a
-  TextWatcher block + `lifecycleScope` wiring together); the pattern has an obviously reusable
-  shape (e.g., a generic `<View>.bindX()`-style helper); the project already has a shared
-  utilities module (`:core:ui`, `:common:android-ui`, etc.) indicating a project convention for
-  helpers; the pattern is likely to recur in future migrations outside the current scope — e.g.,
-  the user has signaled that subsequent modules will undergo the same DataBinding-to-ViewBinding
-  conversion, or the helper shape is generic enough that any later scope expansion would benefit;
-  or the user requested aggressive extraction at scope intake. An engineer-flagged
-  candidate is recorded in the artifact but is NOT auto-extracted — the user may answer "keep
-  inline" via the placement prompt and the pattern stays inline.
-
-**Single-host repetition.** If a pattern occurs ≥ 2 times within the same host class, it stays
-as a private inline helper in that host class; no placement prompt fires.
-
-**N = 1, short, no project-helper convention.** No candidate; pattern stays inline.
-
-**Inline-first principle.** During conversion, the engineer writes every pattern inline in the
-host class — including subsequent occurrences of an already-seen shape. This keeps `/check`
-green at each screen boundary. Extraction happens after all in-scope screens are converted.
-
-**Extraction step (before Phase 5).** After conversion of all in-scope screens, the engineer
-reviews the written code, groups structurally similar multi-line blocks per the conditions above,
-and records each group in `./swarm-report/<slug>-reused-helpers.md`. The skill then presents a
-placement prompt for each candidate group per the template in
-`gradle-and-lint-gate.md "Placement options"`. After the user picks (or chooses "keep inline"
-for engineer-flagged candidates), the engineer extracts or leaves inline accordingly.
-
----
-
 ## Cross-references
 
 `property-map-spec.md` · `adapter-resolution.md` · `expression-resolution.md` ·
-`escalation-patterns.md` · `gradle-and-lint-gate.md`
+`escalation-patterns.md`
