@@ -146,6 +146,25 @@ See [`references/spec-template.md`](references/spec-template.md) for the full te
 
 ## Phase 4: Review Loop
 
+### 4.0 Pre-review TODO sweep
+
+Before launching any reviewer, grep all source docs the spec depends on for unaddressed items:
+
+```bash
+grep -rniE 'TODO|FIXME|verify|needs investigation|to be confirmed|TBD|XXX' \
+  docs/dpo/ docs/design/ docs/research/ \
+  2>/dev/null | grep -v "$(spec_path)"
+```
+
+For each hit:
+- **Closed in spec** — spec explicitly addresses (AC, Decision, or Technical Approach paragraph). No action.
+- **Out of Scope with owner** — spec's `## Out of Scope` section explicitly lists it + owner. No action.
+- **Neither** — gap. Either address inline or add to Out of Scope before proceeding. **Do not skip.**
+
+Why this exists: TODO lists in baseline / research / review docs encode the questions the source authors already knew were unanswered. A spec that ignores them is built on a knowingly incomplete foundation. Real-world failure mode: visual-parity doc says «Drop-shadow rendering TBD», spec never addresses it, pilot devs hit the gap in week 6 of implementation.
+
+This is mechanical — automate it. Don't trust «I think we covered everything».
+
 ### 4.1 Present draft to user
 
 Do NOT paste the full spec into chat — the spec file is the artifact; chat is for
@@ -165,6 +184,8 @@ While the user reviews, run a self-check:
 - No decision left to the implementing agent's judgment
 - Out of scope is explicit — nothing accidentally implied
 - No blocking open questions remain unresolved
+- **All source-doc TODOs from §4.0 addressed** — re-grep after edits, expect zero unhandled hits
+- **Each user interaction (gesture / event / system trigger) has full mechanical specification** — for every drag, tap, long-press, swipe, back-gesture, system-event: trigger conditions, state precondition, visual feedback, hit-testing / coordinate-resolution rule, commit timing, callbacks emitted, failure modes. Half-specified interactions (e.g., "user can drag widget" without anchor / hit-test / drop-zone math) are a top source of post-approval rework.
 
 Fix any self-identified gaps.
 
@@ -190,6 +211,17 @@ The spec profile (panel: business-analyst + architecture-expert) checks AC falsi
 prerequisite realism, explicit Out of Scope, decisions with rationale, affected-modules
 completeness, blocking vs non-blocking open questions, technical-approach detail.
 
+**Do not shrink the reviewer panel.** If the profile's `optional_if` regex triggers
+include additional reviewers (security-expert on PII/auth/encryption mentions,
+performance-expert on SLA/latency/budget, ux-expert on a11y/UI/UX) — include them all.
+Skipping a profile-triggered reviewer because «that domain was already covered in an
+earlier review of the underlying research» is false economy: each multiexpert cycle
+reviews a different artifact (spec vs research are different texts even when they
+overlap in topic), and the reviewer's perspective on the spec-level contract is what
+matters here. Cost of including: ~2-5 minutes per extra agent. Cost of omission: gaps
+that surface only after approval (visual-interaction details, perf budgets, a11y flows
+are typical victims).
+
 | Severity | Action |
 |---|---|
 | PASS | Proceed |
@@ -202,6 +234,35 @@ completeness, blocking vs non-blocking open questions, technical-approach detail
 After self-review and multiexpert-review complete, if either surfaced issues or open questions:
 present them to the user for a final discussion round. This may loop back into Phase 2
 style Q&A to close remaining gaps.
+
+### 4.5 Implementation walk-through pass (adversarial)
+
+Reviewers find problems. **Implementers find missing pieces.** These are different
+failure modes — a reviewer reading «AC-DRAG-1: drag shadow rendered from getWidgetIcon»
+sees a satisfied AC; an implementer asked «build this» immediately wonders «where is
+the shadow positioned relative to my finger? how do I know which slot is the drop
+target?». The reviewer's mindset doesn't generate that question; the implementer's does.
+
+Run **one** Agent (general-purpose, sonnet) with this brief:
+
+> You are pretending to be the implementing engineer for `<spec-path>`. Don't review the
+> spec — try to *use* it. Pick the single most complex user interaction in the spec
+> (drag, complex gesture, multi-step flow) and mentally simulate implementing it
+> end-to-end: from user trigger → state transitions → visual updates → callbacks → cleanup.
+> Every time you'd have to *guess* a detail or ask a clarifying question — list it.
+> Output: bullet list of «I'd have to guess X because the spec doesn't specify Y». Cap 15 items.
+
+For each item the agent surfaces:
+- **Trivially fillable** (one-line clarification) → fix inline, move on.
+- **Requires design decision** → surface to user as a question (same format as Phase 2).
+- **Already specified, agent missed it** → no action, mention in the discussion.
+
+Cost: ~3-5 minutes of one agent. Avoided cost: post-approval fix-up commits when pilot
+devs hit the gap weeks later.
+
+Skip only if the spec is for a small, well-bounded change with no complex interactions.
+
+### 4.6 Approval
 
 Once the user is satisfied and no issues remain, update spec status from `draft` to
 `approved` and proceed to save.
