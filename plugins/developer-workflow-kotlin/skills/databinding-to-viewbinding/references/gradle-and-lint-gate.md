@@ -124,18 +124,50 @@ licence blocks duplication, or the adapter requires DataBinding runtime infrastr
 
 ## Placement options for `convert-to-extension` and `duplicate-from-sources`
 
-**In-module** — the extension or duplicate lives in the module that used the adapter. Default:
-same file as the original; fall back to an existing `*Extensions.kt` file or a new
-`<ViewClass>BindingExtensions.kt`. Simplest; use when only one module uses the adapter.
+For every adapter going through `convert-to-extension` or `duplicate-from-sources`, the skill
+stops and presents placement choices to the user before any file is written or rewritten. There
+is no silent default.
 
-**In a shared module** — an existing `:core-ui` / `:common-android` / `:design-system` module.
-Offered when `ast-index dependents` shows multiple callsite modules; requires explicit
-confirmation before the skill expands scope.
+**Candidate-discovery procedure.** The skill builds the candidate list by:
+- Counting in-scope modules that use the adapter (from the property map's `adapter_origin` and
+  the layout → host-class map from scope-discovery).
+- For each potential shared parent module: verifying reachability from every consumer via
+  `ast-index dependents`. A module is a viable candidate only if all consumers can already see
+  it through existing module dependencies. The skill does NOT add new dependency edges silently;
+  if a candidate would require a new edge, that is a follow-up the user must approve separately.
+- The "new module" option is shown only if the user explicitly chose `--allow-new-module` (or
+  equivalent) at scope intake; otherwise it is omitted entirely.
 
-**In a new module** — only when the user explicitly opts in; never created silently.
+**Per-adapter prompt template:**
 
-The skill writes a one-line placement recommendation per adapter; the user confirms or
-overrides before cleanup proceeds.
+```
+Adapter: <FQN of original method>
+Disposal: convert-to-extension | duplicate-from-sources
+Used by: <count> in-scope screens across <list of module paths>
+
+Placement options:
+1. In-module: <single module path>       (used only by this module)
+2. Shared module (existing): <path>      (already on every consumer's classpath)
+3. Shared module (existing): <path>      (alternative — reachable from N consumers)
+4. New module: <suggested name>          (only if --allow-new-module was set)
+5. Custom path                           (you provide)
+```
+
+**Ranking.** In-module wins when the adapter is used by exactly one in-scope module. A shared
+module wins when two or more in-scope modules use the adapter and one shared parent is already
+reachable from all of them. A new module is offered only as the last option and never as a
+default.
+
+**After the user picks.** The decision is recorded in `<slug>-adapter-sources.md` under the
+`cleanup_status` column as the chosen placement path (e.g., `convert-to-extension → :core:ui`,
+`duplicate-from-sources → :feature:profile`). The engineer agent writes the file at that
+location.
+
+**Batch prompting.** When multiple adapters share an identical candidate analysis (same consumer
+set, same reachable shared modules), the skill MAY group them: "Adapters A, B, C share the same
+placement candidates; pick one placement for all, or expand to per-adapter choice." This is an
+optional usability optimization and must not be applied silently if the user prefers per-adapter
+prompting.
 
 ---
 

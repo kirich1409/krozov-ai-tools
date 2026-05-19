@@ -207,9 +207,12 @@ Once every in-scope screen in a module has been converted and any desired `/chec
 
 **Adapter disposal.** Five options per `references/gradle-and-lint-gate.md` "Five disposal options for @BindingAdapter sources":
 `keep-as-regular-dep`, `duplicate-from-sources`, `convert-to-extension`, `static-call`,
-`escalate`. The user selects per adapter or per batch. Placement options (in-module, shared
-module, new module) are a separate axis resolved per `references/gradle-and-lint-gate.md`
-"Placement options for convert-to-extension and duplicate-from-sources" before the engineer acts.
+`escalate`. The user selects per adapter or per batch. For adapters going through
+`convert-to-extension` or `duplicate-from-sources`, the skill presents an explicit per-adapter
+placement prompt (candidate list with rationale, ranked in-module → shared module → new module)
+before the engineer writes any file — no placement is applied silently. See
+`references/gradle-and-lint-gate.md "Placement options"` for the prompt template and ranking
+criteria.
 
 Output: `./swarm-report/<slug>-cleanup-status.md` (updated after every cleanup attempt).
 Cross-reference: `references/gradle-and-lint-gate.md`.

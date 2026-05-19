@@ -24,6 +24,10 @@ options`; this recipe maps origin to the recommended option.
 Fall back to `escalate` when the adapter body references DataBinding internals
 (`BR.*`, `Observable*`, runtime-generated binding classes).
 
+For `convert-to-extension` and `duplicate-from-sources`, the placement destination is always
+presented to the user explicitly via the prompt template in
+`gradle-and-lint-gate.md "Placement options"` — it is never inferred silently.
+
 ---
 
 ## Two-way
