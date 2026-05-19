@@ -38,7 +38,7 @@ beyond what the binding removal requires.
 
 ---
 
-## Include transforms {#include}
+## Include transforms
 
 `<include>` elements with no `bind:` variables: keep the element as-is. Removing the `<data>`
 block does not automatically remove `bind:*` attributes that DataBinding placed on `<include>`

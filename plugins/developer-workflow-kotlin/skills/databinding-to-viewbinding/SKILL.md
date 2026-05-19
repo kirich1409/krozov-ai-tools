@@ -86,7 +86,7 @@ and multi-host layouts. Cross-reference: `references/scope-discovery.md` §Host 
 `@InverseBindingAdapter`, `@BindingConversion`, and `@BindingMethods` annotations declared
 in the project source tree and across monorepo modules. Record FQN, attribute name, parameter
 types, and source file. Output: `./swarm-report/<slug>-custom-adapters.md` (draft; the adapter-resolution
-sub-phase enriches and finalises it as `<slug>-adapter-sources.md`, all before the USER GATE). For adapters in binary dependencies — including
+sub-phase enriches and finalizes it as `<slug>-adapter-sources.md`, all before the USER GATE). For adapters in binary dependencies — including
 `androidx.databinding:databinding-adapters` — use `ksrc` against the version pinned in the
 project to pull the actual source signatures at runtime. Cross-references:
 `references/scope-discovery.md` §Custom `@BindingAdapter` discovery, `references/adapter-resolution.md` §Runtime adapter discovery via ksrc.
@@ -103,9 +103,12 @@ run expression resolution followed by adapter resolution:
   rule when a row matches multiple features.
 
 **Tool routing.** Delegate cross-module scans and any pass over more than ~50 files to
-`Explore` (haiku). Use `ast-index` for all symbol-level lookups within the project. Use `ksrc`
-as the runtime adapter discovery channel for binary dependencies. Targeted `Grep` is permitted
-only for `<include>` layout references (string patterns, not symbols).
+`Explore` (haiku). Use `ast-index` for symbol-level lookups within the project. `Grep` is
+permitted (a) for raw `<include>` reference scans where AST resolution is not needed, and
+(b) as a fallback for symbol-level lookups when `ast-index` is not initialized — see the
+canonical fallback policy in `references/scope-discovery.md §Tool routing` and
+`references/adapter-resolution.md §Failure modes`. Use `ksrc` as the runtime adapter
+discovery channel for binary dependencies.
 
 **Output artifacts** (all in `./swarm-report/`):
 - `<slug>-discover-modules.md` — module inventory (mandatory)
@@ -115,7 +118,7 @@ only for `<include>` layout references (string patterns, not symbols).
 - `<slug>-variables-map.md` — `<variable>` declarations with `replacement_strategy` empty (mandatory)
 - `<slug>-adapter-sources.md` — created when Discovery finds at least one custom `@BindingAdapter`
   (any origin: project-local, monorepo, or binary). The adapter-resolution sub-phase enriches and
-  finalises it from the seed file `custom-adapters.md`, all before the USER GATE.
+  finalizes it from the seed file `custom-adapters.md`, all before the USER GATE.
 
 Cross-references: `references/property-map-spec.md` (full column schemas),
 `references/scope-discovery.md` §Binding enumeration and property-map seeding, §Tool routing.
