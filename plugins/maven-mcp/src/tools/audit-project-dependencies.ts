@@ -2,8 +2,8 @@ import type { MavenRepository } from "../maven/repository.js";
 import type { MavenMetadata } from "../maven/types.js";
 import type { UpgradeType } from "../version/types.js";
 import { scanProjectWithSubmodules } from "../dependencies/scan.js";
-import type { ScanResult } from "../dependencies/scan.js";
-import { PRODUCTION_CONFIGURATIONS } from "../dependencies/gradle-deps-parser.js";
+import type { ScanResult, ScannedDependency, DepSource, DepUsage } from "../dependencies/scan.js";
+import { isTestConfiguration } from "../dependencies/gradle-deps-parser.js";
 import { findProjectRoot } from "../project/find-project-root.js";
 import { resolveAll } from "../maven/resolver.js";
 import { findLatestVersionForCurrent } from "../version/classify.js";
@@ -16,9 +16,6 @@ export interface AuditInput {
   productionOnly?: boolean;
 }
 
-// CVEs in test / kapt / ksp / annotationProcessor are not deployed risks — exclude by default.
-const PRODUCTION_CONFIGS = new Set<string>(PRODUCTION_CONFIGURATIONS);
-
 export interface AuditDependency {
   groupId: string;
   artifactId: string;
@@ -26,10 +23,58 @@ export interface AuditDependency {
   latestVersion?: string;
   upgradeType?: UpgradeType;
   vulnerabilities?: { id: string; severity?: string; fixedVersion?: string }[];
-  // Submodule label: ":foo" / ":foo:bar" for Gradle, "foo" / "foo/sub" for Maven,
-  // undefined for the root project. The two formats differ by design (Gradle paths are
-  // colon-separated by spec); consumers must handle both shapes.
+  /**
+   * Discriminated union identifying where this dependency originates.
+   * Consumers should use this instead of inferring source from module/configuration.
+   */
+  source: DepSource;
+  /**
+   * All module:configuration pairs that use this dependency.
+   * For catalog entries, may be empty (unused catalog entry — still audited for version/CVE).
+   * For non-catalog entries, always has exactly one element.
+   * When productionOnly is true and the entry has mixed prod+test usages, all usages are
+   * retained in this array — filtering only controls inclusion, not which usages are shown.
+   */
+  usages: DepUsage[];
+  /**
+   * @deprecated Legacy field. Use usages[0]?.module instead.
+   * Submodule label from the first usage: ":foo" / ":foo:bar" for Gradle,
+   * "foo" / "foo/sub" for Maven, undefined for root. Two formats differ by design
+   * (Gradle paths are colon-separated); consumers must handle both shapes.
+   */
   module?: string;
+  /**
+   * @deprecated Legacy field. Use usages[0]?.configuration instead.
+   * Configuration name from the first usage.
+   */
+  configuration?: string;
+}
+
+/**
+ * productionOnly filter policy:
+ *
+ * - catalog-library / catalog-plugin with non-empty usages:
+ *     include if at least one usage is NOT test-scope (per isTestConfiguration).
+ *     Exclude if ALL usages are test-scope.
+ *
+ * - catalog-library / catalog-plugin with empty usages (unused catalog entry):
+ *     ALWAYS include when productionOnly is true.
+ *     Rationale: the catalog is the single source of truth for declared dependencies;
+ *     unused entries still need version updates and CVE scanning.
+ *
+ * - module-direct / plugins-dsl / buildscript-classpath:
+ *     include if the single usage's configuration is NOT test-scope.
+ *     "plugin-dsl" and "classpath" are always production (isTestConfiguration returns false).
+ */
+function isIncludedInProductionAudit(dep: ScannedDependency): boolean {
+  const { source, usages } = dep;
+  if (source.kind === "catalog-library" || source.kind === "catalog-plugin") {
+    if (usages.length === 0) return true; // unused catalog entry — always include
+    return usages.some((u) => !isTestConfiguration(u.configuration));
+  }
+  // module-direct, plugins-dsl, buildscript-classpath — single usage
+  if (usages.length === 0) return false;
+  return !isTestConfiguration(usages[0].configuration);
 }
 
 export interface AuditResult {
@@ -54,8 +99,11 @@ export async function auditProjectDependenciesHandler(
   const includeVulns = input.includeVulnerabilities !== false;
   const productionOnly = input.productionOnly !== false;
 
+  // productionOnly: use isIncludedInProductionAudit which handles catalog unused entries,
+  // mixed prod+test usages, and non-catalog entries (see JSDoc above).
+  // When productionOnly is false, include all deps — including unused catalog entries.
   const filteredScanDeps = productionOnly
-    ? scan.dependencies.filter((d) => PRODUCTION_CONFIGS.has(d.configuration))
+    ? scan.dependencies.filter(isIncludedInProductionAudit)
     : scan.dependencies;
 
   const auditDeps: AuditDependency[] = [];
@@ -90,15 +138,31 @@ export async function auditProjectDependenciesHandler(
       currentVersion: dep.version!,
       latestVersion: latest,
       upgradeType,
-      module: dep.module,
+      source: dep.source,
+      usages: dep.usages,
+      module: dep.usages[0]?.module,
+      configuration: dep.usages[0]?.configuration,
     });
   }
 
   for (const dep of depsWithoutVersion) {
-    auditDeps.push({ groupId: dep.groupId, artifactId: dep.artifactId, module: dep.module });
+    auditDeps.push({
+      groupId: dep.groupId,
+      artifactId: dep.artifactId,
+      source: dep.source,
+      usages: dep.usages,
+      module: dep.usages[0]?.module,
+      configuration: dep.usages[0]?.configuration,
+    });
   }
 
-  // Vulnerability check — deduplicate OSV queries by GAV, then map results back
+  // Vulnerability check — deduplicate OSV queries by GAV, then map results back.
+  // Plugin marker artifacts (pluginId + ".gradle.plugin") are queried via the same Maven
+  // ecosystem path as regular deps. OSV currently indexes implementation artifacts, not plugin
+  // markers — CVEs are filed against e.g. "org.jetbrains.kotlin:kotlin-gradle-plugin", not
+  // the marker "org.jetbrains.kotlin.android:org.jetbrains.kotlin.android.gradle.plugin".
+  // Plugin entries typically return empty results today — the query still runs and will surface
+  // hits if OSV adds plugin-marker coverage later. v2: resolve marker → impl GAV via POM.
   if (includeVulns && depsWithVersion.length > 0) {
     const auditDepMap = new Map<string, AuditDependency[]>();
     for (const a of auditDeps) {

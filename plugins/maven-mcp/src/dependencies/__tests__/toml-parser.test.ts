@@ -13,10 +13,10 @@ ktor-client-core = { module = "io.ktor:ktor-client-core", version.ref = "ktor" }
 kotlin-stdlib = { module = "org.jetbrains.kotlin:kotlin-stdlib", version.ref = "kotlin" }
 `;
     const result = parseVersionCatalog(toml);
-    expect(result.get("ktor-client-core")).toEqual({
+    expect(result.libraries.get("ktor-client-core")).toEqual({
       groupId: "io.ktor", artifactId: "ktor-client-core", version: "3.1.1",
     });
-    expect(result.get("kotlin-stdlib")).toEqual({
+    expect(result.libraries.get("kotlin-stdlib")).toEqual({
       groupId: "org.jetbrains.kotlin", artifactId: "kotlin-stdlib", version: "2.1.0",
     });
   });
@@ -27,7 +27,7 @@ kotlin-stdlib = { module = "org.jetbrains.kotlin:kotlin-stdlib", version.ref = "
 gson = { module = "com.google.code.gson:gson", version = "2.11.0" }
 `;
     const result = parseVersionCatalog(toml);
-    expect(result.get("gson")).toEqual({
+    expect(result.libraries.get("gson")).toEqual({
       groupId: "com.google.code.gson", artifactId: "gson", version: "2.11.0",
     });
   });
@@ -41,7 +41,7 @@ ktor = "3.1.1"
 ktor-core = { group = "io.ktor", name = "ktor-client-core", version.ref = "ktor" }
 `;
     const result = parseVersionCatalog(toml);
-    expect(result.get("ktor-core")).toEqual({
+    expect(result.libraries.get("ktor-core")).toEqual({
       groupId: "io.ktor", artifactId: "ktor-client-core", version: "3.1.1",
     });
   });
@@ -52,12 +52,98 @@ ktor-core = { group = "io.ktor", name = "ktor-client-core", version.ref = "ktor"
 bom-lib = { module = "io.ktor:ktor-bom" }
 `;
     const result = parseVersionCatalog(toml);
-    expect(result.get("bom-lib")).toEqual({
+    expect(result.libraries.get("bom-lib")).toEqual({
       groupId: "io.ktor", artifactId: "ktor-bom", version: null,
     });
   });
 
-  it("returns empty map for empty content", () => {
-    expect(parseVersionCatalog("").size).toBe(0);
+  it("returns empty maps for empty content", () => {
+    const result = parseVersionCatalog("");
+    expect(result.libraries.size).toBe(0);
+    expect(result.plugins.size).toBe(0);
+  });
+
+  it("parses [plugins] with version.ref", () => {
+    const toml = `
+[versions]
+kotlin = "2.1.0"
+
+[plugins]
+kotlin-jvm = { id = "org.jetbrains.kotlin.jvm", version.ref = "kotlin" }
+`;
+    const result = parseVersionCatalog(toml);
+    expect(result.plugins.get("kotlin-jvm")).toEqual({
+      id: "org.jetbrains.kotlin.jvm", version: "2.1.0",
+    });
+  });
+
+  it("parses [plugins] with inline version", () => {
+    const toml = `
+[plugins]
+android-app = { id = "com.android.application", version = "8.5.0" }
+`;
+    const result = parseVersionCatalog(toml);
+    expect(result.plugins.get("android-app")).toEqual({
+      id: "com.android.application", version: "8.5.0",
+    });
+  });
+
+  it("parses [plugins] with no version returns null", () => {
+    const toml = `
+[plugins]
+my-plugin = { id = "com.example.plugin" }
+`;
+    const result = parseVersionCatalog(toml);
+    expect(result.plugins.get("my-plugin")).toEqual({
+      id: "com.example.plugin", version: null,
+    });
+  });
+
+  it("parses mixed [libraries] and [plugins] in same file", () => {
+    const toml = `
+[versions]
+ktor = "3.1.1"
+kotlin = "2.1.0"
+
+[libraries]
+ktor-client-core = { module = "io.ktor:ktor-client-core", version.ref = "ktor" }
+
+[plugins]
+kotlin-jvm = { id = "org.jetbrains.kotlin.jvm", version.ref = "kotlin" }
+`;
+    const result = parseVersionCatalog(toml);
+    expect(result.libraries.get("ktor-client-core")).toEqual({
+      groupId: "io.ktor", artifactId: "ktor-client-core", version: "3.1.1",
+    });
+    expect(result.plugins.get("kotlin-jvm")).toEqual({
+      id: "org.jetbrains.kotlin.jvm", version: "2.1.0",
+    });
+  });
+
+  it("ignores [bundles] section", () => {
+    const toml = `
+[libraries]
+gson = { module = "com.google.code.gson:gson", version = "2.11.0" }
+
+[bundles]
+networking = ["ktor-client-core", "ktor-client-cio"]
+`;
+    const result = parseVersionCatalog(toml);
+    expect(result.libraries.get("gson")).toEqual({
+      groupId: "com.google.code.gson", artifactId: "gson", version: "2.11.0",
+    });
+    // No parsing or error for [bundles]
+    expect(result.plugins.size).toBe(0);
+  });
+
+  it("parses [plugins] shorthand \"id:version\"", () => {
+    const toml = `
+[plugins]
+kotlin-jvm = "org.jetbrains.kotlin.jvm:2.1.0"
+`;
+    const result = parseVersionCatalog(toml);
+    expect(result.plugins.get("kotlin-jvm")).toEqual({
+      id: "org.jetbrains.kotlin.jvm", version: "2.1.0",
+    });
   });
 });
