@@ -20,7 +20,7 @@ grep -rn -E "import (android\.databinding|androidx\.databinding)" \
 
 **Allowable exceptions.** Modules explicitly named `:legacy:*` or `:*-legacy` with a frozen status and a sunset plan. Anything else is a leftover.
 
-For Compose-specific audits, the `migrate-to-compose` skill defines a more aggressive scan list (`android.view.*`, `android.widget.*`, `androidx.databinding.*`, `androidx.viewbinding.*`, `findViewById`, etc.). Reuse that list when applicable.
+For Compose-specific audits, run an aggressive residue scan for the legacy View stack: `android.view.*`, `android.widget.*`, `androidx.databinding.*`, `androidx.viewbinding.*`, `findViewById`, XML layout files, `@BindingAdapter`, and references to removed adapters. Any hit on a screen claimed migrated means the migration is incomplete on that screen.
 
 ### 2. `libs.versions.toml` no longer references FROM
 

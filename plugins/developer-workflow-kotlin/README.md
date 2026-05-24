@@ -16,9 +16,7 @@ Shared reference material in `agents/references/`:
 
 | Skill | Purpose |
 |---|---|
-| `migration` | Guided 8-phase migration between technologies (DI, async, UI idiom, build plugin) with behavioral parity and old-stack cleanup |
-| `kmp-migration` | Android module → Kotlin Multiplatform — source set restructuring, iOS exposure |
-| `migrate-to-compose` | View-based UI → Jetpack Compose, one screen at a time, with visual baseline |
+| `migration` | Guided 8-phase migration between technologies (DI, async, UI idiom, build plugin, View→Compose, Android→KMP) with behavioral parity and old-stack cleanup |
 | `snapshot` | Capture current behavior of code targets (logic / ui / api) as `behavior-spec.md` before any migration or refactor |
 
 ## Dependencies

@@ -23,7 +23,6 @@ Each subdirectory groups iterations against the same skill or workflow. Iteratio
 ## Active eval targets
 
 - `implement-task/` — historical eval for the (now removed) `implement` orchestrator. Kept as reference.
-- `migrate-to-compose/` — eval fixtures for `developer-workflow-kotlin:migrate-to-compose`.
 - `reverse-spec/` — eval fixtures for `reverse-spec`.
 
 ## How to run
