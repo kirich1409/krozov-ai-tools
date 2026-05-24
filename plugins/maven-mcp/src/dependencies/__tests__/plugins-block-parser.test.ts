@@ -68,6 +68,17 @@ plugins {
     ]);
   });
 
+  it("parses unknown multi-segment kotlin(\"foo.bar\") → org.jetbrains.kotlin.foo.bar", () => {
+    const content = `
+plugins {
+  kotlin("foo.bar") version "1.0"
+}
+`;
+    expect(parsePluginsBlock(content)).toEqual([
+      { pluginId: "org.jetbrains.kotlin.foo.bar", version: "1.0" },
+    ]);
+  });
+
   it("returns catalogRef for alias(libs.plugins.foo)", () => {
     const content = `
 plugins {

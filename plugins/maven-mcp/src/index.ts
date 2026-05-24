@@ -128,7 +128,7 @@ server.tool(
 
 server.tool(
   "scan_project_dependencies",
-  "Scan project build files (Gradle, Maven, version catalogs) and extract all declared dependencies with versions.",
+  "Scan the whole project (catalogs + all submodules + plugin DSL + buildscript classpath) and extract all declared dependencies with versions, grouped by source for guided edits.",
   {
     projectPath: z.string().optional().describe("Path to project root (default: auto-detect from cwd)"),
   },
