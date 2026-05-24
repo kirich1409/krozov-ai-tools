@@ -158,11 +158,11 @@ export async function auditProjectDependenciesHandler(
 
   // Vulnerability check — deduplicate OSV queries by GAV, then map results back.
   // Plugin marker artifacts (pluginId + ".gradle.plugin") are queried via the same Maven
-  // ecosystem path as regular deps. OSV indexes implementation artifacts, not plugin markers —
-  // CVEs are filed against e.g. "org.jetbrains.kotlin:kotlin-gradle-plugin", not the marker
-  // "org.jetbrains.kotlin.android:org.jetbrains.kotlin.android.gradle.plugin". Plugin entries
-  // therefore always return no advisories here — a known v1 limitation; resolving marker →
-  // implementation GAV via POM lookup is tracked for v2.
+  // ecosystem path as regular deps. OSV currently indexes implementation artifacts, not plugin
+  // markers — CVEs are filed against e.g. "org.jetbrains.kotlin:kotlin-gradle-plugin", not
+  // the marker "org.jetbrains.kotlin.android:org.jetbrains.kotlin.android.gradle.plugin".
+  // Plugin entries typically return empty results today — the query still runs and will surface
+  // hits if OSV adds plugin-marker coverage later. v2: resolve marker → impl GAV via POM.
   if (includeVulns && depsWithVersion.length > 0) {
     const auditDepMap = new Map<string, AuditDependency[]>();
     for (const a of auditDeps) {

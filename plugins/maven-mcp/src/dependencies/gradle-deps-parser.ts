@@ -72,7 +72,7 @@ export function parseGradleDependencies(content: string, source: string = "build
   // Captures any catalog accessor: catalogName.alias — e.g. libs.foo.bar → "libs.foo.bar",
   // testLibs.x → "testLibs.x". The first dot-segment is the catalog name.
   const catalogRegex = new RegExp(
-    `\\b(${CONFIG_PATTERN})\\s*\\(\\s*([a-zA-Z][a-zA-Z0-9]*)\\.([a-zA-Z0-9.]+)\\s*\\)`,
+    `\\b(${CONFIG_PATTERN})\\s*\\(\\s*([a-zA-Z_][a-zA-Z0-9_]*)\\.([a-zA-Z0-9.]+)\\s*\\)`,
     "g",
   );
   while ((match = catalogRegex.exec(content)) !== null) {

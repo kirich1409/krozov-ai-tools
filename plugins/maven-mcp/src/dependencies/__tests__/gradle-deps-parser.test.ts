@@ -66,4 +66,11 @@ runtimeOnly("com.example:runtime-lib:1.0")
   it("returns empty for no dependencies", () => {
     expect(parseGradleDependencies("plugins { }")).toEqual([]);
   });
+
+  it("catalog name with underscore: test_libs.foo.bar", () => {
+    const content = `testImplementation(test_libs.foo.bar)`;
+    const deps = parseGradleDependencies(content);
+    expect(deps).toHaveLength(1);
+    expect(deps[0].catalogRef).toBe("test_libs.foo.bar");
+  });
 });

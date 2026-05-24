@@ -280,6 +280,22 @@ buildscript {
     expect(dep!.usages[0]).toEqual({ module: undefined, configuration: "classpath" });
   });
 
+  it("buildscript classpath in submodule is not scanned", () => {
+    mockFileSystem({
+      "/project/settings.gradle.kts": `include(":app")`,
+      "/project/app/build.gradle.kts": `
+buildscript {
+    dependencies {
+        classpath("com.example:submodule-classpath:1.0")
+    }
+}`,
+    });
+
+    const result = scanProjectWithSubmodules("/project");
+    const dep = result.dependencies.find((d) => d.artifactId === "submodule-classpath");
+    expect(dep).toBeUndefined();
+  });
+
   it("no Gradle settings, only gradle/libs.versions.toml → default libs descriptor still works", () => {
     mockFileSystem({
       "/project/gradle/libs.versions.toml": `
@@ -435,6 +451,7 @@ describe("scanProjectWithSubmodules — Maven", () => {
     const result = scanProjectWithSubmodules("/project");
     expect(result.buildSystem).toBe("maven");
     expect(result.dependencies).toHaveLength(1);
+    expect(result.dependencies[0].source.file).toBe("pom.xml");
     expect(result.dependencies[0].usages[0].module).toBe("core");
   });
 });

@@ -270,8 +270,8 @@ function scanMavenRecursive(
   if (!existsSync(pomPath)) return;
 
   const content = readFileSync(pomPath, "utf-8");
-  // Use relative path within the module for the file field (always "pom.xml" relative to module root)
-  const pomFile = label == null ? "pom.xml" : `${label}/pom.xml`;
+  // source.file is always the filename — module location is carried by usages[].module / source.module
+  const pomFile = "pom.xml";
   for (const dep of parseMavenDependencies(content)) {
     acc.push({
       groupId: dep.groupId,
@@ -328,7 +328,7 @@ export function scanProjectWithSubmodules(projectRoot: string): ScanResult {
         const content = readFileSync(path, "utf-8");
         processBuildFileDeps(content, file, modulePath, catalogs, catalogEntryMap, dependencies);
         processPluginsBlock(content, file, modulePath, false, catalogs, catalogEntryMap, dependencies);
-        processBuildscriptClasspath(content, file, dependencies);
+        // buildscript classpath is obsolete in submodules and lacks a module field — root only
         break; // prefer .kts, skip .gradle if .kts found
       }
     }
