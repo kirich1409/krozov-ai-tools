@@ -164,7 +164,7 @@ When studying FROM and TO in Phase 1, prefer authoritative sources. Training-dat
 | Gson/Moshi → kotlinx.serialization | BBA | https://kotlinlang.org/docs/serialization.html |
 | KAPT → KSP (specific processor) | Utility refactor | https://kotlinlang.org/docs/ksp-overview.html, processor's own KSP guide |
 | Java → Kotlin (per file) | Utility refactor | https://kotlinlang.org/docs/mixing-java-kotlin-intellij.html |
-| XML View → Compose (a screen) | Duplicate-then-delete | Use the `migrate-to-compose` skill (this skill defers to it) |
+| XML View → Compose (a screen) | Duplicate-then-delete | Build the new Compose screen alongside the legacy View-based one; switch the navigation entry per screen; delete legacy after parity is verified on device. |
 | Fragment navigation → Compose navigation | Strangler Fig per screen | https://developer.android.com/develop/ui/compose/navigation |
 | Groovy Gradle → Kotlin Gradle | Utility refactor (file by file) | https://docs.gradle.org/current/userguide/migrating_from_groovy_to_kotlin_dsl.html |
 | AGP major bump with breaking changes | Utility refactor + targeted BBA for breakages | https://developer.android.com/build/agp-upgrade-assistant, release notes for the AGP version |

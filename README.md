@@ -86,7 +86,7 @@ See [`plugins/developer-workflow-experts/`](plugins/developer-workflow-experts/)
 
 Kotlin, Android, and KMP specialization.
 
-**Skills (3):** `/code-migration`, `/kmp-migration`, `/migrate-to-compose`
+**Skills (2):** `/migration`, `/snapshot`
 
 **Agents:** `kotlin-engineer`, `compose-developer`
 

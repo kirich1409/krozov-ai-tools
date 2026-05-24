@@ -24,7 +24,7 @@ This plugin is part of a split family. Depending on the task, Claude Code will h
 |---|---|
 | `developer-workflow` (this) | 11 on-demand skills + `manual-tester` |
 | `developer-workflow-experts` | `code-reviewer`, `architecture-expert`, `security-expert`, `performance-expert`, `ux-expert`, `build-engineer`, `devops-expert`, `business-analyst`, `debugging-expert` — required, auto-installed as a dependency |
-| `developer-workflow-kotlin` | `kotlin-engineer`, `compose-developer`; skills `kmp-migration`, `migrate-to-compose`, `snapshot` — install for Kotlin/Android/KMP work |
+| `developer-workflow-kotlin` | `kotlin-engineer`, `compose-developer`; skills `migration`, `snapshot` — install for Kotlin/Android/KMP work |
 | `developer-workflow-swift` | `swift-engineer`, `swiftui-developer` — install for Swift/iOS/macOS work |
 
 Skills in this plugin delegate to engineer agents (kotlin-engineer / compose-developer / swift-engineer / swiftui-developer) by short name via the Task tool. Agent names are unique across the family, so short-name resolution works as long as the corresponding platform plugin is installed. If `write-tests` is invoked and the referenced engineer is not installed, the Task call will fail with a clear message — install the matching platform plugin and retry.
