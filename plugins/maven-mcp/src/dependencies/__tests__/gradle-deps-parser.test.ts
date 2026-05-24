@@ -39,7 +39,17 @@ dependencies {
     expect(deps[0]).toEqual({
       groupId: null, artifactId: null, version: null,
       configuration: "implementation", source: "build.gradle.kts",
-      catalogRef: "ktor.client.core",
+      catalogRef: "libs.ktor.client.core",
+    });
+  });
+
+  it("parses non-libs catalog references", () => {
+    const content = `testImplementation(testLibs.mockk.core)`;
+    const deps = parseGradleDependencies(content);
+    expect(deps[0]).toEqual({
+      groupId: null, artifactId: null, version: null,
+      configuration: "testImplementation", source: "build.gradle.kts",
+      catalogRef: "testLibs.mockk.core",
     });
   });
 
