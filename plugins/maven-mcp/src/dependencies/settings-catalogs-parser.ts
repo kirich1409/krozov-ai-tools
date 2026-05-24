@@ -23,9 +23,13 @@ const DEFAULT_CATALOG: CatalogDescriptor = {
  * Only `from(files("..."))` / `from files("...")` forms are handled.
  * `from("g:a:v")` (catalog-as-Maven-dep) is silently ignored.
  *
+ * Gradle always auto-configures the `libs` catalog from `gradle/libs.versions.toml`
+ * regardless of what's in `versionCatalogs`. The block declares ADDITIONAL catalogs,
+ * not replacements. The implicit default is only suppressed when `create("libs")` is
+ * present in the block with an explicit `from(files("..."))` path.
+ *
  * Returns the default `[{ name: "libs", tomlPath: "gradle/libs.versions.toml" }]`
- * when the `versionCatalogs` block is absent entirely.
- * Returns `[]` when the block is present but contains no `create()` calls.
+ * when the `versionCatalogs` block is absent entirely or contains no `create()` calls.
  */
 export function parseSettingsCatalogs(content: string): CatalogDescriptor[] {
   const stripped = stripComments(content);
@@ -75,6 +79,14 @@ export function parseSettingsCatalogs(content: string): CatalogDescriptor[] {
       descriptors.push({ name, tomlPath });
     }
     // from("g:a:v") and other non-files forms: silently skip (tomlPath stays null)
+  }
+
+  // Gradle always auto-configures the implicit "libs" catalog from gradle/libs.versions.toml.
+  // The versionCatalogs block declares ADDITIONAL catalogs. Prepend the default only when
+  // no explicit create("libs") with a from(files("...")) path was declared in the block.
+  const hasExplicitLibs = descriptors.some((d) => d.name === "libs");
+  if (!hasExplicitLibs) {
+    return [DEFAULT_CATALOG, ...descriptors];
   }
 
   return descriptors;
