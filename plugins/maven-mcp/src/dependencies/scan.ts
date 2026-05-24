@@ -17,6 +17,15 @@ export type DepSource =
   | { kind: "plugins-dsl"; file: string; module?: string; settingsBlock?: boolean }
   | { kind: "buildscript-classpath"; file: string };
 
+/**
+ * Compile-time exhaustiveness guard. Call from a `default` branch of a switch on a
+ * discriminated union — if any variant is unhandled, TypeScript infers `value: never`
+ * and the call fails to compile. At runtime throws to surface the gap.
+ */
+export function assertNever(value: never): never {
+  throw new Error(`Unhandled DepSource kind: ${JSON.stringify(value)}`);
+}
+
 export interface DepUsage {
   module?: string;       // ":foo" / undefined for root
   configuration: string; // "implementation" / "testImplementation" / "classpath" / "plugin-dsl" / etc.
@@ -262,7 +271,7 @@ function scanMavenRecursive(
 
   const content = readFileSync(pomPath, "utf-8");
   // Use relative path within the module for the file field (always "pom.xml" relative to module root)
-  const pomFile = label == null ? "pom.xml" : `${label.replace(/\//g, "/")}/pom.xml`;
+  const pomFile = label == null ? "pom.xml" : `${label}/pom.xml`;
   for (const dep of parseMavenDependencies(content)) {
     acc.push({
       groupId: dep.groupId,
@@ -318,6 +327,8 @@ export function scanProjectWithSubmodules(projectRoot: string): ScanResult {
         if (!existsSync(path)) continue;
         const content = readFileSync(path, "utf-8");
         processBuildFileDeps(content, file, modulePath, catalogs, catalogEntryMap, dependencies);
+        processPluginsBlock(content, file, modulePath, false, catalogs, catalogEntryMap, dependencies);
+        processBuildscriptClasspath(content, file, dependencies);
         break; // prefer .kts, skip .gradle if .kts found
       }
     }

@@ -1,3 +1,5 @@
+import { stripComments, findAllBlocks, findFirstBlock as _findFirstBlock } from "./gradle-text-utils.js";
+
 export interface ParsedPluginDeclaration {
   pluginId: string;
   version: string | null;
@@ -28,67 +30,11 @@ function resolveKotlinShorthand(arg: string): string {
   return KOTLIN_SHORTHAND_MAP[arg] ?? `org.jetbrains.kotlin.${arg}`;
 }
 
-function stripComments(content: string): string {
-  return content
-    .replace(/\/\*[\s\S]*?\*\//g, "")
-    .replace(/\/\/[^\n]*/g, "");
-}
-
-/**
- * Finds all occurrences of `keyword` in `content` and returns the inner content
- * of the brace-balanced block following each occurrence.
- */
-function findAllBlocks(content: string, keyword: string): string[] {
-  const results: string[] = [];
-  let searchFrom = 0;
-
-  while (true) {
-    const kwIdx = content.indexOf(keyword, searchFrom);
-    if (kwIdx === -1) break;
-
-    const openIdx = content.indexOf("{", kwIdx + keyword.length);
-    if (openIdx === -1) break;
-
-    let depth = 1;
-    let pos = openIdx + 1;
-    while (pos < content.length && depth > 0) {
-      if (content[pos] === "{") depth++;
-      else if (content[pos] === "}") depth--;
-      pos++;
-    }
-
-    if (depth === 0) {
-      results.push(content.slice(openIdx + 1, pos - 1));
-      searchFrom = pos;
-    } else {
-      break;
-    }
-  }
-
-  return results;
-}
-
-/**
- * Finds the brace-balanced block following the first occurrence of `keyword` in `content`
- * starting at `fromIdx`. Returns [innerContent, endIndex] or null if not found.
- */
+// Adapts the shared findFirstBlock to the tuple return shape used internally.
 function findFirstBlock(content: string, keyword: string, fromIdx = 0): [string, number] | null {
-  const kwIdx = content.indexOf(keyword, fromIdx);
-  if (kwIdx === -1) return null;
-
-  const openIdx = content.indexOf("{", kwIdx + keyword.length);
-  if (openIdx === -1) return null;
-
-  let depth = 1;
-  let pos = openIdx + 1;
-  while (pos < content.length && depth > 0) {
-    if (content[pos] === "{") depth++;
-    else if (content[pos] === "}") depth--;
-    pos++;
-  }
-
-  if (depth !== 0) return null;
-  return [content.slice(openIdx + 1, pos - 1), pos];
+  const result = _findFirstBlock(content, keyword, fromIdx);
+  if (result === null) return null;
+  return [result.inner, result.end];
 }
 
 function matchAll(pattern: RegExp, input: string): RegExpMatchArray[] {
@@ -194,6 +140,14 @@ export function parsePluginsBlock(
     while (true) {
       const kwIdx = stripped.indexOf("plugins", pluginSearch);
       if (kwIdx === -1) break;
+
+      // Word-boundary check: the char immediately after "plugins" must be whitespace, "{", or
+      // end-of-string. Rejects false positives like plugins.withType<X>, testPlugins, etc.
+      const charAfter = kwIdx + 7 < stripped.length ? stripped[kwIdx + 7] : "";
+      if (charAfter !== "" && charAfter !== "{" && !/\s/.test(charAfter)) {
+        pluginSearch = kwIdx + 7;
+        continue;
+      }
 
       // Check if this plugins keyword is inside a pluginManagement block
       const insidePm = pmRanges.some(([start, end]) => kwIdx > start && kwIdx < end);

@@ -1,5 +1,5 @@
-import { scanProjectWithSubmodules } from "../dependencies/scan.js";
-import type { ScanResult } from "../dependencies/scan.js";
+import { scanProjectWithSubmodules, assertNever } from "../dependencies/scan.js";
+import type { ScanResult, DepSource } from "../dependencies/scan.js";
 import { findProjectRoot } from "../project/find-project-root.js";
 
 export interface ScanProjectInput {
@@ -12,12 +12,39 @@ interface FlattenedDependency {
   version: string | null;
   configuration: string;
   module?: string;
+  /**
+   * File path of the artifact that declared this dependency.
+   * Catalog entries: TOML file path (e.g. "gradle/libs.versions.toml").
+   * Direct/plugin/buildscript entries: build file name (e.g. "build.gradle.kts", "pom.xml").
+   * Preserved for backward compatibility — use sourceKind for the new discriminator.
+   */
   source: string;
+  /** Discriminator for the dependency source kind (e.g. "catalog-library", "module-direct", "plugins-dsl"). */
+  sourceKind: DepSource["kind"];
 }
 
 export interface FlatScanResult {
   buildSystem: ScanResult["buildSystem"];
   dependencies: FlattenedDependency[];
+}
+
+/**
+ * Returns the file path component of a DepSource for the backward-compatible `source` field.
+ * Catalog entries emit the TOML path; all others emit the build file name.
+ */
+function sourceFilePath(src: DepSource): string {
+  switch (src.kind) {
+    case "catalog-library":
+    case "catalog-plugin":
+      return src.tomlPath;
+    case "module-direct":
+    case "plugins-dsl":
+      return src.file;
+    case "buildscript-classpath":
+      return src.file;
+    default:
+      return assertNever(src);
+  }
 }
 
 /**
@@ -32,7 +59,8 @@ function flattenScanResult(scan: ReturnType<typeof scanProjectWithSubmodules>): 
   const dependencies: FlattenedDependency[] = [];
 
   for (const dep of scan.dependencies) {
-    const sourceLabel = dep.source.kind;
+    const sourceFile = sourceFilePath(dep.source);
+    const sourceKind = dep.source.kind;
     if (dep.usages.length === 0) {
       dependencies.push({
         groupId: dep.groupId,
@@ -40,7 +68,8 @@ function flattenScanResult(scan: ReturnType<typeof scanProjectWithSubmodules>): 
         version: dep.version,
         configuration: "(unused)",
         module: undefined,
-        source: sourceLabel,
+        source: sourceFile,
+        sourceKind,
       });
     } else {
       for (const usage of dep.usages) {
@@ -50,7 +79,8 @@ function flattenScanResult(scan: ReturnType<typeof scanProjectWithSubmodules>): 
           version: dep.version,
           configuration: usage.configuration,
           module: usage.module,
-          source: sourceLabel,
+          source: sourceFile,
+          sourceKind,
         });
       }
     }

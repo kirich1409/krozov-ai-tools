@@ -205,3 +205,8 @@ until the project resolves and compiles successfully.
   trees when needed.
 - This skill does not auto-select unstable/pre-release versions. The MCP server returns
   the latest stable version by default.
+- **Vulnerability detection for plugin entries is not currently supported.** OSV indexes
+  implementation artifacts (e.g. `org.jetbrains.kotlin:kotlin-gradle-plugin`), not plugin
+  marker artifacts (e.g. the `.gradle.plugin` marker). Entries with `source.kind ===
+  "plugins-dsl"` or `"buildscript-classpath"` therefore always return no advisories — this
+  is a known v1 limitation tracked for v2 (marker → implementation GAV resolution via POM).

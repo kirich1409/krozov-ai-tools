@@ -146,6 +146,16 @@ plugins {
     expect(parsePluginsBlock(content, { settings: true })).toEqual([]);
   });
 
+  it("does not match plugins.withType<X> false-positive", () => {
+    // "plugins" followed by "." is not a plugins {} block keyword — must not be parsed
+    const content = `
+tasks.withType<org.jetbrains.kotlin.gradle.tasks.KotlinCompile>().configureEach {
+    plugins.withType<KotlinCompile> { }
+}
+`;
+    expect(parsePluginsBlock(content)).toEqual([]);
+  });
+
   it("ignores commented plugin declarations", () => {
     const content = `
 plugins {

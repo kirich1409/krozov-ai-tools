@@ -453,6 +453,27 @@ buildscript {
     expect(dep).toBeDefined();
   });
 
+  it("source.kind catalog-plugin survives through AuditDependency", async () => {
+    mockFileSystem({
+      "/project/settings.gradle.kts": ``,
+      "/project/gradle/libs.versions.toml": `
+[plugins]
+kotlin-jvm = { id = "org.jetbrains.kotlin.jvm", version = "2.0.0" }
+`,
+      "/project/build.gradle.kts": ``,
+    });
+
+    const repos = [mockRepo(["2.0.0"])];
+    const result = await auditProjectDependenciesHandler(repos, {
+      projectPath: "/project",
+      includeVulnerabilities: false,
+    });
+
+    const dep = result.dependencies.find((d) => d.source.kind === "catalog-plugin");
+    expect(dep).toBeDefined();
+    expect(dep!.source.kind).toBe("catalog-plugin");
+  });
+
   it("productionOnly excludes catalog library whose only usages are testImplementation", async () => {
     mockFileSystem({
       "/project/settings.gradle.kts": ``,

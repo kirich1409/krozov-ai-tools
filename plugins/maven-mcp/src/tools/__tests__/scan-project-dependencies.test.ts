@@ -37,7 +37,8 @@ dependencies {
       artifactId: "ktor-client-core",
       version: "3.1.1",
       configuration: "implementation",
-      source: "module-direct",
+      source: "build.gradle.kts",
+      sourceKind: "module-direct",
     });
   });
 
@@ -71,6 +72,38 @@ unused-lib = { module = "com.example:unused", version = "1.0.0" }
     const unusedDep = result.dependencies.find((d) => d.artifactId === "unused");
     expect(unusedDep).toBeDefined();
     expect(unusedDep!.configuration).toBe("(unused)");
-    expect(unusedDep!.source).toBe("catalog-library");
+    // source emits the TOML file path (backward-compat), not the kind string
+    expect(unusedDep!.source).toBe("gradle/libs.versions.toml");
+    expect(unusedDep!.sourceKind).toBe("catalog-library");
+  });
+
+  it("source field emits file path (backward-compat); sourceKind exposes the new discriminator", () => {
+    mockFileSystem({
+      "/project/settings.gradle.kts": `include(":app")`,
+      "/project/gradle/libs.versions.toml": `
+[libraries]
+ktor-core = { module = "io.ktor:ktor-client-core", version = "3.1.1" }
+[plugins]
+kotlin-android = { id = "org.jetbrains.kotlin.android", version = "2.0.0" }
+`,
+      "/project/app/build.gradle.kts": `
+dependencies {
+    implementation(libs.ktor.core)
+}`,
+    });
+
+    const result = scanProjectDependenciesHandler({ projectPath: "/project" });
+
+    // Catalog library → TOML path in source, "catalog-library" in sourceKind
+    const libDep = result.dependencies.find((d) => d.artifactId === "ktor-client-core");
+    expect(libDep).toBeDefined();
+    expect(libDep!.source).toBe("gradle/libs.versions.toml");
+    expect(libDep!.sourceKind).toBe("catalog-library");
+
+    // Unused catalog plugin → TOML path in source, "catalog-plugin" in sourceKind
+    const pluginDep = result.dependencies.find((d) => d.artifactId === "org.jetbrains.kotlin.android.gradle.plugin");
+    expect(pluginDep).toBeDefined();
+    expect(pluginDep!.source).toBe("gradle/libs.versions.toml");
+    expect(pluginDep!.sourceKind).toBe("catalog-plugin");
   });
 });

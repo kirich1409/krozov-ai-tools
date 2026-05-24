@@ -299,6 +299,71 @@ dependencies {
     expect(dep!.usages).toHaveLength(1);
   });
 
+  it("module-level plugins {} block: id(\"x\") version \"1.0\" in app/build.gradle.kts → kind plugins-dsl, source.module :app, settingsBlock undefined", () => {
+    mockFileSystem({
+      "/project/settings.gradle.kts": `include(":app")`,
+      "/project/app/build.gradle.kts": `
+plugins {
+    id("com.android.application") version "8.0.0"
+}`,
+    });
+
+    const result = scanProjectWithSubmodules("/project");
+    const dep = result.dependencies.find((d) => d.groupId === "com.android.application");
+    expect(dep).toBeDefined();
+    expect(dep!.artifactId).toBe("com.android.application.gradle.plugin");
+    expect(dep!.version).toBe("8.0.0");
+    expect(dep!.source.kind).toBe("plugins-dsl");
+    if (dep!.source.kind === "plugins-dsl") {
+      expect(dep!.source.module).toBe(":app");
+      expect(dep!.source.settingsBlock).toBeUndefined();
+      expect(dep!.source.file).toBe("build.gradle.kts");
+    }
+    expect(dep!.usages).toHaveLength(1);
+    expect(dep!.usages[0]).toEqual({ module: ":app", configuration: "plugin-dsl" });
+  });
+
+  it("alias(libs.plugins.x) in module build.gradle.kts resolves through catalog [plugins] entry — usage appended with module label", () => {
+    mockFileSystem({
+      "/project/settings.gradle.kts": `include(":app")`,
+      "/project/gradle/libs.versions.toml": `
+[plugins]
+kotlin-android = { id = "org.jetbrains.kotlin.android", version = "2.0.0" }
+`,
+      "/project/app/build.gradle.kts": `
+plugins {
+    alias(libs.plugins.kotlin.android)
+}`,
+    });
+
+    const result = scanProjectWithSubmodules("/project");
+    const deps = result.dependencies.filter((d) => d.groupId === "org.jetbrains.kotlin.android");
+    // Only one entry — the catalog plugin entry, no new plugins-dsl dep
+    expect(deps).toHaveLength(1);
+    expect(deps[0].source.kind).toBe("catalog-plugin");
+    expect(deps[0].usages).toHaveLength(1);
+    expect(deps[0].usages[0]).toEqual({ module: ":app", configuration: "plugin-dsl" });
+  });
+
+  it("module-level plugin with apply false still emits", () => {
+    mockFileSystem({
+      "/project/settings.gradle.kts": `include(":lib")`,
+      "/project/lib/build.gradle.kts": `
+plugins {
+    id("com.android.library") version "8.0.0" apply false
+}`,
+    });
+
+    const result = scanProjectWithSubmodules("/project");
+    const dep = result.dependencies.find((d) => d.groupId === "com.android.library");
+    expect(dep).toBeDefined();
+    expect(dep!.source.kind).toBe("plugins-dsl");
+    if (dep!.source.kind === "plugins-dsl") {
+      expect(dep!.source.module).toBe(":lib");
+    }
+    expect(dep!.usages).toHaveLength(1);
+  });
+
   it("settings present but versionCatalogs block empty → no catalog deps emitted", () => {
     mockFileSystem({
       "/project/settings.gradle.kts": `

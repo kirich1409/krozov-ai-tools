@@ -1,3 +1,5 @@
+import { stripComments, extractBlock, extractBlockAt } from "./gradle-text-utils.js";
+
 export interface CatalogDescriptor {
   name: string;
   tomlPath: string;
@@ -7,36 +9,6 @@ const DEFAULT_CATALOG: CatalogDescriptor = {
   name: "libs",
   tomlPath: "gradle/libs.versions.toml",
 };
-
-function stripComments(content: string): string {
-  return content
-    .replace(/\/\*[\s\S]*?\*\//g, "")
-    .replace(/\/\/[^\n]*/g, "");
-}
-
-/**
- * Extracts the inner content of a brace-balanced block starting after `keyword`.
- * Returns the content between the opening `{` and its matching `}`, or null if not found.
- */
-function extractBlock(content: string, keyword: string): string | null {
-  const kwIdx = keyword === "" ? 0 : content.indexOf(keyword);
-  if (kwIdx === -1) return null;
-
-  const startSearchAt = keyword === "" ? 0 : kwIdx + keyword.length;
-  const openIdx = content.indexOf("{", startSearchAt);
-  if (openIdx === -1) return null;
-
-  let depth = 1;
-  let pos = openIdx + 1;
-  while (pos < content.length && depth > 0) {
-    if (content[pos] === "{") depth++;
-    else if (content[pos] === "}") depth--;
-    pos++;
-  }
-
-  if (depth !== 0) return null;
-  return content.slice(openIdx + 1, pos - 1);
-}
 
 /**
  * Parses `dependencyResolutionManagement { versionCatalogs { ... } }` blocks from
@@ -83,7 +55,7 @@ export function parseSettingsCatalogs(content: string): CatalogDescriptor[] {
       tomlPath = chainedMatch[1];
     } else {
       // Block form: extract { ... } block after create("name"), search inside
-      const blockContent = extractBlock(afterCreate, "");
+      const blockContent = extractBlockAt(afterCreate, 0);
       if (blockContent !== null) {
         // Kotlin DSL: from(files("path"))
         const kotlinMatch = blockContent.match(/\bfrom\s*\(\s*files\s*\(\s*["']([^"']+)["']\s*\)\s*\)/);
