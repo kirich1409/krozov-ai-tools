@@ -15,6 +15,7 @@ Reusable expert agents extracted from `developer-workflow` for standalone consum
 | `devops-expert` | CI/CD pipelines, deployment automation, dependency scanning, release workflows | CI/CD work |
 | `business-analyst` | Product and business value evaluation — requirements, scope, MVP, trade-offs | Research review, scope analysis |
 | `debugging-expert` | Read-only root cause analysis before any fix is attempted | Bug investigation |
+| `dependency-evaluator` | Whether a new library is worth adopting — maintenance, activity, reputation, adoption, publisher, license, CVEs | Before adding a new dependency |
 
 ## Standalone use
 

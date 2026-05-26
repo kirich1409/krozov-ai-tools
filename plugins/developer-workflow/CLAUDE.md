@@ -11,7 +11,7 @@ Rules that are not open for discussion. Violating these is an error, not a judgm
 ## Structure
 
 ```
-skills/<name>/SKILL.md    # 11 on-demand skills, each a directory with YAML frontmatter
+skills/<name>/SKILL.md    # 12 on-demand skills, each a directory with YAML frontmatter
 agents/manual-tester.md   # only agent in core (QA executor; covers exploratory mode)
 evals/                    # eval-harness fixtures (gitignored iterations + tracked README)
 ```
@@ -22,7 +22,7 @@ This plugin is part of a split family. Depending on the task, Claude Code will h
 
 | Plugin | Contributes |
 |---|---|
-| `developer-workflow` (this) | 11 on-demand skills + `manual-tester` |
+| `developer-workflow` (this) | 12 on-demand skills + `manual-tester` |
 | `developer-workflow-experts` | `code-reviewer`, `architecture-expert`, `security-expert`, `performance-expert`, `ux-expert`, `build-engineer`, `devops-expert`, `business-analyst`, `debugging-expert` — required, auto-installed as a dependency |
 | `developer-workflow-kotlin` | `kotlin-engineer`, `compose-developer`; skills `migration`, `snapshot` — install for Kotlin/Android/KMP work |
 | `developer-workflow-swift` | `swift-engineer`, `swiftui-developer` — install for Swift/iOS/macOS work |
@@ -43,9 +43,9 @@ Skills in this plugin delegate to engineer agents (kotlin-engineer / compose-dev
 - Skills use YAML frontmatter: `name`, `description` (≤ 1024 chars), optionally `disable-model-invocation`.
 - `code-reviewer` (in `developer-workflow-experts`) is read-only — no Edit, Write, NotebookEdit, or Bash tools.
 
-## Skills roster (11)
+## Skills roster (12)
 
-- Planning / research: `research`, `write-spec`, `reverse-spec`, `multiexpert-review`
+- Planning / research: `research`, `write-spec`, `reverse-spec`, `multiexpert-review`, `evaluate-dependency`
 - Implementation: `check`, `finalize`, `write-tests`
 - QA: `generate-test-plan`, `acceptance`
 - PR: `create-pr`, `drive-to-merge`
