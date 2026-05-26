@@ -1,6 +1,26 @@
 # drive-to-merge — Phase 2.3 Review Handling + 2.4 Decision Table
 
-Fetch review activity, categorize, verify suggestions, propose a concrete action per item, and render the gate.
+Build (or refresh) the branch-change model, fetch review activity, categorize each leftover comment against the whole branch diff, verify suggestions, propose a concrete action per item, and render the gate as a diff-grounded plan.
+
+## 2.3.0 Build (or refresh) the branch-change model
+
+Before touching individual comments, understand what the whole branch does. Every leftover comment is reasoned against this model, not just its own line — a reviewer often flags a symptom whose cause or correct fix lives elsewhere in the branch diff.
+
+First entry this session — build the full model from the complete branch diff:
+
+```bash
+git diff "origin/$BASE"...HEAD
+```
+
+From it, write a short structured understanding (a few lines, not a transcript): what the branch does, which files/areas it touches, and the key behaviors, invariants, and contracts it introduces or changes. Record `analyzed_through_sha` = current `HEAD`.
+
+Subsequent rounds — refresh with the **delta** only, do not re-read the full diff:
+
+```bash
+git diff "<analyzed_through_sha>"...HEAD   # new commits since last analysis
+```
+
+Reconcile the delta into the cached model and advance `analyzed_through_sha` to the new `HEAD`. Persist the compact model summary and `analyzed_through_sha` to the state file (see [`setup.md`](setup.md) `Branch change model`) so the model survives context compaction; on resume, reuse the cached model and re-read only the delta since the stored sha.
 
 ## 2.3.1 Fetch
 
@@ -23,11 +43,7 @@ gh api "repos/$OWNER/$REPO_NAME/issues/$PR_NUMBER/comments" \
 
 For GitLab use `glab api "/projects/$PROJECT/merge_requests/$MR_IID/discussions"` which returns resolution state inline.
 
-Fetch diff:
-
-```bash
-git diff "origin/$BASE"...HEAD
-```
+The branch diff is already loaded into the branch-change model (2.3.0) — do not re-fetch it here.
 
 ## 2.3.2 Filter before categorizing
 
@@ -66,20 +82,21 @@ Priority (derived, used for ordering in the decision table):
 - `P3` = NIT + FIXABLE, SUGGESTION + DISCUSSION
 - `P4` = PRAISE, OUT_OF_SCOPE, NO_ACTION
 
-## 2.3.4 Verify the suggestion against the diff
+## 2.3.4 Verify the suggestion against the branch-change model
 
-For every BLOCKING / IMPORTANT + FIXABLE item:
+For every BLOCKING / IMPORTANT + FIXABLE item, reason about it against the whole branch (the 2.3.0 model), not just the commented line:
 
 1. Is the suggestion correct for this codebase's patterns?
 2. Would it break tests that currently pass?
 3. Is there a comment / ADR / commit message explaining why the current form exists?
 4. Does it apply to all platforms/versions this PR targets?
+5. Does the fix conflict with — or duplicate — something the branch introduces elsewhere, and is the flagged symptom actually caused by a change in another part of the diff? If so, the real fix may live at that other site.
 
 If any check fails → keep the category but change actionability to `DISCUSSION`, record a short note explaining what's wrong with the suggestion.
 
-## 2.3.5 Pattern match across the diff
+## 2.3.5 Pattern match across the branch-change model
 
-For every concrete code pattern mentioned (missing null check, deprecated API, hardcoded string, etc.) — search the rest of the diff for the same shape. Additional locations become part of the same item, not separate ones.
+For every concrete code pattern mentioned (missing null check, deprecated API, hardcoded string, etc.) — search the whole branch diff (all changed files in the 2.3.0 model) for the same shape, not just the local hunk. Additional locations become part of the same item, not separate ones.
 
 ## 2.3.6 Group and dedup
 
@@ -98,10 +115,12 @@ Never output only a category without a proposal. The value of this skill is the 
 
 ## 2.4 Decision table (the gate)
 
-Render in session as a **prioritized list**, not a table. One section per priority bucket present in the round, ordered most critical first. Each item is one short paragraph: bold headline = the gist; then prose with author, location, brief context, and the action — no bullet labels, no `→` arrows, no `Reviewer:` / `Action:` / `Verdict:` fields. Reads like a human issue note, not a form.
+Render in session as a **prioritized list**, not a table — a plan grounded in the whole branch, not a per-line checklist. Open with a one-line **branch context** drawn from the 2.3.0 model so the plan visibly accounts for the entire change set. Then one section per priority bucket present in the round, ordered most critical first. Each item is one short paragraph: bold headline = the gist; then prose with author, location, brief context, and the action — no bullet labels, no `→` arrows, no `Reviewer:` / `Action:` / `Verdict:` fields. Reads like a human issue note, not a form. Where a fix touches related changes elsewhere in the branch, name those sites in the item.
 
 ```
 Round N — review proposals
+
+Branch context: adds nullable userId to the auth flow; touches api/User.kt, api/Repo.kt, ui/Screen.kt.
 
 ## P0 — Blocking
 
@@ -146,6 +165,8 @@ none.
 
 ### Format rules
 
+- One `Branch context:` line right under the title, drawn from the 2.3.0 model — one sentence on what the branch does plus the areas it touches. This frames the plan as diff-grounded; keep it to a single line.
+- When an item's fix touches related changes elsewhere in the branch, name those sites inline (e.g. "same contract at api/Repo.kt:120") so the plan reads as a whole, not a per-line list.
 - Sections in order P0 → P1 → P2 → P3 → P4. Skip empty buckets.
 - Numbering is **continuous** across sections (1, 2, 3 …) — gate commands (`approve`, `skip 1,4`, `stop`) reference these numbers.
 - Each item: `**Bold headline.**` (one sentence on the gist) + `@author, file:line.` + 1–2 sentences of context and action. Snippet inline indented when relevant (≤15 lines).

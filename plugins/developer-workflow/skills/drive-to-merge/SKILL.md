@@ -11,9 +11,9 @@ description: >
 # Drive to Merge
 
 Autonomous end-to-end PR driver. Takes the currently open PR/MR from its present state
-and loops — diagnose CI, categorize review comments, propose fixes, delegate, push,
-re-request review, wait for new activity — until the PR is merged or a true blocker
-requires the user.
+and loops — diagnose CI, categorize review comments against the full branch diff, propose
+fixes, delegate, push, re-request review, wait for new activity — until the PR is merged
+or a true blocker requires the user.
 
 **Core principle:** keep the PR moving. Every obstacle (CI failure, review comment,
 stalled reviewer) is a loop iteration, not a stop. The skill stops only for: the final
@@ -51,7 +51,7 @@ stays the stable orchestration contract.
 |---|---|
 | [`references/setup.md`](references/setup.md) | Phase 1: platform detect, metadata fetch, preconditions, state-file schema, mode precedence on resume |
 | [`references/ci.md`](references/ci.md) | Phase 2.2: run-id extraction from `statusCheckRollup`, log download, classification, CI failure table, infra-flake retry, failure-loop guard |
-| [`references/reviews.md`](references/reviews.md) | Phase 2.3 + 2.4: fetch, categorize, verify, pattern-match, group, propose; decision-table format and gate behaviour |
+| [`references/reviews.md`](references/reviews.md) | Phase 2.3 + 2.4: build/refresh the branch-change model (full diff, then delta), fetch, categorize against the whole branch, verify, pattern-match, group, propose; decision-table format (diff-grounded plan) and gate behaviour |
 | [`references/delegation.md`](references/delegation.md) | Phase 3: edit / delegate / ask-in-thread / dismiss; reply-delivery safety rules; commit + push; re-request review (humans + Copilot) |
 | [`references/polling.md`](references/polling.md) | Phase 4: ScheduleWakeup schedule, delaySeconds matrix, cache-window tuning, poll-cap blocker |
 | [`references/merge.md`](references/merge.md) | Phase 5: pre-merge checks, confirmation UX, final re-check, merge commands; Phase 2.6 rebase companion |
@@ -100,10 +100,12 @@ Investigate failing checks, retry infra flakes, hand code-fix rows to Phase 3. P
 
 ### 2.3 Review handling
 
-Fetch comments, filter already-owned threads, categorize (BLOCKING / IMPORTANT /
-SUGGESTION / NIT / QUESTION / PRAISE / OUT_OF_SCOPE) crossed with actionability (FIXABLE
-/ NEEDS_CLARIFICATION / DISCUSSION / NO_ACTION), verify suggestions against the diff,
-pattern-match, group, and generate a concrete proposal per item. Full procedure in
+Build or refresh the branch-change model first (full branch diff on first entry, delta
+on later rounds), then fetch comments, filter already-owned threads, categorize (BLOCKING
+/ IMPORTANT / SUGGESTION / NIT / QUESTION / PRAISE / OUT_OF_SCOPE) crossed with
+actionability (FIXABLE / NEEDS_CLARIFICATION / DISCUSSION / NO_ACTION). Reason about each
+leftover comment against the whole branch diff — verify suggestions, pattern-match across
+all changed files, group, and generate a concrete proposal per item. Full procedure in
 [`references/reviews.md`](references/reviews.md).
 
 ### 2.4 Decision table (the gate)
@@ -220,6 +222,8 @@ The skill decides these without asking, in any mode:
 **Respect the reviewer.** Push back on wrong suggestions (record as DISCUSSION, draft a counter-reply); do not dress a broken suggestion up as FIXABLE and ship the broken fix.
 
 **Pattern completeness.** Fixing one reported instance while identical problems remain elsewhere in the diff gets the thread reopened. Pattern-match at analysis time, fix at apply time.
+
+**Plan grounded in the full branch diff.** Build a model of the whole change set before responding, and reason about every leftover comment against it — not just its line. A reviewer's comment is often a symptom whose cause or correct fix lives elsewhere in the branch. The decision table is that plan.
 
 **Fail loudly, not silently.** Three CI failures on the same signature, an integrity mismatch, a rebase with logic conflicts — stop and surface, do not retry forever.
 
