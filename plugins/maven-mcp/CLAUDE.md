@@ -85,7 +85,7 @@ src/
 - `scan_project_dependencies` -> local only (no network), delegates to `dependencies/scan.ts`
 - `search_artifacts` -> Maven Central Solr Search API (no repo resolution)
 - `get_dependency_vulnerabilities` -> OSV batch API (`api.osv.dev/v1/querybatch`)
-- `get_dependency_health` -> `resolveAll` (versions/stability/lastUpdated) + POM fetch (SCM URL, license) → GitHub repo discovery → GitHub REST (`fetchRepo`) + releases (cadence) + Search API (`fetchIssueStats`: open/closed counts, close ratio, median time-to-close). Returns raw signals only — verdict is the caller's job. Degrades to `github: null` + `healthError` when no public GitHub repo / rate-limited
+- `get_dependency_health` -> `resolveAll` (versions/stability/lastUpdated) + POM fetch (SCM URL, license) → GitHub repo discovery → GitHub REST (`fetchRepo`) + releases (cadence) + Search API (`fetchIssueStats`: open/closed counts, close ratio, median time-to-close) + owner lookup (`fetchUser`: publisher public-repo count and account age). Returns raw signals only — verdict is the caller's job. Degrades to `github: null` + `healthError` when no public GitHub repo / rate-limited; the owner lookup is non-fatal and yields `null` publisher fields on failure
 - `audit_project_dependencies` -> `scanDependencies` + `resolveAll` (memoized per GA) + `queryOsvBatch` (deduplicated per GAV)
 
 **Deduplication responsibility:** Parsers return raw results; `discoverRepositories()` in `discover.ts` handles URL deduplication.

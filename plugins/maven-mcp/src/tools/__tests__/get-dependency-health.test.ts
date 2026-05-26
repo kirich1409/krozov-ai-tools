@@ -77,7 +77,8 @@ describe("getDependencyHealthHandler", () => {
       .mockResolvedValueOnce(json({ items: [             // recent closed issues
         { created_at: "2024-01-01T00:00:00Z", closed_at: "2024-01-03T00:00:00Z" },
         { created_at: "2024-02-01T00:00:00Z", closed_at: "2024-02-04T00:00:00Z" },
-      ] })) as typeof fetch;
+      ] }))
+      .mockResolvedValueOnce(json({ public_repos: 120, created_at: "2011-05-01T00:00:00Z" })) as typeof fetch;
 
     const { results } = await getDependencyHealthHandler([repo], {
       dependencies: [{ groupId: "io.ktor", artifactId: "ktor-core" }],
@@ -95,6 +96,8 @@ describe("getDependencyHealthHandler", () => {
     expect(r.scm).toEqual({ url: "https://github.com/ktorio/ktor", host: "github" });
     expect(r.github?.stars).toBe(5000);
     expect(r.github?.ownerType).toBe("Organization");
+    expect(r.github?.ownerPublicRepos).toBe(120);
+    expect(r.github?.ownerAccountCreatedAt).toBe("2011-05-01T00:00:00Z");
     expect(r.github?.license).toBe("Apache-2.0");
     expect(r.github?.archived).toBe(false);
     expect(r.github?.issues?.closeRatio).toBeCloseTo(0.92, 2);
@@ -124,7 +127,8 @@ describe("getDependencyHealthHandler", () => {
       .mockResolvedValueOnce(json({ total_count: 100 }))  // closed
       .mockResolvedValueOnce(json({ items: [
         { created_at: "2022-01-01T00:00:00Z", closed_at: "2023-02-05T00:00:00Z" }, // ~400 days
-      ] })) as typeof fetch;
+      ] }))
+      .mockResolvedValueOnce(new Response("not found", { status: 404 })) as typeof fetch; // user lookup fails → null
 
     const { results } = await getDependencyHealthHandler([repo], {
       dependencies: [{ groupId: "io.ktor", artifactId: "ktor-core" }],
@@ -133,6 +137,8 @@ describe("getDependencyHealthHandler", () => {
     const r = results[0];
     expect(r.github?.archived).toBe(true);
     expect(r.github?.ownerType).toBe("User");
+    expect(r.github?.ownerPublicRepos).toBeNull();
+    expect(r.github?.ownerAccountCreatedAt).toBeNull();
     expect(r.signals).toContain("repository archived");
     expect(r.signals).toContain("no license declared");
     expect(r.signals).toContain("high open-issue backlog, low close ratio");

@@ -44,7 +44,8 @@ Collect what is knowable without judgement:
 - **JVM/Maven (preferred path):** if a Maven dependency-intelligence capability is available,
   request latest version + stability, known CVEs for the candidate version, and the library's
   health signals — maintenance (last commit/release, archived), activity (release cadence,
-  open/closed issue counts, close ratio, time-to-close), license, owner type, repository.
+  open/closed issue counts, close ratio, time-to-close), license, owner type, publisher scale
+  (public-repo count, account age), repository.
 - **No such capability / other ecosystems:** gather the equivalents from the web — the project's
   repository, release history, issue tracker, and registry page.
 

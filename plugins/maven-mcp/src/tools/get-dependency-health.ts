@@ -29,6 +29,8 @@ export interface GitHubHealth {
   openIssues: number;
   archived: boolean;
   ownerType: string;
+  ownerPublicRepos: number | null;
+  ownerAccountCreatedAt: string | null;
   lastCommit: string | null;
   lastRelease: string | null;
   releaseCount: number;
@@ -195,6 +197,10 @@ async function evaluateOne(
   ]);
   const { last, cadenceDays, count } = summarizeReleases(releases);
 
+  // Publisher scale/age — non-fatal enrichment, gathered last.
+  const ownerLogin = repoMeta.owner?.login ?? ghRepo.owner;
+  const owner = await client.fetchUser(ownerLogin);
+
   const spdx = repoMeta.license?.spdx_id;
   const license =
     spdx && spdx !== "NOASSERTION" ? spdx : (pomLicenses[0] ?? null);
@@ -205,6 +211,8 @@ async function evaluateOne(
     openIssues: repoMeta.open_issues_count ?? 0,
     archived: Boolean(repoMeta.archived),
     ownerType: repoMeta.owner?.type ?? "unknown",
+    ownerPublicRepos: owner?.public_repos ?? null,
+    ownerAccountCreatedAt: owner?.created_at ?? null,
     lastCommit: repoMeta.pushed_at ?? null,
     lastRelease: last,
     releaseCount: count,

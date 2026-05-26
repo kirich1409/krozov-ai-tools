@@ -29,6 +29,11 @@ export interface IssueStats {
   medianDaysToClose: number | null;
 }
 
+export interface GitHubUser {
+  public_repos: number | null;
+  created_at: string | null;
+}
+
 const GITHUB_API = "https://api.github.com";
 const ACCEPT_HEADER = "application/vnd.github.v3+json";
 
@@ -109,6 +114,24 @@ export class GitHubClient {
       );
       if (!response.ok) return null;
       return (await response.json()) as GitHubRepoMeta;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Publisher/owner account signals: public-repo count and account creation
+   * date, used to gauge maintainer scale and account age. null on failure
+   * (non-fatal — repo metrics still stand without it).
+   */
+  async fetchUser(login: string): Promise<GitHubUser | null> {
+    try {
+      const response = await fetchWithRetry(`${GITHUB_API}/users/${login}`, {
+        headers: this.headers,
+        timeoutMs: 10_000,
+      });
+      if (!response.ok) return null;
+      return (await response.json()) as GitHubUser;
     } catch {
       return null;
     }
