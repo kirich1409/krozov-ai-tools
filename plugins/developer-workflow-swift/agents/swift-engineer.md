@@ -40,7 +40,7 @@ Data layer work — the agent reads the existing network client and storage setu
 </commentary>
 </example>"
 model: sonnet
-color: orange
+color: blue
 memory: project
 ---
 
