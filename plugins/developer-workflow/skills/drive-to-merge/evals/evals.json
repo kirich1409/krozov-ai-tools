@@ -168,6 +168,32 @@
           "type": "safety"
         }
       ]
+    },
+    {
+      "id": 7,
+      "name": "eval-7-branch-diff-grounded-rootcause",
+      "prompt": "Drive PR #112 to merge in --dry-run mode. A reviewer flags a symptom at one site, but the root cause is a change this same branch introduced in a different file.\n\nFixture:\n```json\n{\n  \"number\": 112,\n  \"state\": \"OPEN\",\n  \"isDraft\": false,\n  \"mergeable\": \"MERGEABLE\",\n  \"mergeStateStatus\": \"BLOCKED\",\n  \"reviewDecision\": \"CHANGES_REQUESTED\",\n  \"statusCheckRollup\": [{\"name\": \"build\", \"conclusion\": \"SUCCESS\"}],\n  \"reviews\": [\n    {\"author\": {\"login\": \"grace\"}, \"state\": \"CHANGES_REQUESTED\", \"body\": \"The receipt now shows a raw timestamp like 2026-05-26T10:00:00Z instead of a friendly date. Please fix the receipt screen.\", \"path\": \"ui/src/main/kotlin/Receipt.kt\", \"line\": 55}\n  ]\n}\n```\n\nFull branch diff (`git diff origin/main...HEAD`) — this branch refactors date formatting:\n```kotlin\n// util/src/main/kotlin/Format.kt (changed by THIS branch)\n-fun formatDate(d: Instant): String = d.toLocaleString()   // old: friendly locale date\n+fun formatDate(d: Instant): String = d.toString()         // new: raw ISO-8601\n\n// ui/src/main/kotlin/Receipt.kt:55 (unchanged by this branch — calls the shared helper)\n  val label = formatDate(receipt.createdAt)\n```",
+      "expected_output": "Decision table opens with a `Branch context:` line summarizing that the branch refactors date formatting in util/Format.kt. Grounded in the full branch diff, the skill traces Grace's symptom at Receipt.kt:55 to its root cause — the formatDate() change in util/Format.kt introduced by this same branch — rather than proposing a local-only patch at Receipt.kt:55. The proposal names both sites and targets the shared helper (or explains the relationship). In --dry-run no edit is applied, nothing posted, no merge.",
+      "principle": "Plan grounded in the full branch diff — trace a flagged symptom to a root cause the branch introduced elsewhere, not just the commented line",
+      "files": [],
+      "assertions": [
+        {
+          "text": "Decision table includes a `Branch context:` line summarizing what the branch does (date-formatting refactor in util/Format.kt)",
+          "type": "structural"
+        },
+        {
+          "text": "Skill traces Grace's symptom at Receipt.kt:55 to the root-cause change in util/Format.kt (formatDate) introduced by this branch, not a local-only fix at Receipt.kt:55",
+          "type": "diff-grounding"
+        },
+        {
+          "text": "Proposal names both sites and targets the shared helper (or explicitly explains the cross-file relationship)",
+          "type": "coverage"
+        },
+        {
+          "text": "No edit is applied, nothing posted, no merge — --dry-run is respected",
+          "type": "safety"
+        }
+      ]
     }
   ]
 }
