@@ -61,9 +61,8 @@ investigation first) but answer different questions. Pick by the question, not t
 | **`research`** | "What are the options / is this feasible / which approach?" — needs ≥2 of codebase·web·docs·dependencies·architecture | Durable comparative report in `swarm-report/research/` |
 | **`/write-spec`** | "Specify this *already-decided* feature as an implementation contract" — interview-heavy | Permanent spec in `docs/specs/` |
 
-`research` deliberately yields to plan mode for codebase-only topics: its min-2-tracks rule
-redirects a single-track investigation to a plain Explore agent instead of running the
-consortium. `research` and `write-spec` each run a parallel expert consortium; their
+`research` deliberately steps aside for codebase-only topics: its min-2-tracks rule redirects
+a single-track investigation to a plain inline Explore agent instead of running the consortium. `research` and `write-spec` each run a parallel expert consortium; their
 Codebase / Architecture / Web prompt templates overlap **intentionally** (write-spec's are an
 enriched superset) and are kept as separate per-skill files on purpose — do not collapse them
 into a shared file (same "duplicate + note" idiom as the `acceptance` ↔ `multiexpert-review`
