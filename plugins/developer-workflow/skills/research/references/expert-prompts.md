@@ -2,6 +2,12 @@
 
 Use these prompts verbatim when launching each expert agent in Phase 2. Each agent runs independently — never share one agent's findings with another.
 
+> **Intentional overlap with the `write-spec` skill.** The Codebase / Architecture / Web
+> prompts here overlap with `../../write-spec/references/research-prompts.md`, where they
+> appear as an enriched superset. This skill instead splits Docs and Dependencies into their
+> own dedicated tracks (below). The two files are kept separate **on purpose** so each skill
+> stays self-contained — do not merge them into a shared file.
+
 All prompts must include this line: *"Respond in the same language as the research topic description."*
 
 ---
