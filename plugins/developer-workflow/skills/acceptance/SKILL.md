@@ -7,7 +7,6 @@ description: >
   "QA the implementation", "run the test plan", "validate acceptance criteria",
   "verify the PR", "verify the fix", "confirm bug is gone", "acceptance",
   "verify this", "test this".
-disable-model-invocation: true
 ---
 
 # Acceptance

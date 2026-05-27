@@ -6,7 +6,7 @@ This plugin is the **core** of the `developer-workflow` family:
 
 ```
                  developer-workflow-experts
-                 (9 review/consult agents)
+                 (10 review/consult agents)
                           ▲
                           │ depends on
                           │
@@ -22,7 +22,7 @@ developer-workflow-kotlin          developer-workflow-swift
 
 Installing this plugin automatically pulls `developer-workflow-experts`. Installing `-kotlin` or `-swift` additionally pulls this plugin.
 
-## Skills (11)
+## Skills (12)
 
 Skills are independent on-demand tools — invoke them when the task calls for the capability. They do not orchestrate each other; the model drives sequencing through plan mode.
 
@@ -33,6 +33,7 @@ Skills are independent on-demand tools — invoke them when the task calls for t
 | `/write-spec` | Specification-Driven Development — multi-round interview producing an exhaustive spec |
 | `/reverse-spec` | Reverse-engineer an existing feature from code into a tech-agnostic spec |
 | `/multiexpert-review` | Panel of LLM evaluators (PoLL) review of a plan, spec, or test-plan via the appropriate profile |
+| `/evaluate-dependency` | Vet a new library before adding it — gathers health signals (via maven-mcp when available) + web reputation, delegates to `dependency-evaluator` for an adopt/avoid verdict |
 
 `/research`, `/write-spec`, and built-in **plan mode** all investigate before acting, but
 answer different questions. Use **plan mode** for *"how do I build this already-decided
@@ -70,7 +71,7 @@ For undirected exploratory QA without a spec — call the `manual-tester` agent 
 | `manual-tester` | this plugin | Real-device QA via mobile/browser MCP (disallowed Edit/Write/NotebookEdit) |
 
 Agents from sibling plugins invoked by skills in this plugin:
-- From [`developer-workflow-experts`](../developer-workflow-experts/): `code-reviewer`, `architecture-expert`, `security-expert`, `performance-expert`, `ux-expert`, `build-engineer`, `devops-expert`, `business-analyst`, `debugging-expert`
+- From [`developer-workflow-experts`](../developer-workflow-experts/): `code-reviewer`, `architecture-expert`, `security-expert`, `performance-expert`, `ux-expert`, `build-engineer`, `devops-expert`, `business-analyst`, `debugging-expert`, `dependency-evaluator`
 - From [`developer-workflow-kotlin`](../developer-workflow-kotlin/): `kotlin-engineer`, `compose-developer`
 - From [`developer-workflow-swift`](../developer-workflow-swift/): `swift-engineer`, `swiftui-developer`
 
