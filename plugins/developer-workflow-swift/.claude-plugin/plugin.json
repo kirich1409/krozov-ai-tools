@@ -7,10 +7,7 @@
   },
   "homepage": "https://github.com/kirich1409/krozov-ai-tools",
   "license": "MIT",
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/kirich1409/krozov-ai-tools.git"
-  },
+  "repository": "https://github.com/kirich1409/krozov-ai-tools",
   "category": "development",
   "keywords": [
     "swift",
