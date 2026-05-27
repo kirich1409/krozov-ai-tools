@@ -197,8 +197,15 @@ async function evaluateOne(
 
   if (!ghRepo) {
     if (pomLicenses.length === 0) result.signals.push("no license declared");
-    result.signals.push("no public GitHub repository found");
-    result.healthError = "GitHub repository not found; activity metrics unavailable";
+    if (result.scm && result.scm.host !== "github") {
+      // Source repo is public but hosted on a non-GitHub forge — GitHub metrics simply
+      // aren't available; this is not a transparency red flag.
+      result.signals.push(`SCM hosted on ${result.scm.host}; GitHub metrics unavailable`);
+    } else {
+      // No SCM information at all — genuinely unknown source provenance.
+      result.signals.push("no public GitHub repository found");
+      result.healthError = "GitHub repository not found; activity metrics unavailable";
+    }
     return result;
   }
 

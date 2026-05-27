@@ -34,6 +34,26 @@ const POM_WITHOUT_SCM = `<?xml version="1.0" encoding="UTF-8"?>
   <version>1.0.0</version>
 </project>`;
 
+const POM_WITH_GITLAB_SCM = `<?xml version="1.0" encoding="UTF-8"?>
+<project>
+  <groupId>com.example</groupId>
+  <artifactId>gitlab-lib</artifactId>
+  <version>1.0.0</version>
+  <scm>
+    <url>https://gitlab.com/somegroup/gitlab-lib</url>
+  </scm>
+</project>`;
+
+const POM_WITH_BITBUCKET_SCM = `<?xml version="1.0" encoding="UTF-8"?>
+<project>
+  <groupId>com.example</groupId>
+  <artifactId>bitbucket-lib</artifactId>
+  <version>1.0.0</version>
+  <scm>
+    <url>https://bitbucket.org/somegroup/bitbucket-lib</url>
+  </scm>
+</project>`;
+
 const RECENT = new Date(Date.now() - 5 * 86_400_000).toISOString();
 const OLD = new Date(Date.now() - 760 * 86_400_000).toISOString(); // ~25 months ago
 
@@ -163,6 +183,60 @@ describe("getDependencyHealthHandler", () => {
     expect(r.signals).toContain("no public GitHub repository found");
     expect(r.signals).toContain("no license declared");
     expect(r.healthError).toContain("not found");
+  });
+
+  it("emits non-alarming SCM signal (not healthError) when SCM is on GitLab", async () => {
+    const repo = mockRepo(["1.0.0", "1.1.0"]);
+    (repo.fetchMetadata as ReturnType<typeof vi.fn>).mockResolvedValue({
+      groupId: "com.example",
+      artifactId: "gitlab-lib",
+      versions: ["1.0.0", "1.1.0"],
+      latest: "1.1.0",
+      release: "1.1.0",
+      lastUpdated: "20240101000000",
+    });
+
+    globalThis.fetch = vi.fn()
+      .mockResolvedValueOnce(new Response(POM_WITH_GITLAB_SCM, { status: 200 })) as typeof fetch;
+
+    const { results } = await getDependencyHealthHandler([repo], {
+      dependencies: [{ groupId: "com.example", artifactId: "gitlab-lib" }],
+    });
+
+    const r = results[0];
+    expect(r.github).toBeNull();
+    expect(r.repository).toBeNull();
+    expect(r.scm).toEqual({ url: "https://gitlab.com/somegroup/gitlab-lib", host: "gitlab" });
+    // Non-alarming informational signal — not a transparency red flag
+    expect(r.signals).toContain("SCM hosted on gitlab; GitHub metrics unavailable");
+    // Must NOT be treated as a missing-repo error
+    expect(r.signals).not.toContain("no public GitHub repository found");
+    expect(r.healthError).toBeUndefined();
+  });
+
+  it("emits non-alarming SCM signal (not healthError) when SCM is on Bitbucket", async () => {
+    const repo = mockRepo(["2.0.0"]);
+    (repo.fetchMetadata as ReturnType<typeof vi.fn>).mockResolvedValue({
+      groupId: "com.example",
+      artifactId: "bitbucket-lib",
+      versions: ["2.0.0"],
+      latest: "2.0.0",
+      release: "2.0.0",
+      lastUpdated: "20240101000000",
+    });
+
+    globalThis.fetch = vi.fn()
+      .mockResolvedValueOnce(new Response(POM_WITH_BITBUCKET_SCM, { status: 200 })) as typeof fetch;
+
+    const { results } = await getDependencyHealthHandler([repo], {
+      dependencies: [{ groupId: "com.example", artifactId: "bitbucket-lib" }],
+    });
+
+    const r = results[0];
+    expect(r.scm).toEqual({ url: "https://bitbucket.org/somegroup/bitbucket-lib", host: "bitbucket" });
+    expect(r.signals).toContain("SCM hosted on bitbucket; GitHub metrics unavailable");
+    expect(r.signals).not.toContain("no public GitHub repository found");
+    expect(r.healthError).toBeUndefined();
   });
 
   it("sets healthError when GitHub metadata is unavailable (rate limit)", async () => {
