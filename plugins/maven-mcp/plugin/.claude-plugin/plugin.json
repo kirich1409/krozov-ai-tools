@@ -1,6 +1,6 @@
 {
   "name": "maven-mcp",
-  "version": "0.20.0",
+  "version": "0.21.0",
   "description": "Maven dependency intelligence — auto-registers MCP server, provides /check-deps, /check-deps-vulnerabilities, /latest-version, /dependency-changes, and /dependency-health skills",
   "author": {
     "name": "kirich1409"
@@ -19,7 +19,7 @@
       "command": "npx",
       "args": [
         "-y",
-        "@krozov/maven-central-mcp@^0.20.0"
+        "@krozov/maven-central-mcp@^0.21.0"
       ]
     }
   }
