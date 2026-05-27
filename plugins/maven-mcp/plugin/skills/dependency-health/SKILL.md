@@ -67,5 +67,5 @@ The user provides one or more `groupId:artifactId` coordinates, optionally with 
   present the Maven data that was retrieved and note what is missing.
 - Tool unavailable — stop and tell the user:
 
-  > The maven-mcp plugin is required for this skill. Install it with
-  > `claude plugin add maven-mcp`, then retry.
+  > The `get_dependency_health` tool is not available in the current session.
+  > Check that the maven-mcp MCP server is running and registered, then retry.

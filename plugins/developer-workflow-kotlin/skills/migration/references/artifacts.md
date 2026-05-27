@@ -165,7 +165,7 @@ Last updated: <YYYY-MM-DD>
 ## TC-3: ...
 ```
 
-Priority: follow P0–P3 from qa-and-testing.md §2.
+Priority: follow P0–P3 from `~/.claude/rules/qa-and-testing.md § 2`.
 
 ---
 
