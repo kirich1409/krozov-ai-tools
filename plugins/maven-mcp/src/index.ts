@@ -13,6 +13,7 @@ import { compareDependencyVersionsHandler } from "./tools/compare-dependency-ver
 import { getDependencyChangesHandler } from "./tools/get-dependency-changes.js";
 import { scanProjectDependenciesHandler } from "./tools/scan-project-dependencies.js";
 import { getDependencyVulnerabilitiesHandler } from "./tools/get-dependency-vulnerabilities.js";
+import { getDependencyHealthHandler } from "./tools/get-dependency-health.js";
 import { searchArtifactsHandler } from "./tools/search-artifacts.js";
 import { auditProjectDependenciesHandler } from "./tools/audit-project-dependencies.js";
 import { PACKAGE_VERSION } from "./version.js";
@@ -150,6 +151,22 @@ server.tool(
   },
   async (params) => {
     const result = await getDependencyVulnerabilitiesHandler(params);
+    return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+  },
+);
+
+server.tool(
+  "get_dependency_health",
+  "Assess the health of Maven dependencies before adopting them: latest version & stability, GitHub activity (stars, last commit, release cadence), issue dynamics (open/closed counts, close ratio, median time-to-close), license, owner type, and archived status. Returns raw maintenance/activity/reputation signals — let the caller (or a dependency-evaluator agent) judge whether to adopt. Degrades gracefully when no public GitHub repo exists (closed source / non-GitHub forge).",
+  {
+    dependencies: z.array(z.object({
+      groupId: z.string().describe("Maven group ID"),
+      artifactId: z.string().describe("Maven artifact ID"),
+      version: z.string().optional().describe("Specific version to assess (default: latest)"),
+    })).describe("Dependencies to assess for health"),
+  },
+  async (params) => {
+    const result = await getDependencyHealthHandler(getRepositories(), params);
     return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
   },
 );
