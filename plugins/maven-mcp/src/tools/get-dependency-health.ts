@@ -58,11 +58,23 @@ export interface DependencyHealthResult {
   results: DependencyHealth[];
 }
 
-function scmHost(url: string): string {
-  const u = url.toLowerCase();
-  if (u.includes("github.com")) return "github";
-  if (u.includes("gitlab.com")) return "gitlab";
-  if (u.includes("bitbucket.org")) return "bitbucket";
+export function scmHost(url: string): string {
+  if (!url) return "other";
+  // scp-like SSH form: git@github.com:owner/repo.git — new URL() throws on these
+  const scpMatch = url.match(/^[^/@]+@([^:/]+):/);
+  let host: string;
+  if (scpMatch) {
+    host = scpMatch[1].toLowerCase();
+  } else {
+    try {
+      host = new URL(url).hostname.toLowerCase();
+    } catch {
+      return "other";
+    }
+  }
+  if (host === "github.com" || host.endsWith(".github.com")) return "github";
+  if (host === "gitlab.com" || host.endsWith(".gitlab.com")) return "gitlab";
+  if (host === "bitbucket.org" || host.endsWith(".bitbucket.org")) return "bitbucket";
   return "other";
 }
 

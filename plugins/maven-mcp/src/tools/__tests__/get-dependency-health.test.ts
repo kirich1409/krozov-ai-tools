@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { getDependencyHealthHandler } from "../get-dependency-health.js";
+import { getDependencyHealthHandler, scmHost } from "../get-dependency-health.js";
 import type { MavenRepository } from "../../maven/repository.js";
 
 function mockRepo(versions: string[]): MavenRepository {
@@ -184,5 +184,43 @@ describe("getDependencyHealthHandler", () => {
     });
     expect(r.github).toBeNull();
     expect(r.healthError).toContain("metadata unavailable");
+  });
+});
+
+describe("scmHost", () => {
+  it("detects github from https URL", () => {
+    expect(scmHost("https://github.com/owner/repo")).toBe("github");
+  });
+
+  it("detects github from git:// URL", () => {
+    expect(scmHost("git://github.com/owner/repo")).toBe("github");
+  });
+
+  it("detects github from scp-like SSH URL", () => {
+    expect(scmHost("git@github.com:owner/repo.git")).toBe("github");
+  });
+
+  it("detects gitlab from https URL", () => {
+    expect(scmHost("https://gitlab.com/owner/repo")).toBe("gitlab");
+  });
+
+  it("detects bitbucket from https URL", () => {
+    expect(scmHost("https://bitbucket.org/owner/repo")).toBe("bitbucket");
+  });
+
+  it("returns other for a self-hosted gitlab subdomain", () => {
+    expect(scmHost("https://gitlab.example.com/owner/repo")).toBe("other");
+  });
+
+  it("returns other for an attacker URL containing github.com as a substring", () => {
+    expect(scmHost("https://evil-github.com.attacker.io/x")).toBe("other");
+  });
+
+  it("returns other for an empty string", () => {
+    expect(scmHost("")).toBe("other");
+  });
+
+  it("returns other for a malformed URL", () => {
+    expect(scmHost("not a url at all")).toBe("other");
   });
 });
