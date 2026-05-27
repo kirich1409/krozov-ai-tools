@@ -17,6 +17,7 @@ An MCP server registers tools that Claude can call during a conversation. The se
 | `get_dependency_changes` | Show changes between versions from GitHub changelogs |
 | `scan_project_dependencies` | Scan Gradle/Maven build files and Gradle version catalogs (`gradle/libs.versions.toml`) for dependencies |
 | `get_dependency_vulnerabilities` | Check for known CVEs via OSV.dev |
+| `get_dependency_health` | Assess adoption-worthiness: version/stability, GitHub activity, issue dynamics, license, owner — raw signals for a verdict |
 | `search_artifacts` | Search Maven Central |
 | `audit_project_dependencies` | Full audit: scan + version compare + vulnerability check |
 
@@ -41,7 +42,7 @@ Custom repositories are auto-discovered from Gradle `settings.gradle(.kts)`/`bui
 
 - **Node.js** 18+ (required)
 - **jq** (required when hooks are enabled) — used by the PostToolUse hook script (`plugin/hooks/post-edit-deps.sh`) to parse JSON input
-- **GITHUB_TOKEN** (optional) — set this environment variable to raise GitHub API rate limits from 60 to 5000 requests/hour, used by the `get_dependency_changes` tool to fetch changelogs and release notes
+- **GITHUB_TOKEN** (optional) — set this environment variable to raise GitHub API rate limits from 60 to 5000 requests/hour, used by the `get_dependency_changes` and `get_dependency_health` tools to fetch changelogs, release notes, repository metadata, and issue statistics
 
 ## Installation
 
