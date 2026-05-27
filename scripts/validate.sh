@@ -257,6 +257,36 @@ check_component_paths() {
   done < <(jq -r '.plugins[] | [.name, .source] | @tsv' "$MARKETPLACE")
 }
 
+# ---------- L8: plugin.json scalar field types ----------
+#
+# Claude Code's plugin.json schema requires these fields to be plain strings.
+# npm's package.json allows object forms for some (notably
+# "repository": {"type","url"}), which Claude Code rejects with
+# "Validation errors: <field>: Invalid input: expected string, received object".
+# Catch that here so it never reaches a release.
+
+STRING_FIELDS=(name version description homepage repository license)
+
+check_field_types() {
+  echo "--- L8: plugin.json scalar field types ---"
+  while IFS=$'\t' read -r name source; do
+    plugin_json="${source}/.claude-plugin/plugin.json"
+    [ -f "$plugin_json" ] || continue
+    local plugin_ok=1
+    for field in "${STRING_FIELDS[@]}"; do
+      ftype=$(jq -r --arg f "$field" 'if has($f) then (.[$f] | type) else "absent" end' "$plugin_json")
+      case "$ftype" in
+        absent|string) ;;
+        *)
+          fail "'$name' plugin.json field '$field' must be a string, got $ftype (Claude Code rejects npm-style $ftype)"
+          plugin_ok=0
+          ;;
+      esac
+    done
+    [ "$plugin_ok" -eq 1 ] && ok "'$name' scalar field types"
+  done < <(jq -r '.plugins[] | [.name, .source] | @tsv' "$MARKETPLACE")
+}
+
 # ---------- L6: Hook scripts ----------
 
 check_hook_scripts() {
@@ -314,6 +344,7 @@ main() {
   check_component_paths
   check_hook_scripts
   check_frontmatter
+  check_field_types
 
   if [ -n "$CHECK_TAG" ]; then
     check_tag_versions "$CHECK_TAG"
