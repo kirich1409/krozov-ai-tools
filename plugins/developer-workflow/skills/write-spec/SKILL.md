@@ -152,9 +152,12 @@ Before launching any reviewer, grep all source docs the spec depends on for unad
 
 ```bash
 grep -rniE 'TODO|FIXME|verify|needs investigation|to be confirmed|TBD|XXX' \
+  --exclude='<spec-filename>' \
   docs/dpo/ docs/design/ docs/research/ \
-  2>/dev/null | grep -v '<spec-path>'
+  2>/dev/null
 ```
+
+Replace `<spec-filename>` with the actual spec file name (e.g. `feature-x-spec.md`) so the spec itself is never scanned.
 
 For each hit:
 - **Closed in spec** — spec explicitly addresses (AC, Decision, or Technical Approach paragraph). No action.
@@ -211,9 +214,11 @@ The spec profile (panel: business-analyst + architecture-expert) checks AC falsi
 prerequisite realism, explicit Out of Scope, decisions with rationale, affected-modules
 completeness, blocking vs non-blocking open questions, technical-approach detail.
 
-**Do not shrink the reviewer panel.** If the profile's `optional_if` regex triggers
-include additional reviewers (security-expert on PII/auth/encryption mentions,
-performance-expert on SLA/latency/budget, ux-expert on a11y/UI/UX) — include them all.
+**Do not shrink the reviewer panel.** Include ALL triggered reviewers that are installed —
+if the profile's `optional_if` regex matches (security-expert on PII/auth/encryption,
+performance-expert on SLA/latency/budget, ux-expert on a11y/UI/UX), the engine includes
+them when installed and skips them when not; call out any skipped-due-to-missing reviewer
+rather than silently dropping the perspective.
 Skipping a profile-triggered reviewer because «that domain was already covered in an
 earlier review of the underlying research» is false economy: each multiexpert cycle
 reviews a different artifact (spec vs research are different texts even when they
