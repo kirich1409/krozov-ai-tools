@@ -39,7 +39,17 @@ dependencies {
     expect(deps[0]).toEqual({
       groupId: null, artifactId: null, version: null,
       configuration: "implementation", source: "build.gradle.kts",
-      catalogRef: "ktor.client.core",
+      catalogRef: "libs.ktor.client.core",
+    });
+  });
+
+  it("parses non-libs catalog references", () => {
+    const content = `testImplementation(testLibs.mockk.core)`;
+    const deps = parseGradleDependencies(content);
+    expect(deps[0]).toEqual({
+      groupId: null, artifactId: null, version: null,
+      configuration: "testImplementation", source: "build.gradle.kts",
+      catalogRef: "testLibs.mockk.core",
     });
   });
 
@@ -55,5 +65,12 @@ runtimeOnly("com.example:runtime-lib:1.0")
 
   it("returns empty for no dependencies", () => {
     expect(parseGradleDependencies("plugins { }")).toEqual([]);
+  });
+
+  it("catalog name with underscore: test_libs.foo.bar", () => {
+    const content = `testImplementation(test_libs.foo.bar)`;
+    const deps = parseGradleDependencies(content);
+    expect(deps).toHaveLength(1);
+    expect(deps[0].catalogRef).toBe("test_libs.foo.bar");
   });
 });

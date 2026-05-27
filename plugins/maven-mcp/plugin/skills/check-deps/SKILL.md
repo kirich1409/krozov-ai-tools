@@ -9,76 +9,206 @@ description: >-
 
 # Check Dependencies
 
-Scan the current project for Maven/Gradle dependencies and report available updates.
+Scan the current project — version catalogs, all submodules, plugin DSL blocks, and
+buildscript classpath — and report which dependencies have newer versions available, then
+apply the updates the user confirms.
 
-## Steps
+## Preflight
 
-1. Find build dependency files in the project root:
-   - `gradle/libs.versions.toml` (Gradle version catalog)
-   - `build.gradle.kts` or `build.gradle`
-   - `pom.xml`
+Before doing anything else, confirm the `audit_project_dependencies` MCP tool is available.
+If it is not, stop and tell the user:
 
-2. Read the found files and extract ALL dependencies with their current versions.
-   - For `libs.versions.toml`: parse the `[versions]` and `[libraries]` sections
-   - For Gradle files: find `implementation`, `api`, `compileOnly`, `testImplementation` etc. with group:artifact:version
-   - For `pom.xml`: find `<dependency>` blocks with `<groupId>`, `<artifactId>`, `<version>`
+> The maven-mcp plugin is required for this skill. Install it with
+> `claude plugin add maven-mcp`, then retry.
 
-3. Call the `compare_dependency_versions` MCP tool with the extracted dependencies. Use the EXACT parameter format defined in the tool schema:
+Do not attempt to fall back to manual file parsing — this skill requires the MCP server.
+
+## One-shot scan
+
+Call the tool once with both flags set:
 
 ```json
 {
-  "dependencies": [
-    {"groupId": "io.ktor", "artifactId": "ktor-client-core", "currentVersion": "3.1.2"},
-    {"groupId": "androidx.compose", "artifactId": "compose-bom", "currentVersion": "2025.05.00"}
-  ]
+  "includeVulnerabilities": true,
+  "productionOnly": true
 }
 ```
 
-Do NOT pass dependencies as a string. Do NOT add extra parameters like `stabilityFilter` or `includeSecurityScan` — they don't exist on this tool.
+`productionOnly: true` is the default. It excludes test-scoped usages but still includes
+unused catalog entries — the catalog is the single source of truth for declared versions
+and those entries still need to be kept current.
 
-4. Present results as a markdown table showing only dependencies with available updates:
+Keep the single tool call. Do not read build files manually before or after — the MCP
+server handles all file discovery and parsing.
 
-   | Artifact | Current | Latest Stable | Upgrade |
-   |----------|---------|---------------|---------|
-   | io.ktor:ktor-client-core | 3.1.2 | 3.1.3 | PATCH |
+## Grouping the result
 
-5. If all dependencies are up to date, say so.
+Group `dependencies[]` by `source.kind`. Only include entries where
+`latestVersion !== currentVersion` OR `vulnerabilities.length > 0`. If a group has nothing
+to show, omit that section entirely. If every group is empty, output:
 
-6. After presenting the table, ask the user: "Do you want me to update the versions in the build files? After updating I will verify the project builds successfully."
+> All dependencies up to date.
 
-## Stability policy
+Then skip to the Vulnerabilities section.
 
-- By default, only report **stable** versions. The MCP server returns stable versions by default.
-- Do NOT suggest alpha, beta, RC, milestone, or snapshot versions unless the user explicitly asks for unstable/pre-release versions.
-- If the user asks for unstable versions, call `get_latest_version` with `stabilityFilter: "ALL"` for each dependency.
+---
 
-## After updating versions
+### Catalog libraries (`source.kind === "catalog-library"`)
 
-When the user confirms they want to update versions:
+Columns: alias | current → latest | upgrade type | catalog file | used by
 
-1. Edit the build files with new versions.
+- `alias` — `source.alias`
+- `current → latest` — `currentVersion → latestVersion`
+- `upgrade type` — `upgradeType` (MAJOR / MINOR / PATCH)
+- `catalog file` — `source.tomlPath`
+- `used by` — count of `usages[]` entries; write `N modules` or `unused`
 
-2. **MANDATORY: Run the project build to verify compatibility.** Do NOT skip this step.
-   - Gradle: `./gradlew build` (or `./gradlew assembleDebug` for Android)
-   - Maven: `mvn compile`
-   - Wait for the build to complete fully.
+When the project has more than one catalog (`source.catalogName` differs across entries),
+prefix the alias with the catalog name: `libs.ktor-client-core` vs `bundles.okhttp`.
 
-3. **If the build succeeds:** Report success and list the updated dependencies.
+Example row:
+```
+| ktor-client-core | 2.3.12 → 3.1.3 | MAJOR | gradle/libs.versions.toml | 4 modules |
+```
 
-4. **If the build fails:**
-   - Read the build error output carefully.
-   - Identify which updated dependency caused the incompatibility.
-   - Try to fix the incompatibility (API changes, import updates, deprecation replacements).
-   - If the fix is non-trivial, revert that specific dependency to its previous version.
-   - Re-run the build to confirm it passes.
-   - Report which dependencies were updated and which were reverted with reasons.
+---
 
-5. **Never report "versions updated" without a passing build.** The update is not complete until the project compiles successfully.
+### Catalog plugins (`source.kind === "catalog-plugin"`)
 
-## Important
+Columns: alias | plugin ID | current → latest | upgrade type | catalog file | used by
 
-- Always check `libs.versions.toml` first — it's the modern Gradle standard for version management.
-- Dependencies in `libs.versions.toml` may use version references — resolve them to actual versions.
-- Skip dependencies without explicit versions (e.g., BOM-managed or platform dependencies).
-- **Send ALL dependencies to the MCP tool** — the server searches Maven Central, Google Maven, and Gradle Plugin Portal automatically. Do NOT skip or filter any dependencies by group ID.
-- **Use the exact tool schema** — pass `dependencies` as an array of objects with `groupId`, `artifactId`, `currentVersion` fields. No other format is accepted.
+- `alias` — `source.alias`
+- `plugin ID` — `groupId` (plugin marker convention: `groupId` is the plugin ID)
+- remaining fields same as catalog libraries
+
+---
+
+### Module direct (`source.kind === "module-direct"`)
+
+Columns: module | file | artifact | current → latest | configuration
+
+- `module` — `usages[0].module` if set; otherwise `(root)`
+- `file` — `source.file`
+- `artifact` — `groupId:artifactId`
+- `configuration` — `usages[0].configuration`
+
+Drift flag: if another entry in the result has the same `groupId:artifactId` with
+`source.kind === "catalog-library"`, append a note:
+> ⚠ drift — same artifact declared in catalog and hardcoded here
+
+---
+
+### Plugin DSL (`source.kind === "plugins-dsl"`)
+
+Split into two sub-tables based on `source.settingsBlock`:
+
+**Root / module `plugins {}` block** (`settingsBlock` is `undefined` or `false`):
+
+Columns: plugin ID | current → latest | upgrade type | file
+
+**Settings `pluginManagement { plugins {} }` block** (`settingsBlock === true`):
+
+Same columns.
+
+---
+
+### Buildscript classpath (`source.kind === "buildscript-classpath"`)
+
+Columns: artifact | current → latest | file
+
+> *Note: `buildscript { dependencies { classpath … } }` is the pre-Plugin-DSL style.
+> Consider migrating to `plugins {}` blocks.*
+
+---
+
+## Vulnerabilities
+
+After all upgrade tables, add a separate **Vulnerabilities** section listing every entry
+where `vulnerabilities` is non-empty, regardless of whether an upgrade is available.
+
+Columns: artifact | version | severity | advisory | fixed in | source | where to fix
+
+- `artifact` — `groupId:artifactId`
+- `version` — `currentVersion`
+- `severity` — `vulnerabilities[i].severity` (CRITICAL / HIGH / MEDIUM / LOW / unknown)
+- `advisory` — `vulnerabilities[i].id` (link it if the client renders Markdown)
+- `fixed in` — `vulnerabilities[i].fixedVersion`; if absent write `(no fixed version)`
+- `source` — `source.kind`
+- `where to fix` — `source.tomlPath` for catalog entries; `source.file` for all others
+
+Sort rows: CRITICAL → HIGH → MEDIUM → LOW → unknown, then lexicographic by
+`groupId:artifactId`.
+
+If no vulnerabilities exist, omit this section entirely.
+
+## Confirmation step
+
+Present the full report to the user and **ask before making any edits**. Default
+proposal: update catalog entries first (they are the single source of truth and the
+safest edit).
+
+Ask separately for each non-catalog group (Module direct, Plugin DSL, Buildscript
+classpath) — they require targeted edits in different files and carry more risk.
+
+Flag every entry with `upgradeType === "major"` explicitly — major version bumps may
+contain breaking changes and warrant individual confirmation.
+
+## Edit pass
+
+Apply only the groups the user confirms.
+
+**Catalog libraries / plugins** — `Edit` the `.toml` file at `source.tomlPath`.
+Update the `version` value or the referenced `[versions]` entry if a `version.ref` is
+used. Touch only the version value — do not reformat or reorder unrelated entries.
+
+**Module direct** — `Edit` the file at `source.file` inside the module directory
+indicated by `usages[0].module`. Update the inline version string only.
+
+**Plugin DSL root / module** — `Edit` the root or module `build.gradle[.kts]` file
+(`source.file`). Update the version in the `plugins {}` block.
+
+**Plugin DSL settings** — `Edit` `settings.gradle[.kts]` (`source.file`). Update the
+version in the `pluginManagement { plugins {} }` block.
+
+**Buildscript classpath** — `Edit` the root `build.gradle[.kts]` (`source.file`).
+Update the version in the `buildscript { dependencies { classpath … } }` block.
+
+## Build verification
+
+After every edit pass, verify the project still builds.
+
+- **Gradle:** `./gradlew build` — or `./gradlew :module:dependencies` for a fast
+  dependency-resolve check when a full build is slow.
+- **Maven:** `mvn dependency:tree`.
+
+Do not invent flags. If the `/check` skill is available in the current environment,
+prefer it — it applies the project's own verification sequence.
+
+Surface any build failure immediately. Read the error output, identify which updated
+dependency caused it, attempt to fix the incompatibility (API changes, import updates,
+deprecation replacements). If the fix is non-trivial, revert that specific entry to its
+previous version and note it as "manual upgrade required". Re-run the build to confirm it
+passes.
+
+**Never report "versions updated" without a passing build.** The update is not complete
+until the project resolves and compiles successfully.
+
+## Constraints and non-goals
+
+- **Major version bumps** are flagged in the report and require explicit per-entry
+  confirmation — do not batch-apply them silently.
+- **Multi-catalog `from("g:a:v")` form** (catalog declared as a Maven dependency) is not
+  supported; such entries are not scanned.
+- **`buildSrc/` and convention plugins** are not scanned.
+- **Transitive dependencies** are not enumerated — only direct declarations in build
+  files. Run `./gradlew dependencies` or `mvn dependency:tree` to inspect transitive
+  trees when needed.
+- This skill does not auto-select unstable/pre-release versions. The MCP server returns
+  the latest stable version by default.
+- **Vulnerabilities for plugin entries are typically not detected.** OSV currently indexes
+  implementation artifacts (e.g. `org.jetbrains.kotlin:kotlin-gradle-plugin`), not plugin
+  marker artifacts (e.g. the `.gradle.plugin` marker). Entries with `source.kind ===
+  "plugins-dsl"` or `"buildscript-classpath"` typically return no advisories today — OSV
+  still runs and will surface hits if OSV adds plugin-marker coverage later. For now treat
+  plugin CVEs as a known gap and check the implementation artifact's advisories manually if
+  concerned. v2 will resolve markers to implementation GAVs via POM.
