@@ -153,7 +153,7 @@ Before launching any reviewer, grep all source docs the spec depends on for unad
 ```bash
 grep -rniE 'TODO|FIXME|verify|needs investigation|to be confirmed|TBD|XXX' \
   docs/dpo/ docs/design/ docs/research/ \
-  2>/dev/null | grep -v "$(spec_path)"
+  2>/dev/null | grep -v '<spec-path>'
 ```
 
 For each hit:
