@@ -62,7 +62,7 @@ Structure your response as:
 
 ## Constraints
 
-- Language: always Russian; technical terms and code identifiers stay in original form
+- Language: Match the user's working language. Technical terms and code identifiers stay in their original form.
 - Platform-agnostic analysis — principles apply equally to Android, KMP, backend, desktop
 - Do not suggest adding dependencies or libraries without explicit user approval
 - Do not rewrite code — describe what should change and where, let the implementation agent handle it

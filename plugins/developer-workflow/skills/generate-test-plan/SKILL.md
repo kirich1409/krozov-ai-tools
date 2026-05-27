@@ -1,7 +1,7 @@
 ---
 name: generate-test-plan
 description: >-
-  This skill should be used when the user asks to "create a test plan", "write test cases",
+  Generate a structured test plan when the user asks to "create a test plan", "write test cases",
   "generate QA scenarios", "prepare a testing checklist", "identify what to test", "find edge cases",
   "plan testing coverage", "document test scenarios", "create a QA handoff document", "what should
   I test?", "what are the edge cases?", or "how would you test this?". Also use when the user

@@ -165,11 +165,7 @@ Last updated: <YYYY-MM-DD>
 ## TC-3: ...
 ```
 
-Priority guide:
-- **P0** — crash, data loss, security, payment, auth.
-- **P1** — acceptance criteria from migration scope.
-- **P2** — happy path of each surface.
-- **P3** — edges, boundaries, locale, timezone.
+Priority: follow P0–P3 from qa-and-testing.md §2.
 
 ---
 
@@ -372,14 +368,5 @@ Things observed during the migration that were not migrated (bugs, refactor oppo
 
 - ...
 
-## Sources
-
-- Tech snapshot: ./swarm-report/<slug>-tech-snapshot.md
-- Discover: ./swarm-report/<slug>-discover.md
-- Behavior spec: ./swarm-report/<slug>-behavior-spec.md
-- Test cases: ./swarm-report/<slug>-test-cases.md
-- Manual scenarios: ./swarm-report/<slug>-manual-scenarios.md
-- Strategy: ./swarm-report/<slug>-strategy.md
-- Device verify: ./swarm-report/<slug>-device-verify.md
-- Cleanup: ./swarm-report/<slug>-cleanup-checklist.md
+Sources: all `./swarm-report/<slug>-*.md` artifacts per the index above.
 ```

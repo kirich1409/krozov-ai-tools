@@ -117,7 +117,7 @@ Default to `internal` for everything that is not a public module API; `public` i
 
 For `@JvmInline value class` wrappers around primitives — add `init { require(...) }` when the wrapper enforces a constraint (non-blank, format, range).
 
-See `references/kotlin-style.md` for both rules and project-override behavior.
+See `${CLAUDE_PLUGIN_ROOT}/agents/references/kotlin-style.md` for both rules and project-override behavior.
 
 ```kotlin
 data class Order(
@@ -281,7 +281,7 @@ Write unit tests alongside each layer.
 - **Mandatory** — UseCases with logic, Repository implementations, ViewModels with non-trivial state transitions
 - **Optional** — thin pass-through UseCases (`operator fun invoke() = repository.getOrders()`), pure data classes, mappers without conditionals
 
-For `runTest`, `TestDispatcher`, `Turbine`, and cancellation testing patterns — see `references/coroutines.md`. Its Turbine example covers the ViewModel-testing case.
+For `runTest`, `TestDispatcher`, `Turbine`, and cancellation testing patterns — see `${CLAUDE_PLUGIN_ROOT}/agents/references/coroutines.md`. Its Turbine example covers the ViewModel-testing case.
 
 ---
 

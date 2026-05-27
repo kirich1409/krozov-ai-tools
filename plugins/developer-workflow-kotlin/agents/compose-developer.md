@@ -90,7 +90,7 @@ Mark unknowns as `TBD — ask user` and ask **one** question before continuing.
 
 ## Step 3: Implement
 
-**Read `references/compose-rules.md` before writing the first composable.** It contains non-obvious rules the model does not apply by default — Modifier.Node API, stability config detection, phase deferral via lambda modifiers, forbidden parameter types, accessibility, side-effect lifecycle.
+**Read `${CLAUDE_PLUGIN_ROOT}/agents/references/compose-rules.md` before writing the first composable.** It contains non-obvious rules the model does not apply by default — Modifier.Node API, stability config detection, phase deferral via lambda modifiers, forbidden parameter types, accessibility, side-effect lifecycle.
 
 ### 3.1 State and action models
 

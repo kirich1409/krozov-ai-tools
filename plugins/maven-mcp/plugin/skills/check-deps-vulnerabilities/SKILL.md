@@ -1,7 +1,7 @@
 ---
 name: check-deps-vulnerabilities
 description: >-
-  This skill should be used when the user asks to "check vulnerabilities",
+  Use when the user asks to "check vulnerabilities",
   "scan CVEs", "check dependency vulnerabilities", "are my dependencies
   vulnerable", "security audit dependencies", "find CVEs in deps", "OSV scan",
   or wants to know which Maven/Gradle dependencies have known CVE/GHSA

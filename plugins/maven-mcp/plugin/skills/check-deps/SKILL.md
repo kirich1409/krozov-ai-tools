@@ -1,7 +1,7 @@
 ---
 name: check-deps
 description: >-
-  This skill should be used when the user asks to "check deps", "check dependencies",
+  Use when the user asks to "check deps", "check dependencies",
   "outdated dependencies", "update dependencies", "are my deps up to date", "scan for updates",
   "find outdated libraries", "upgrade dependencies", or wants to know which Maven/Gradle
   dependencies have newer versions available. Scans build files and reports available updates.

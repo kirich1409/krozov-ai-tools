@@ -1,6 +1,6 @@
 ---
 name: research
-description: "Research Consortium — parallel expert investigation of a topic, idea, problem, or technology before implementation. Launches up to 5 domain experts simultaneously (codebase, web, docs, dependencies, architecture), synthesizes findings into a structured report, optionally auto-reviews via business-analyst (product-angled topics) or a tech-sanity self-check (purely technical topics). Use when: \"research\", \"investigate options\", \"investigate approaches\", \"explore this idea\", \"technical spike\", \"feasibility\", \"can we do X?\", \"what are the options for\", \"compare approaches\", \"evaluate alternatives\", \"pros and cons of\", \"before we start — let's understand\", \"what do we need to know before\". Do NOT use for: code review (use code-reviewer agent), multiexpert review (use multiexpert-review), narrow codebase lookup (\"how is X done in our code\" — use Explore agent directly), single-library version or changelog lookup (use a dependency/version lookup tool directly), debugging existing bugs."
+description: "Research Consortium — parallel expert investigation of a topic, idea, problem, or technology before implementation. Launches up to 5 domain experts simultaneously, synthesizes findings, and optionally auto-reviews the result. Use when: \"research\", \"investigate options\", \"investigate approaches\", \"explore this idea\", \"technical spike\", \"feasibility\", \"can we do X?\", \"what are the options for\", \"compare approaches\", \"evaluate alternatives\", \"pros and cons of\", \"before we start — let's understand\", \"what do we need to know before\". Do NOT use for: code review (use code-reviewer agent), multiexpert review (use multiexpert-review), narrow codebase lookup (\"how is X done in our code\" — use Explore agent directly), single-library version or changelog lookup (use a dependency/version lookup tool directly), debugging existing bugs."
 disable-model-invocation: true
 ---
 
@@ -20,15 +20,7 @@ A second, optional layer is the post-synthesis review: in product-angled topics 
 in purely technical topics the orchestrator runs a self-check against a fixed checklist
 (`tech-sanity` mode). The reviewer layer is a defense-in-depth, not the core value.
 
-**Communication policy — non-negotiable.** All clarification with the user happens in the
-chat session via the `AskUserQuestion` tool — never through files. The saved report under
-`./swarm-report/research/` is a **handoff artifact** consumed by downstream skills/agents
-(`/write-spec`, `/multiexpert-review`, Plan Mode, a future research re-run); the user does
-not have to open it to participate in the research. The in-chat summary at Phase 5.3 is what
-the user reads to make decisions. Every blocker the user can answer is resolved in dialogue
-**before** the report is written; the file is never a parking lot for pending questions,
-draft hedges, or "TBD — ask user" placeholders. If something needs the user's input, fire
-`AskUserQuestion` now — do not write it to disk and hope the user opens it.
+**Communication policy — non-negotiable.** All dialogue with the user happens in chat via `AskUserQuestion` — never through files. See Phase 2 state-file setup for the canonical rule.
 
 ---
 
@@ -149,9 +141,7 @@ it helps survive a compaction.
 The `./swarm-report/research/` subdirectory is reserved for **finished deliverables**
 only — the polished report from Phase 5.2 lands there, nothing else.
 
-**What does not go into any file** is the user-facing dialogue — clarification questions
-and the user's answers from Phase 1 / Phase 5.1 round-loops live exclusively in the chat
-session.
+**Communication policy (canonical).** Clarification questions and the user's answers live exclusively in the chat session — never in any file under `./swarm-report/`. The saved report is a **handoff artifact** for downstream skills/agents (`/write-spec`, `/multiexpert-review`, Plan Mode); the user does not have to open it. The in-chat summary at Phase 5.3 is what the user reads to make decisions. Every blocker the user can resolve is surfaced via `AskUserQuestion` in dialogue **before** the report is written. The file is never a parking lot for pending questions, draft hedges, or "TBD — ask user" placeholders — if something needs user input, fire `AskUserQuestion` now.
 
 ---
 
@@ -333,10 +323,7 @@ question per round**, wait for the answer, fold it into the synthesis, then chec
 blocker remains. Stop the moment no blocker remains. Multiple rounds are fine; multiple
 questions in one round are not.
 
-The dialogue lives in chat. The state file may flip to `Status: awaiting-clarification` as
-process metadata, but the question text and the user's answer are never written to any file
-under `./swarm-report/`. Writing a question into a file and waiting for the user to open it
-is a violation of the communication policy — fire `AskUserQuestion` instead.
+The dialogue lives in chat. The state file may flip to `Status: awaiting-clarification` as process metadata — question text and answers are never written to any file.
 
 What does **not** belong in the round-loop:
 - Stylistic preferences that don't change the recommendation.
@@ -350,13 +337,9 @@ What does **not** belong in the round-loop:
 Once the loop exits, ensure `./swarm-report/research/` exists (`mkdir -p` it if needed —
 fresh repos won't have the nested subdir), then write `./swarm-report/research/research-<slug>.md`.
 The report is a finished deliverable for downstream consumers (`/write-spec`,
-`/multiexpert-review`, Plan Mode, a future research re-run) — not a scratchpad and not a
-discussion vehicle with the user. Every section reflects the post-clarification synthesis;
-"Known Unknowns" holds only external factual gaps from above (and is omitted entirely when
-empty); no section contains a question, "TBD — ask user" marker, or any other hook that
-would force the user to open the file to make progress. If you catch yourself wanting to
-write such a hook, return to Phase 5.1 and fire `AskUserQuestion` instead. Mark the state
-file `Status: done`.
+`/multiexpert-review`, Plan Mode, a future research re-run). Every section reflects the
+post-clarification synthesis; "Known Unknowns" holds only external factual gaps (omitted when
+empty). Mark the state file `Status: done`.
 
 ### 5.3 Chat summary
 
@@ -390,15 +373,3 @@ Stop and escalate when:
 - **Missing access** — research needs internal systems / paid APIs / credentials. List what's needed.
 - **Stale/conflicting web data** — sources disagree or look outdated. Flag uncertainty.
 
----
-
-## Output Format and Location
-
-| Artifact | Path | Purpose |
-|---|---|---|
-| Research report | `./swarm-report/research/research-<slug>.md` | Handoff artifact for downstream skills/agents (not a user-facing discussion vehicle) |
-| State file | `./swarm-report/research-<slug>-state.md` | Compaction-resilient progress tracking |
-| Chat summary | — | ≤30-line user-facing post-save output — the primary thing the user reads |
-
-The chat summary is what the user consumes; the research report is what the next skill
-or agent consumes. The state file is operational and may be deleted after completion.
