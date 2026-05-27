@@ -14,13 +14,15 @@ git diff "origin/$BASE"...HEAD
 
 From it, write a short structured understanding (a few lines, not a transcript): what the branch does, which files/areas it touches, and the key behaviors, invariants, and contracts it introduces or changes. Record `analyzed_through_sha` = current `HEAD`.
 
-Subsequent rounds — refresh with the **delta** only, do not re-read the full diff:
+Subsequent rounds — refresh with the **delta** only, do not re-read the full diff. First guard: if `analyzed_through_sha` is non-empty **and** `git merge-base --is-ancestor "<analyzed_through_sha>" HEAD` succeeds, use the delta:
 
 ```bash
 git diff "<analyzed_through_sha>"...HEAD   # new commits since last analysis
 ```
 
-Reconcile the delta into the cached model and advance `analyzed_through_sha` to the new `HEAD`. Persist the compact model summary and `analyzed_through_sha` to the state file (see [`setup.md`](setup.md) `Branch change model`) so the model survives context compaction; on resume, reuse the cached model and re-read only the delta since the stored sha.
+Otherwise (sha empty, or rebase rewrote history so the sha is no longer an ancestor), rebuild from the full diff (`git diff "origin/$BASE"...HEAD`) and reset `analyzed_through_sha` to the current `HEAD`.
+
+Reconcile the result into the cached model and advance `analyzed_through_sha` to the new `HEAD`. Persist the compact model summary and `analyzed_through_sha` to the state file (see [`setup.md`](setup.md) `Branch change model`) so the model survives context compaction; on resume, reuse the cached model and re-read only the delta since the stored sha (same guard applies).
 
 ## 2.3.1 Fetch
 

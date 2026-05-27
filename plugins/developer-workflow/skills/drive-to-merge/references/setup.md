@@ -100,7 +100,7 @@ analyzed_through_sha: <abbreviated sha the model is current as of, or empty befo
 <empty | list of items the skill surfaced to the user>
 ```
 
-On every resume (new session after context compaction) — re-read this file first; do not re-run analysis that already lives in a "Commitments" row unless the reviewer posted new activity. Reuse the stored `Branch change model` rather than rebuilding it from the full diff: re-read only the delta since `analyzed_through_sha` (`git diff <analyzed_through_sha>...HEAD`), reconcile it into the model, and advance the sha.
+On every resume (new session after context compaction) — re-read this file first; do not re-run analysis that already lives in a "Commitments" row unless the reviewer posted new activity. Reuse the stored `Branch change model` rather than rebuilding it from the full diff: re-read only the delta since `analyzed_through_sha` — but only if `analyzed_through_sha` is non-empty **and** `git merge-base --is-ancestor "<analyzed_through_sha>" HEAD` succeeds (i.e. the sha is still an ancestor after any rebase). If the sha is empty or the ancestry check fails, rebuild from the full diff (`git diff "origin/$BASE"...HEAD`) and reset `analyzed_through_sha` to the current `HEAD`.
 
 ### Mode precedence on resume
 
