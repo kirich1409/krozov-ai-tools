@@ -32,7 +32,7 @@ When a bug, missing feature, or adjacent improvement surfaces during the work �
 
 Phase 4 is the only mandatory gate. Every other phase is a checklist for the user, not a blocking state transition. The skill produces material; the user drives progress. Plan mode is the real orchestrator — this skill only supplies the structure.
 
-If you find yourself building a state machine, requiring strict completion of one phase before starting the next, or invoking other skills from inside this one, stop. That is the failure mode of the deleted `code-migration` orchestrator (v0.14.0) and the reason it was removed. See `references/anti-orchestrator.md` for the five concrete criteria that separate this skill from a forced pipeline.
+If you find yourself building a state machine, requiring strict completion of one phase before starting the next, or invoking other skills from inside this one, stop. That is the failure mode of the deleted `code-migration` orchestrator (v0.14.0) and the reason it was removed. See `${CLAUDE_PLUGIN_ROOT}/skills/migration/references/anti-orchestrator.md` for the five concrete criteria that separate this skill from a forced pipeline.
 
 ---
 
@@ -50,7 +50,7 @@ Produce `./swarm-report/<slug>-tech-snapshot.md` covering both FROM and TO:
 
 Verify each fact against authoritative sources — official documentation, the library's own GitHub README, the source code of installed dependencies. Do not rely on training-data memory — APIs and build behavior change.
 
-If the project ships JVM/Kotlin dependencies in a Gradle cache, a source-reading tool (such as `ksrc` if installed) is preferred over web fetches because it sees the exact installed version. For Android platform migrations, an official Android docs search tool (such as the `android` CLI if installed) gives curated guidance; otherwise fall back to web search against `developer.android.com`. See `references/approaches.md` for a list of common FROM/TO pairs and where to find their docs.
+If the project ships JVM/Kotlin dependencies in a Gradle cache, a source-reading tool (such as `ksrc` if installed) is preferred over web fetches because it sees the exact installed version. For Android platform migrations, an official Android docs search tool (such as the `android` CLI if installed) gives curated guidance; otherwise fall back to web search against `developer.android.com`. See `${CLAUDE_PLUGIN_ROOT}/skills/migration/references/approaches.md` for a list of common FROM/TO pairs and where to find their docs.
 
 ---
 
@@ -73,7 +73,7 @@ For investigations that touch the entire codebase, delegate to the Explore subag
 
 ## Phase 3: Behavior-Fix (three planes)
 
-Fix current behavior across three independent planes. Each plane catches what the others miss. The level of investment per plane is calibrated to the migration risk (see `references/behavior-fix.md` for the calibration matrix).
+Fix current behavior across three independent planes. Each plane catches what the others miss. The level of investment per plane is calibrated to the migration risk (see `${CLAUDE_PLUGIN_ROOT}/skills/migration/references/behavior-fix.md` for the calibration matrix).
 
 **Plane A — Code tests.** Characterization tests (Feathers, *Working Effectively with Legacy Code*, ch. 13), contract tests, integration tests, golden snapshots. These run in CI and turn red on regression.
 
@@ -83,7 +83,7 @@ Fix current behavior across three independent planes. Each plane catches what th
 
 Plane A is the strongest but most expensive. Plane B is the cheapest investment with the highest leverage — write the test cases before deciding how much of Plane A to invest in. Plane C is the safety net against unknown unknowns.
 
-See `references/behavior-fix.md` for templates, the calibration matrix (how much of each plane per migration type), and how to balance the investment against migration risk.
+See `${CLAUDE_PLUGIN_ROOT}/skills/migration/references/behavior-fix.md` for templates, the calibration matrix (how much of each plane per migration type), and how to balance the investment against migration risk.
 
 If the FROM stack has zero tests and writing a full Plane A is more expensive than the migration itself — say so, propose dropping Plane A in favor of stronger Planes B and C, and capture the trade-off in Phase 4.
 
@@ -95,7 +95,7 @@ This is the only mandatory blocking phase. Until the user confirms the strategy,
 
 Produce `./swarm-report/<slug>-strategy.md` containing:
 
-1. **Chosen approach** — one of: Branch by Abstraction, Strangler Fig vertical slice, Duplicate-then-delete, Utility refactor. See `references/approaches.md` for the selection matrix.
+1. **Chosen approach** — one of: Branch by Abstraction, Strangler Fig vertical slice, Duplicate-then-delete, Utility refactor. See `${CLAUDE_PLUGIN_ROOT}/skills/migration/references/approaches.md` for the selection matrix.
 2. **Rationale** — why this approach, why not the others, in two sentences.
 3. **Implementation order** — which modules/files/screens go first, second, third. For horizontal migrations: bottom-up by dependency graph. For vertical: simplest screens first to build team confidence.
 4. **Intentional behavioral changes** — explicit list of "behavior X changes from A to B because Y". Anything not on this list must remain identical.
@@ -112,13 +112,13 @@ After approval, the document becomes immutable. Any later change in scope or app
 
 Execute the migration according to the strategy. The four approaches differ in mechanics but share the same hand-off pattern: this skill produces a brief; an engineer agent (`developer-workflow-kotlin:kotlin-engineer` or `developer-workflow-kotlin:compose-developer` depending on layer) writes the code; the main session reviews.
 
-**Branch by Abstraction.** Introduce a shared interface, route all use-sites through it, build the new implementation behind it, then switch and remove the old. See `references/approaches.md` for mechanics, trade-offs, and ordering.
+**Branch by Abstraction.** Introduce a shared interface, route all use-sites through it, build the new implementation behind it, then switch and remove the old. See `${CLAUDE_PLUGIN_ROOT}/skills/migration/references/approaches.md` for mechanics, trade-offs, and ordering.
 
-**Strangler Fig vertical slice.** Migrate one self-contained slice end-to-end on the new stack while the rest of the system continues on the old stack via interop. See `references/approaches.md` for mechanics, trade-offs, and ordering.
+**Strangler Fig vertical slice.** Migrate one self-contained slice end-to-end on the new stack while the rest of the system continues on the old stack via interop. See `${CLAUDE_PLUGIN_ROOT}/skills/migration/references/approaches.md` for mechanics, trade-offs, and ordering.
 
-**Duplicate-then-delete.** Copy the file/class/module, freeze the original, migrate the copy, switch routing, then delete the original. See `references/approaches.md` for mechanics, trade-offs, and ordering.
+**Duplicate-then-delete.** Copy the file/class/module, freeze the original, migrate the copy, switch routing, then delete the original. See `${CLAUDE_PLUGIN_ROOT}/skills/migration/references/approaches.md` for mechanics, trade-offs, and ordering.
 
-**Utility refactor.** Enable the new technology alongside the old, convert use-sites in batches, then remove the old flag — the compiler is the safety net. See `references/approaches.md` for mechanics, trade-offs, and ordering.
+**Utility refactor.** Enable the new technology alongside the old, convert use-sites in batches, then remove the old flag — the compiler is the safety net. See `${CLAUDE_PLUGIN_ROOT}/skills/migration/references/approaches.md` for mechanics, trade-offs, and ordering.
 
 Delegate the actual implementation work. The main session orchestrates, agents implement. See `~/.claude/rules/orchestration.md` for the routing matrix.
 
@@ -146,7 +146,7 @@ For Android device automation, an agent-oriented Android CLI (such as Google's `
 
 Remove the FROM technology fully. Until this phase completes, the migration is not done — coexistence is technical debt, not a milestone.
 
-Walk the ten-item checklist in `references/cleanup.md` top to bottom; each item ends in done / N/A with reason / deferred with sunset date and tracker link.
+Walk the ten-item checklist in `${CLAUDE_PLUGIN_ROOT}/skills/migration/references/cleanup.md` top to bottom; each item ends in done / N/A with reason / deferred with sunset date and tracker link.
 
 Cleanup uses an engineer agent for code edits; review the deletions with `developer-workflow-experts:architecture-expert` if the migration was horizontal (DI, async, build) — these have the highest risk of leaving invisible coupling.
 
@@ -168,7 +168,7 @@ Optionally request a `developer-workflow-experts:code-reviewer` pass on the clea
 
 ---
 
-See `references/approaches.md` for the decision tree.
+See `${CLAUDE_PLUGIN_ROOT}/skills/migration/references/approaches.md` for the decision tree.
 
 ---
 
@@ -186,7 +186,7 @@ All artifacts live in `./swarm-report/`. None are mandatory beyond `<slug>-strat
 - `<slug>-cleanup-checklist.md` — Phase 7 status per item.
 - `<slug>-migration-report.md` — Phase 8 final aggregation.
 
-Templates for each are in `references/artifacts.md`.
+Templates for each are in `${CLAUDE_PLUGIN_ROOT}/skills/migration/references/artifacts.md`.
 
 ---
 
@@ -215,7 +215,7 @@ Stop and renegotiate (return to Phase 4) when:
 
 - The migration of one slice takes 2–3× the original estimate.
 - A new dependency surfaces ("we also need to migrate X to make Y work").
-- The cycle "old depends on new, new depends on old" appears anywhere in the diff. Loops block cleanup. The dependency direction must always be FROM → TO; never TO → FROM. See `references/anti-orchestrator.md` for the dependency-direction enforcement options (Konsist, Lint baseline).
+- The cycle "old depends on new, new depends on old" appears anywhere in the diff. Loops block cleanup. The dependency direction must always be FROM → TO; never TO → FROM. See `${CLAUDE_PLUGIN_ROOT}/skills/migration/references/anti-orchestrator.md` for the dependency-direction enforcement options (Konsist, Lint baseline).
 - A bridge layer outlives its sunset date once already — it is becoming permanent debt.
 - Phase 3 (Behavior-Fix) was skipped on a non-trivial migration. Without recorded behavior, parity is opinion, not evidence.
-- The skill starts calling `/acceptance`, `/finalize`, `/create-pr`, or any other slash command from inside its own phases. The skill is supposed to produce material, not to orchestrate the whole pipeline. See `references/anti-orchestrator.md`.
+- The skill starts calling `/acceptance`, `/finalize`, `/create-pr`, or any other slash command from inside its own phases. The skill is supposed to produce material, not to orchestrate the whole pipeline. See `${CLAUDE_PLUGIN_ROOT}/skills/migration/references/anti-orchestrator.md`.

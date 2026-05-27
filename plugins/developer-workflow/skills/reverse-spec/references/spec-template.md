@@ -269,66 +269,10 @@ This section is for **behavior bugs** — places where the feature does not do w
 take an action the user expects, it reaches an unreachable state. A reimplementation
 must not reproduce these.
 
-Implementation-level concerns (a hardcoded string that bypasses i18n, plaintext
-storage of credentials, a non-cryptographic PRNG) are **not** in scope for §9 —
-they describe how the current code is written, not how the feature behaves. Those
-findings live in a separate `<slug>-hygiene.md` artefact alongside the spec
-(see `references/anti-patterns.md` and `references/analysis-checklist.md` §14 for the
-classification rule).
-
-### What counts as a §9 entry
-
-A finding belongs here only if **all three** are true:
-
-1. **It changes what the user observes.** The feature does X when it should do Y, or
-   crashes, or silently fails. Pure code-quality issues that do not surface
-   externally are not §9 material.
-2. **It is reproducible from code analysis alone, without speculation.** You can
-   point to the exact path and line that produces the wrong behavior.
-3. **It contradicts the feature's intent** as described in §§1-7 of this spec. If
-   the intent is unknown, the finding belongs in §8 Open Questions, not here.
-
-Each entry has four fields:
-
-- **What** — one-line description of the observable misbehavior.
-- **Class** — one of: `crash`, `unreachable state`, `dead UI control`, `wrong-data
-  shown`, `silent failure`, `lost user action`, `incorrect state transition`,
-  `other` (name it).
-- **Evidence** — `path:line` pointer plus short quote / scenario showing the bug.
-- **Consequence** — what the user observes or what intended outcome is missed.
-
-Do not include ambiguous findings. If you are not certain it is a defect (e.g., a
-retry count of 3 with unclear rationale), it belongs in §8 Open Questions. Pass 2 of
-coverage verification requires every §9 entry to have direct evidence plus a stated
-behavior consequence; speculation and "this looks wrong" do not survive that gate.
+See `analysis-checklist.md` §14 for the full classification rule, entry shape, and evidence requirements.
 
 When §9 has no entries, write `N/A — no confirmed behavior defects identified.` The
 absence of the section reads as oversight; explicit `N/A` is the correct signal.
-
-### Example entries
-
-| What | Class | Evidence | Consequence |
-| --- | --- | --- | --- |
-| Sign-in tap crashes on first use | crash | `AuthKoin.kt:12-18` defines the use-case module but no call site loads it — grepped `InitKoin`, `AppModule`, all `platformKoinModule.*.kt` | Tapping the primary action on the sign-in screen throws an unresolved-dependency error and the app crashes |
-| Sign-up link does nothing | dead UI control | `DefaultAuthComponent.kt:32` opens `https://accounts.frame.io/welcome` via the deep-link processor; no matcher is registered for that URL anywhere in the repo | The secondary link silently no-ops when tapped — the user has no way to start sign-up from inside the app |
-| Generic error shown when the OAuth provider explicitly denied access | wrong-data shown | `AuthUseCase.kt:46-53` maps every non-network OAuth failure (including provider `error=access_denied`) to the same "Unknown error" copy | The user who chose to deny consent on the provider screen is shown an error message implying something is broken, when in fact the system worked correctly |
-
-### What goes in `<slug>-hygiene.md` instead
-
-If you find any of the following, capture them in the hygiene artefact, not in §9:
-
-- Hardcoded strings that bypass localization
-- Non-cryptographic randomness for security-sensitive values
-- Tokens or secrets stored without encryption
-- Logging of sensitive data
-- Code-style inconsistencies (mixed conventions, dead code, copy-pasted blocks)
-- Missing input validation that does not yet manifest as a behavior bug
-- Test gaps
-
-These are valuable findings for the engineering team, but they are about *how* the
-code is written. The feature spec describes *what the feature does*. Mixing the two
-makes the spec less useful for product readers and dilutes the defect signal for
-reimplementers.
 
 <!-- ============================================================ -->
 <!-- Part C — Technical integration (§§10-12)                       -->
@@ -354,20 +298,7 @@ part of the identity.
 | Refresh tokens | POST | `https://{idp-host}/token` | none | Access token within 60 s of expiry, or host requests refresh | `grant_type=refresh_token`, `refresh_token`, `client_id` | same shape as exchange |
 | Fetch current user | GET | `https://{api-host}/v4/users/me` | `Authorization: Bearer {access_token}` | Immediately after a successful token exchange | — | `id` (used); other fields ignored |
 
-Column rules:
-
-- **Operation** — short business name (not the code method that calls it).
-- **Method** — HTTP verb; `WS` / `SSE` / `GQL` acceptable for non-REST protocols.
-- **Endpoint** — URL pattern with path parameters in `{braces}`. Host placeholders
-  (`{idp-host}`, `{api-host}`) expand via §10.5 External services — which pins each
-  host to a concrete provider (or lists the fallbacks).
-- **Auth** — `none`, `Bearer`, `Basic`, custom header name, or reference to the spec
-  section that defines the scheme.
-- **Triggered when** — the user action or state transition that fires the call. If
-  triggered by a background timer / lifecycle event, say so.
-- **Key request / response fields** — only fields the feature actually reads or sends.
-  Full wire contracts live in §10.6 Data contracts. Use *wire* names, never code
-  names.
+Column notes: `WS` / `SSE` / `GQL` are acceptable Method values for non-REST protocols; host placeholders (e.g. `{idp-host}`) resolve via §10.5.
 
 If the feature does not talk to the network: `N/A — this feature runs entirely offline
 within the app.` Explicit N/A, not an omitted subsection.
@@ -459,18 +390,7 @@ service the code touches.
 | --- | --- |
 | *<role, in business terms>* | <what the feature relies on this collaborator for, named at the level of behavior — "validates payment input", "delivers OAuth result back to the app", "renders authenticated user session", not "calls `validate(input)` on `PaymentValidator`"> |
 
-Types of collaborators worth naming:
-
-- **Configuration sources** — what values the host must supply (provider host names,
-  API keys, feature flags, supported scopes). Do not name DI containers or factory
-  functions — name the values needed.
-- **Services and capabilities** — what host capabilities the feature consumes
-  (in-app navigation, an HTTP client that adds auth headers, deep-link routing).
-  Name the *capability* (e.g., "an authenticated HTTP client that attaches the
-  current bearer token"); name the SDK or class only when load-bearing per
-  `tech-abstraction.md`.
-- **Shared state** — what app-wide state streams the feature reads from (current
-  authenticated session, current locale, current theme).
+Name collaborators by *capability*: configuration values the host must supply, services the feature consumes (e.g., "authenticated HTTP client"), shared app-wide state streams it reads from.
 
 **Consumers** — what other features observe or depend on from this feature.
 
@@ -478,14 +398,7 @@ Types of collaborators worth naming:
 | --- | --- |
 | *<feature or surface>* | <what this feature provides to them — named at observable level> |
 
-Types of consumers worth naming:
-
-- Downstream features that receive a navigation argument on successful completion.
-- Other features that observe shared state this feature owns (current session,
-  current user id).
-- Storage slots written by this feature that downstream consumers read (the
-  feature is the writer of "user is authenticated"; the rest of the app is the
-  reader).
+Name consumers by *observable outcome*: downstream features that receive a navigation argument on completion, features that read shared state this feature owns, storage slots this feature writes that others read.
 
 #### Preconditions
 
@@ -590,9 +503,7 @@ Examples:
 - **OAuth 2.0 native apps** — [RFC 8252](https://datatracker.ietf.org/doc/html/rfc8252) — guidance for OAuth in native applications, including loopback redirect on desktop.
 - **Google ML Kit Face Detection** — [`developers.google.com/ml-kit/vision/face-detection`](https://developers.google.com/ml-kit/vision/face-detection) — on-device face detector.
 
-A reimplementer who follows a link should land on the canonical source — the
-provider's own documentation, the IETF datatracker, the standard's authoring body.
-Do not link to blog posts, tutorials, or third-party explanations.
+Link to canonical sources only — the provider's own docs, the IETF datatracker, the standard's authoring body. Do not link to blog posts, tutorials, or third-party explanations.
 
 If the feature has no external dependencies worth linking, write `N/A — feature is
 self-contained, no external systems involved.` Otherwise, every external system
@@ -640,19 +551,3 @@ The code map is a maintenance artifact — it helps a future reader (or a re-run
 skill) verify that the spec still matches the code.
 ```
 
----
-
-## Notes on the template
-
-- **Section order is fixed.** Reorder only for a very strong reason.
-- **N/A is a positive statement**, not a blank. It tells the reader "we considered this
-  and decided the feature has no handling" — which is different from "we forgot".
-- **Exact copy goes in double quotes.** A paraphrase is a translation; a quote is a
-  contract.
-- **Numeric values are literal.** "Several seconds" is not acceptable — write "3 seconds"
-  if the code says so.
-- **When in doubt, add to Open Questions.** Unresolved items in Section 8 are honest;
-  invented resolutions in the body are corrupting.
-- **Bidirectional cross-refs.** Every `[OQ-N]` marker in the body has a matching entry
-  in §8, and every §8 entry that has body impact carries at least one `[OQ-N]`
-  reference from the body.

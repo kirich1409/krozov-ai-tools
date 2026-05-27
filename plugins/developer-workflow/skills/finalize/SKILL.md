@@ -1,10 +1,10 @@
 ---
 name: finalize
 description: >
-  This skill should be used when the user wants a code-quality pass over the current branch —
-  multi-round review-and-fix loop that polishes how the code is written, not what it does.
-  Runs code-reviewer, /simplify, optional pr-review-toolkit trio, and conditional expert reviews
-  with /check between rounds; exits PASS when no BLOCK findings remain or ESCALATE after max rounds.
+  Run a code-quality pass over the current branch — multi-round review-and-fix loop that
+  polishes how the code is written, not what it does. Runs code-reviewer, /simplify,
+  optional pr-review-toolkit trio, and conditional expert reviews with /check between
+  rounds; exits PASS when no BLOCK findings remain or ESCALATE after max rounds.
   Triggers: "finalize", "run code quality pass", "clean up the code", "prepare for review",
   "polish the code", "tidy up", "harden the implementation".
 ---

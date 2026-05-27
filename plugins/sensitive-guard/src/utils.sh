@@ -43,10 +43,6 @@ sg_log_error() {
   echo "[sensitive-guard] ERROR: $1" >&2
 }
 
-sg_is_file() {
-  [[ -f "$1" ]]
-}
-
 sg_resolve_path() {
   local path="$1"
   # Expand ~ and known variables

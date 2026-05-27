@@ -1,8 +1,8 @@
 ---
 name: drive-to-merge
 description: >
-  This skill should be used when the user wants an existing PR/MR driven to merge —
-  monitor CI, triage review comments, fix failures, re-request review, loop until merged.
+  Drive an existing PR/MR to merge — monitor CI, triage review comments, fix failures,
+  re-request review, loop until merged.
   Triggers: "drive this PR to merge", "get this PR merged", "monitor CI and reviews",
   "ship this PR", "land this PR", "take this PR all the way", "merge this PR for me".
   Do NOT use for creating new PRs (use create-pr) or code written from scratch (use implement).

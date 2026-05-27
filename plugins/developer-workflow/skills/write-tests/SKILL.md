@@ -1,6 +1,6 @@
 ---
 name: write-tests
-description: "This skill should be used to write retroactive tests for existing code — classes, modules, or directories lacking coverage — and to write a focused regression test for a specific bug fix. Discovers test infrastructure, plans test cases, delegates generation to platform engineer agents (kotlin-engineer, compose-developer, swift-engineer, swiftui-developer), verifies tests pass. Use when: \"write tests for\", \"add tests to\", \"test this class\", \"increase coverage\", \"add unit tests\", \"this code has no tests\", \"cover with tests\", \"retroactive tests\", \"add regression test for this fix\", \"write a test that catches this bug\", \"regression test after fixing\", \"test to verify the fix\". Do NOT use when: user wants a test plan document (use generate-test-plan), run tests on live app (use acceptance), exploratory QA (call manual-tester agent directly), or tests are part of a new feature (engineer agent handles inline)."
+description: "Write retroactive tests for existing code — classes, modules, or directories lacking coverage — and write a focused regression test for a specific bug fix. Discovers test infrastructure, plans test cases, delegates generation to platform engineer agents (kotlin-engineer, compose-developer, swift-engineer, swiftui-developer), verifies tests pass. Use when: \"write tests for\", \"add tests to\", \"test this class\", \"increase coverage\", \"add unit tests\", \"this code has no tests\", \"cover with tests\", \"retroactive tests\", \"add regression test for this fix\", \"write a test that catches this bug\", \"regression test after fixing\", \"test to verify the fix\". Do NOT use when: user wants a test plan document (use generate-test-plan), run tests on live app (use acceptance), exploratory QA (call manual-tester agent directly), or tests are part of a new feature (engineer agent handles inline)."
 ---
 
 # Write Tests
@@ -63,14 +63,9 @@ The goal is simple: generated tests must look hand-written. Never introduce a ne
 
 See [`references/test-infrastructure-discovery.md`](references/test-infrastructure-discovery.md) for the detection tables (frameworks, assertions, mocking, async, UI, DI, naming, placement, setup, assertion style) and the exact Test Infrastructure Summary template.
 
-### Framework detection (canonical algorithm)
+### Framework detection
 
-Engineer agents (`kotlin-engineer`, `compose-developer`, `swift-engineer`, `swiftui-developer`) follow this fixed order. Stop at the first step that yields a definite answer.
-
-1. **Inspect existing test files** in the **module being modified** first, then the wider project, in conventional locations (`src/test/`, `src/androidTest/`, `Tests/`, `spec/`). Existing tests are the strongest signal — they win over build-file dependencies, since a project may keep multiple test libraries declared but actually use only one.
-2. **Inspect the build file** for test-framework dependencies — used only when the module under change has no existing tests.
-3. **Match the existing project**, even when multiple frameworks coexist. In a mixed project, follow the framework already in use **in the module being modified**. Never introduce a new framework or style without explicit user approval.
-4. **Apply the platform default** only when no signal exists in the project. Defaults: Android/Kotlin JVM → JUnit 5 + MockK; KMP → `kotlin.test`; Compose UI → `androidx.compose.ui:ui-test-junit4`; iOS toolchain ≥ 5.9 → `swift-testing`; toolchain < 5.9 → XCTest; SwiftUI → engineer asks one question (XCUITest / ViewInspector / snapshot) and records the answer.
+Engineer agents follow the canonical algorithm from [`references/test-infrastructure-discovery.md`](references/test-infrastructure-discovery.md): existing test files in the module under change → build-file dependencies → match the project's existing framework → platform default (Android/Kotlin JVM: JUnit 5 + MockK; KMP: `kotlin.test`; Compose UI: `ui-test-junit4`; iOS ≥ 5.9: `swift-testing`; iOS < 5.9: XCTest; SwiftUI: ask one question). Stop at the first step that yields a definite answer; never introduce a new framework without explicit user approval.
 
 Other ecosystems (Java-only, JS/TS, Rust, etc.) are out of scope for `write-tests` delegation in this plugin; surface them to the user.
 
@@ -340,15 +335,6 @@ Reference this file in the PR body.
 
 ## Constraints
 
-- **Orchestrator only** — this skill plans and delegates; the platform engineer agents
-  (`kotlin-engineer`, `compose-developer`, `swift-engineer`, `swiftui-developer`) write the
-  actual test code
-- **No production code changes** — if tests reveal bugs, report them as findings.
-  Do not fix the production code. The user decides what to do with findings.
-- **Match existing conventions** — generated tests must be indistinguishable from
-  hand-written tests in the project. Never introduce a new framework or style.
-- **No new dependencies** — use only what's already in the project's test dependencies.
-  If a needed library is missing, note it in the report and ask the user before adding.
 - **Test plans are optional input** — this skill consumes test plans from
   `generate-test-plan` when they exist, but works independently without one.
 - **No swarm-report artifact for tests** — the test files themselves are the artifact.

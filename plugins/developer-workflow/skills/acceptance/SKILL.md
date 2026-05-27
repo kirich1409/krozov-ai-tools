@@ -1,9 +1,9 @@
 ---
 name: acceptance
 description: >
-  This skill should be used when the user wants to confirm an implementation meets its spec
-  (feature) or that a bug no longer reproduces (bug fix). Fans out parallel checks and
-  aggregates verdicts into one receipt. Triggers: "test this", "verify against spec",
+  Verify an implementation against its spec (feature) or confirm a bug no longer reproduces
+  (bug fix). Fans out parallel checks and aggregates verdicts into one receipt.
+  Triggers: "test this", "verify against spec",
   "QA the implementation", "run the test plan", "validate acceptance criteria",
   "verify the PR", "verify the fix", "confirm bug is gone", "acceptance",
   "verify this", "test this".

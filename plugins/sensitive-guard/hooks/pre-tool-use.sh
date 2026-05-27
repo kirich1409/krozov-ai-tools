@@ -5,8 +5,7 @@ set -euo pipefail
 # Reads tool call JSON from stdin, scans target files for sensitive data,
 # prompts user, and blocks or allows based on their choice.
 
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-PLUGIN_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-$(cd "$(dirname "$0")/.." && pwd)}"
 
 # Source all modules
 source "$PLUGIN_ROOT/src/utils.sh"

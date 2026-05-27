@@ -8,7 +8,7 @@
   "plugins": [
     {
       "name": "maven-mcp",
-      "description": "Maven dependency intelligence \u2014 auto-registers MCP server, provides /check-deps, /check-deps-vulnerabilities, /latest-version, and /dependency-changes skills",
+      "description": "Maven dependency intelligence \u2014 auto-registers MCP server, provides /check-deps, /check-deps-vulnerabilities, /latest-version, /dependency-changes, and /dependency-health skills",
       "author": {
         "name": "kirich1409"
       },

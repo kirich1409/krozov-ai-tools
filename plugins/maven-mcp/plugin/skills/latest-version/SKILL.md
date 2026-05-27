@@ -1,7 +1,7 @@
 ---
 name: latest-version
 description: >-
-  This skill should be used when the user asks to "find the latest version", "what version is",
+  Use when the user asks to "find the latest version", "what version is",
   "current version of", "what's the latest", "check version", "find version", or provides a
   groupId:artifactId and wants version information. Finds the latest version of a Maven artifact.
 ---

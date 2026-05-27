@@ -1,9 +1,9 @@
 ---
 name: multiexpert-review
 description: >-
-  This skill should be used when the user wants a plan, spec, or test-plan reviewed by a
-  panel of independent expert agents (PoLL — Panel of LLM Evaluators — protocol) before
-  committing. Triggers: "review the plan", "review the spec", "review the test-plan",
+  Use when the user wants a plan, spec, or test-plan reviewed by a panel of independent
+  expert agents (PoLL — Panel of LLM Evaluators — protocol) before committing.
+  Triggers: "review the plan", "review the spec", "review the test-plan",
   "multi-expert review", "panel review", "validate the approach", "sanity check this",
   "what did I miss?", "review the spec", "review the test-plan",
   "evaluate the plan". Do NOT use for code review (use code-reviewer).
