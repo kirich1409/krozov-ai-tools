@@ -40,7 +40,7 @@ graph TB
     swift -.->|dependency| experts
 
     maven -->|"MCP tools для<br/>проверки зависимостей"| workflow
-    kotlin -.->|"kmp-migration использует<br/>maven-mcp для анализа deps"| maven
+    kotlin -.->|"migration использует<br/>maven-mcp для анализа deps"| maven
 
     style maven fill:#4a9eff,color:#fff
     style guard fill:#ff6b6b,color:#fff
@@ -404,9 +404,8 @@ flowchart LR
 
 | Skill | Команда | Назначение |
 |-------|---------|------------|
-| code-migration | `/code-migration` | Замена технологии/библиотеки с гарантией поведенческой эквивалентности |
-| kmp-migration | `/kmp-migration` | Миграция Android-модуля в Kotlin Multiplatform |
-| migrate-to-compose | `/migrate-to-compose` | Миграция View-based UI в Jetpack Compose |
+| migration | `/migration` | Guided 8-phase migration between technologies — View→Compose, Android→KMP, Databinding→ViewBinding, DI, async, build plugin — с гарантией поведенческой эквивалентности |
+| snapshot | `/snapshot` | Фиксация текущего поведения кода перед миграцией или рефакторингом |
 
 #### Agents
 
@@ -450,9 +449,7 @@ flowchart TB
     end
 
     subgraph kotlin_p ["developer-workflow-kotlin"]
-        migrate[/migrate-to-compose/]
-        kmp[/kmp-migration/]
-        codeMig[/code-migration/]
+        mig[/migration/]
         ke[kotlin-engineer]
         cd[compose-developer]
     end
@@ -475,9 +472,7 @@ flowchart TB
     end
 
     impl --> ke & cd & se & sd
-    migrate --> cd
-    kmp --> ke
-    codeMig --> ke & cd
+    mig --> ke & cd
     debug --> de
     research --> arch & ba
     decompose --> arch & ba
@@ -572,9 +567,8 @@ flowchart LR
 | `/drive-to-merge` | developer-workflow | Автономный CI+review loop: categorize → propose concrete fix → delegate → reply → resolve → re-request review (Copilot + люди) → poll → merge (с подтверждением пользователя) |
 | `/feature-flow` | developer-workflow | Оркестратор полного цикла feature (setup → research → plan → implement → PR → merge) |
 | `/bugfix-flow` | developer-workflow | Оркестратор bugfix (setup → debug → implement → PR → merge) |
-| `/code-migration` | developer-workflow-kotlin | Миграция технологии/библиотеки |
-| `/kmp-migration` | developer-workflow-kotlin | Миграция модуля в Kotlin Multiplatform |
-| `/migrate-to-compose` | developer-workflow-kotlin | Миграция View → Compose |
+| `/migration` | developer-workflow-kotlin | Guided 8-phase migration — View→Compose, Android→KMP, DI, async, build plugin и другие |
+| `/snapshot` | developer-workflow-kotlin | Фиксация текущего поведения кода перед миграцией или рефакторингом |
 
 ---
 

@@ -1,7 +1,7 @@
 {
   "name": "developer-workflow-kotlin",
-  "version": "0.19.0",
-  "description": "Kotlin, Android, and KMP specialist agents and migration skills \u2014 kotlin-engineer, compose-developer, migration, kmp-migration, migrate-to-compose, snapshot, databinding-to-viewbinding. Extends developer-workflow for Kotlin/Android projects.",
+  "version": "0.20.0",
+  "description": "Kotlin, Android, and KMP specialist agents and migration skills \u2014 kotlin-engineer, compose-developer, migration, snapshot. Extends developer-workflow for Kotlin/Android projects.",
   "author": {
     "name": "kirich1409"
   },
@@ -18,11 +18,11 @@
   "dependencies": [
     {
       "name": "developer-workflow",
-      "version": "^0.19.0"
+      "version": "^0.20.0"
     },
     {
       "name": "developer-workflow-experts",
-      "version": "^0.19.0"
+      "version": "^0.20.0"
     }
   ]
 }
