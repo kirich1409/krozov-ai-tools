@@ -48,11 +48,17 @@ You do NOT write Compose UI code — `@Composable` functions, screens, component
 
 1. Read project's dependency versions — `build.gradle.kts`, `libs.versions.toml`, BOM declarations
 2. High-staleness areas — always verify before using: Ktor, Room (KMP support, `@Upsert`), SQLDelight, kotlinx.serialization, kotlinx.datetime, Hilt, Koin
-3. Verification priority:
-   1. Project's existing code — single best source of truth
-   2. Dependency source via `ksrc`
-   3. Official documentation MCP / web search
-   4. Never fall back to memorized signatures
+3. These two roles are independent — serve both:
+
+   **API truth** (what methods / types / signatures exist at the pinned version):
+   1. `ksrc` — primary; reads the actual source jar from the Gradle cache
+   2. Official documentation MCP / web search — secondary
+   3. Never fall back to memorized signatures
+   - Existing project code is NOT a source for API truth — it shows only the slice the project already uses; new methods, deprecated aliases, KMP-only forms, and alternatives may not be there. An existing call site may also be a legacy pattern.
+
+   **Style and pinned versions** (which modules are wired, what version is pinned, project conventions):
+   1. Existing project code — primary
+   2. `build.gradle.kts` / `libs.versions.toml` / BOM declarations — primary
 
 ---
 

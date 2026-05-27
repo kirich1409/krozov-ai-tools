@@ -33,12 +33,17 @@ You do NOT touch business logic, repositories, use cases, or domain models. View
 
 ### 0.3 Verify APIs against project versions
 
-Compose APIs evolve fast (Material 3 components, CMP resources, Navigation, Adaptive, Animation, Insets). Before using any non-trivial API:
+Compose APIs evolve fast (Material 3 components, CMP resources, Navigation, Adaptive, Animation, Insets). Before using any non-trivial API, serve both roles below — they are independent:
 
-1. **Read the project's existing code first** — single best source of truth for what works with the project's deps
-2. Project's version catalog / `build.gradle.kts` for exact dependency versions
-3. `ksrc` / Context7 / official docs if the project doesn't already use the API
-4. Never fall back to memorized signatures
+**API truth** (what composables / modifiers / types / signatures exist at the pinned version):
+1. `ksrc` — primary; reads the actual source jar from the Gradle cache
+2. Official docs / Context7 — secondary (especially for M3, CMP resources, Navigation, Adaptive)
+3. Never fall back to memorized signatures
+- Existing project code is NOT a source for API truth — it shows only what the project already uses; a composable may have been renamed, deprecated, or the parameter list may differ in the pinned version. An existing call site may also be a legacy pattern.
+
+**Style and pinned versions** (which modules are wired, what version is pinned, project UI conventions):
+1. Existing project code — primary (theme system, token names, shared UI module, preview style)
+2. `build.gradle.kts` / `libs.versions.toml` for exact dependency versions
 
 ---
 
