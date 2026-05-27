@@ -144,8 +144,7 @@ if [[ -n "$REPO_OVERRIDE" ]]; then
 fi
 
 if [[ -z "$IM_REPO" ]]; then
-  out=$(gh repo view --json nameWithOwner -q .nameWithOwner 2>&1); rc=$?
-  if [[ $rc -ne 0 ]]; then
+  if ! out=$(gh repo view --json nameWithOwner -q .nameWithOwner 2>&1); then
     im_error "Cannot resolve repo: $out" "repo_resolve_failed"
     exit 1
   fi
@@ -164,9 +163,8 @@ REPO_NAME="${IM_REPO##*/}"
 # Read current issue state (always — part of read-before-write and dry-run output)
 # ---------------------------------------------------------------------------
 
-out=$(gh issue view "$IM_NUMBER" -R "$IM_REPO" \
-  --json id,number,state,labels 2>&1); rc=$?
-if [[ $rc -ne 0 ]]; then
+if ! out=$(gh issue view "$IM_NUMBER" -R "$IM_REPO" \
+  --json id,number,state,labels 2>&1); then
   im_error "$out" "gh_failed"
   exit 1
 fi
@@ -270,7 +268,7 @@ if [[ -n "$FORCED_PROJECT_ID" ]]; then
   fi
 else
   # Scan owner's projects
-  proj_list_out=$(gh project list --owner "$REPO_OWNER" --format json 2>&1); proj_rc=$?
+  if proj_list_out=$(gh project list --owner "$REPO_OWNER" --format json 2>&1); then proj_rc=0; else proj_rc=$?; fi
   if [[ $proj_rc -eq 0 ]]; then
     proj_ids=$(printf '%s' "$proj_list_out" | jq -r '.projects[].id') || {
       im_error "Failed to parse project list response" "parse_failed"
@@ -352,13 +350,12 @@ fi
 # ---------------------------------------------------------------------------
 
 if [[ "$MECHANISM" == "project-v2" ]]; then
-  mut_out=$(gh api graphql \
+  if ! mut_out=$(gh api graphql \
     -f query='mutation($projId:ID!,$itemId:ID!,$fieldId:ID!,$optId:String!){updateProjectV2ItemFieldValue(input:{projectId:$projId,itemId:$itemId,fieldId:$fieldId,value:{singleSelectOptionId:$optId}}){projectV2Item{id}}}' \
     -f projId="$PROJECT_ID" \
     -f itemId="$PROJECT_ITEM_ID" \
     -f fieldId="$PROJECT_STATUS_FIELD_ID" \
-    -f optId="$PROJECT_TARGET_OPTION_ID" 2>&1); rc=$?
-  if [[ $rc -ne 0 ]]; then
+    -f optId="$PROJECT_TARGET_OPTION_ID" 2>&1); then
     im_error "$mut_out" "graphql_failed"
     exit 1
   fi

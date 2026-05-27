@@ -40,8 +40,7 @@ im_error() {
 }
 
 im_resolve_repo() {
-  out=$(gh repo view --json nameWithOwner -q .nameWithOwner 2>&1); rc=$?
-  if [[ $rc -ne 0 ]]; then
+  if ! out=$(gh repo view --json nameWithOwner -q .nameWithOwner 2>&1); then
     im_error "Cannot resolve repo: $out" "repo_resolve_failed"
     exit 1
   fi
@@ -88,9 +87,8 @@ if [[ -n "$NUMBERS" ]]; then
       im_error "Invalid issue number: $n" "invalid_ref"
       exit 1
     fi
-    out=$(gh issue view "$n" -R "$REPO" \
-      --json id,number,title,state,labels,url 2>&1); rc=$?
-    if [[ $rc -ne 0 ]]; then
+    if ! out=$(gh issue view "$n" -R "$REPO" \
+      --json id,number,title,state,labels,url 2>&1); then
       im_error "$out" "gh_failed"
       exit 1
     fi
@@ -114,13 +112,11 @@ for lbl in "${LABELS[@]+"${LABELS[@]}"}"; do
   LABEL_FLAGS+=("--label" "$lbl")
 done
 
-out=$(gh issue list -R "$REPO" \
+if ! out=$(gh issue list -R "$REPO" \
   --state "$STATE" \
   --limit "$LIMIT" \
   "${LABEL_FLAGS[@]+"${LABEL_FLAGS[@]}"}" \
-  --json id,number,title,state,labels,url 2>&1); rc=$?
-
-if [[ $rc -ne 0 ]]; then
+  --json id,number,title,state,labels,url 2>&1); then
   im_error "$out" "gh_failed"
   exit 1
 fi

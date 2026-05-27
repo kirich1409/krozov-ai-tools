@@ -108,8 +108,7 @@ if [[ -n "$REPO_OVERRIDE" ]]; then
 fi
 
 if [[ -z "$IM_REPO" ]]; then
-  out=$(gh repo view --json nameWithOwner -q .nameWithOwner 2>&1); rc=$?
-  if [[ $rc -ne 0 ]]; then
+  if ! out=$(gh repo view --json nameWithOwner -q .nameWithOwner 2>&1); then
     im_error "Cannot resolve repo: $out" "repo_resolve_failed"
     exit 1
   fi
@@ -129,9 +128,8 @@ THIS_NUMBER="$IM_NUMBER"
 # Fetch issue data (node_id, body, comments)
 # ---------------------------------------------------------------------------
 
-out=$(gh issue view "$THIS_NUMBER" -R "$IM_REPO" \
-  --json id,body,comments 2>&1); rc=$?
-if [[ $rc -ne 0 ]]; then
+if ! out=$(gh issue view "$THIS_NUMBER" -R "$IM_REPO" \
+  --json id,body,comments 2>&1); then
   im_error "$out" "gh_failed"
   exit 1
 fi
@@ -160,11 +158,9 @@ graphql_query='query($nodeId:ID!){
   }
 }'
 
-gql_out=$(gh api graphql \
+if ! gql_out=$(gh api graphql \
   -f query="$graphql_query" \
-  -F nodeId="$NODE_ID" 2>&1); rc=$?
-
-if [[ $rc -ne 0 ]]; then
+  -F nodeId="$NODE_ID" 2>&1); then
   im_error "$gql_out" "graphql_failed"
   exit 1
 fi

@@ -112,8 +112,12 @@ Confirm to proceed, or reply with a reordered number list (e.g. "15, 9, 12").
 
 Accept one of:
 - `"ok"` / `"yes"` / `"proceed"` / `"confirm"` → proceed with proposed order
-- A number list (e.g. `"15, 9, 12"`) → adopt user's order, validate it is a valid
-  topological sort (warn if not, but accept if user insists)
+- A number list (e.g. `"15, 9, 12"`) → adopt user's order IF it is a valid topological sort.
+  If not, REJECT it: present the specific violating pair(s) (e.g. "#12 before #9, but #12
+  depends on #9") and re-prompt for a valid order. Proceed only if the user provides a
+  DAG-respecting order, OR if the user explicitly states they want to override the constraint
+  — in that case emit a prominent warning naming which dependencies will be ignored, then
+  proceed. Never silently accept a DAG-violating order.
 - `"stop"` / `"cancel"` → abort with no writes to tracker
 
 This is the ONLY approval gate. Once approved, EXECUTE runs without further confirmation

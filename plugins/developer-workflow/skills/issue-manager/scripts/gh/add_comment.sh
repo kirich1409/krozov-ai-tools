@@ -117,8 +117,7 @@ if [[ -n "$REPO_OVERRIDE" ]]; then
 fi
 
 if [[ -z "$IM_REPO" ]]; then
-  out=$(gh repo view --json nameWithOwner -q .nameWithOwner 2>&1); rc=$?
-  if [[ $rc -ne 0 ]]; then
+  if ! out=$(gh repo view --json nameWithOwner -q .nameWithOwner 2>&1); then
     im_error "Cannot resolve repo: $out" "repo_resolve_failed"
     exit 1
   fi
@@ -137,9 +136,8 @@ MARKER="<!-- issue-manager:${MARKER_KEY} -->"
 # Idempotency check — scan existing comments for marker
 # ---------------------------------------------------------------------------
 
-out=$(gh issue view "$ISSUE_NUMBER" -R "$IM_REPO" \
-  --json comments 2>&1); rc=$?
-if [[ $rc -ne 0 ]]; then
+if ! out=$(gh issue view "$ISSUE_NUMBER" -R "$IM_REPO" \
+  --json comments 2>&1); then
   im_error "$out" "gh_failed"
   exit 1
 fi
@@ -180,17 +178,15 @@ fi
 # Post comment
 # ---------------------------------------------------------------------------
 
-new_out=$(gh issue comment "$ISSUE_NUMBER" -R "$IM_REPO" \
-  --body "$FULL_BODY" 2>&1); rc=$?
-if [[ $rc -ne 0 ]]; then
+if ! new_out=$(gh issue comment "$ISSUE_NUMBER" -R "$IM_REPO" \
+  --body "$FULL_BODY" 2>&1); then
   im_error "$new_out" "gh_failed"
   exit 1
 fi
 
 # Fetch the new comment id by rescanning
-out2=$(gh issue view "$ISSUE_NUMBER" -R "$IM_REPO" \
-  --json comments 2>&1); rc=$?
-if [[ $rc -ne 0 ]]; then
+if ! out2=$(gh issue view "$ISSUE_NUMBER" -R "$IM_REPO" \
+  --json comments 2>&1); then
   im_error "$out2" "gh_failed"
   exit 1
 fi

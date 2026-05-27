@@ -88,7 +88,7 @@ received and RECONCILE has written its result to the state file.
 Advances the board after each backend completion. Detail in [`references/reconcile.md`](references/reconcile.md).
 
 **Summary:**
-- `status == "done"`: call `transition_status("done")`, `link_pr`, `add_comment`; update state (phase → `pr-open`).
+- `status == "done"`: call `link_pr`, `add_comment`; keep issue open (merge is a human gate — AC-9); update state (phase → `pr-open`). Do NOT call `transition_status("done")` — that happens only when a later reconcile observes the PR is merged or the issue is closed-as-done.
 - `status == "failed"` or `"blocked"`: call `transition_status("blocked")`, `add_comment`;
   hold the entire transitive downstream DAG branch (all issues that directly or transitively
   depend on this one). Do NOT transition them to `in-progress`. Add all to Blocked List.

@@ -66,11 +66,14 @@ to the next issue — partial state is better than inconsistent state.
 1. Read completion signal from backend.
 2. Based on `signal.status`:
 
-   **`done`:**
-   - Call `transition_status(issue_ref, "done")`
+   **`done`** (backend produced an open, ready-for-review PR — AC-9: merge is a human gate):
+   - Do NOT call `transition_status`. The issue must stay open until the PR is merged or the
+     issue is closed by a human.
    - Call `link_pr(issue_ref, pr_ref)` using `signal.pr_url`
    - Call `add_comment(issue_ref, key="batch-summary-done", body="Batch completed. PR: <pr_url>")`
    - Update state file: phase → `pr-open`, pr_url → `signal.pr_url`
+   - Note: `transition_status("done")` is called only during a later reconcile or compaction-resume
+     when `get_completion_signal` returns `signal: done` (PR merged or issue closed-as-done).
 
    **`failed` or `blocked`:**
    - Call `transition_status(issue_ref, "blocked")`

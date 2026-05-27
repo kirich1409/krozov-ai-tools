@@ -102,8 +102,7 @@ if [[ -n "$REPO_OVERRIDE" ]]; then
 fi
 
 if [[ -z "$IM_REPO" ]]; then
-  out=$(gh repo view --json nameWithOwner -q .nameWithOwner 2>&1); rc=$?
-  if [[ $rc -ne 0 ]]; then
+  if ! out=$(gh repo view --json nameWithOwner -q .nameWithOwner 2>&1); then
     im_error "Cannot resolve repo: $out" "repo_resolve_failed"
     exit 1
   fi
@@ -123,15 +122,15 @@ REPO_NAME="${IM_REPO##*/}"
 # Returns PRs that closed this issue via "Closes #N" or "Fixes #N" keywords.
 # ---------------------------------------------------------------------------
 
-out=$(gh issue view "$IM_NUMBER" -R "$IM_REPO" \
-  --json closedByPullRequestsReferences 2>&1); rc=$?
-
-if [[ $rc -ne 0 ]]; then
+if ! out=$(gh issue view "$IM_NUMBER" -R "$IM_REPO" \
+  --json closedByPullRequestsReferences,state,stateReason 2>&1); then
   im_error "$out" "gh_failed"
   exit 1
 fi
 
 CLOSED_BY_PRS=$(printf '%s' "$out" | jq '.closedByPullRequestsReferences // []')
+ISSUE_STATE=$(printf '%s' "$out" | jq -r '.state // "OPEN"')
+ISSUE_STATE_REASON=$(printf '%s' "$out" | jq -r '.stateReason // ""')
 
 # ---------------------------------------------------------------------------
 # Source B: cross-referenced PRs from timeline via GraphQL
@@ -157,31 +156,45 @@ graphql_query='query($owner:String!,$repo:String!,$number:Int!){
               }
             }
           }
+          ... on ConnectedEvent {
+            subject {
+              __typename
+              ... on PullRequest {
+                number
+                state
+                url
+                merged
+                title
+              }
+            }
+          }
         }
       }
     }
   }
 }'
 
-gql_out=$(gh api graphql \
+if ! gql_out=$(gh api graphql \
   -f query="$graphql_query" \
   -f owner="$REPO_OWNER" \
   -f repo="$REPO_NAME" \
-  -F number="$IM_NUMBER" 2>&1); rc=$?
-
-if [[ $rc -ne 0 ]]; then
+  -F number="$IM_NUMBER" 2>&1); then
   im_error "$gql_out" "graphql_failed"
   exit 1
 fi
 
 im_check_graphql_errors "$gql_out"
 
-# Extract PRs from timeline
+# Extract PRs from timeline (both CrossReferencedEvent and ConnectedEvent)
 TIMELINE_PRS=$(printf '%s' "$gql_out" | jq '
   [.data.repository.issue.timelineItems.nodes[]
-   | select(.__typename == "CrossReferencedEvent")
-   | .source
-   | select(.__typename == "PullRequest")
+   | (
+       if .__typename == "CrossReferencedEvent" then .source
+       elif .__typename == "ConnectedEvent" then .subject
+       else null
+       end
+     )
+   | select(. != null and .__typename == "PullRequest")
    | {
        number: .number,
        state:  (if .merged then "MERGED" elif .state == "OPEN" then "OPEN" else "CLOSED" end),
@@ -206,9 +219,13 @@ ALL_PRS=$(jq -n \
   --argjson b "$TIMELINE_PRS" \
   '($a + $b) | unique_by(.number)')
 
-# Derive signal
-RESULT=$(printf '%s' "$ALL_PRS" | jq '
-  . as $prs |
+# Derive signal (merged PR > open PR > closed-as-done > none)
+RESULT=$(printf '%s' "$ALL_PRS" \
+  --arg issue_state "$ISSUE_STATE" \
+  --arg issue_state_reason "$ISSUE_STATE_REASON" | jq -n \
+  --argjson prs "$(printf '%s' "$ALL_PRS")" \
+  --arg issue_state "$ISSUE_STATE" \
+  --arg issue_state_reason "$ISSUE_STATE_REASON" '
   if ($prs | map(select(.state == "MERGED")) | length) > 0
   then
     ($prs | map(select(.state == "MERGED")) | first) as $pr |
@@ -217,6 +234,9 @@ RESULT=$(printf '%s' "$ALL_PRS" | jq '
   then
     ($prs | map(select(.state == "OPEN")) | first) as $pr |
     {signal: "pr-open", pr_url: $pr.url, pr_state: "OPEN", pr_number: $pr.number}
+  elif ($issue_state == "CLOSED" and $issue_state_reason == "COMPLETED")
+  then
+    {signal: "done", pr_url: null, pr_state: null, pr_number: null}
   else
     {signal: "none", pr_url: null, pr_state: null, pr_number: null}
   end
