@@ -50,4 +50,23 @@ Skills in this plugin delegate to engineer agents (kotlin-engineer / compose-dev
 - QA: `generate-test-plan`, `acceptance`
 - PR: `create-pr`, `drive-to-merge`
 
+### Planning: which tool to reach for
+
+`research`, `/write-spec`, and built-in **plan mode** look similar (all do read-only
+investigation first) but answer different questions. Pick by the question, not the surface:
+
+| Reach for | When the question is | Output |
+|---|---|---|
+| **plan mode** (built-in) | "How do I build this *already-decided* change?" — investigation stays inside the codebase | Ephemeral plan, then implement |
+| **`research`** | "What are the options / is this feasible / which approach?" — needs ≥2 of codebase·web·docs·dependencies·architecture | Durable comparative report in `swarm-report/research/` |
+| **`/write-spec`** | "Specify this *already-decided* feature as an implementation contract" — interview-heavy | Permanent spec in `docs/specs/` |
+
+`research` deliberately yields to plan mode for codebase-only topics: its min-2-tracks rule
+redirects a single-track investigation to a plain Explore agent instead of running the
+consortium. `research` and `write-spec` each run a parallel expert consortium; their
+Codebase / Architecture / Web prompt templates overlap **intentionally** (write-spec's are an
+enriched superset) and are kept as separate per-skill files on purpose — do not collapse them
+into a shared file (same "duplicate + note" idiom as the `acceptance` ↔ `multiexpert-review`
+PoLL protocol).
+
 Exploratory QA without a spec → call the `manual-tester` agent directly via the Task tool (formerly `bug-hunt` skill — removed in v0.15.0; heuristics live in `agents/manual-tester.md` § Step 4b).

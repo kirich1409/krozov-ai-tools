@@ -34,6 +34,14 @@ Skills are independent on-demand tools — invoke them when the task calls for t
 | `/reverse-spec` | Reverse-engineer an existing feature from code into a tech-agnostic spec |
 | `/multiexpert-review` | Panel of LLM evaluators (PoLL) review of a plan, spec, or test-plan via the appropriate profile |
 
+`/research`, `/write-spec`, and built-in **plan mode** all investigate before acting, but
+answer different questions. Use **plan mode** for *"how do I build this already-decided
+change?"* (codebase-only, ephemeral plan). Use **`/research`** for *"what are the options / is
+this feasible / which approach?"* when the answer needs more than the codebase (web, docs,
+dependencies, architecture) — it produces a durable comparative report. Use **`/write-spec`**
+to turn an already-decided feature into a permanent implementation contract under `docs/specs/`.
+For a codebase-only topic `/research` steps aside and hands off to plan mode automatically.
+
 ### Implementation
 | Skill | Purpose |
 |---|---|

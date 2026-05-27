@@ -1,5 +1,13 @@
 Referenced from: `plugins/developer-workflow/skills/write-spec/SKILL.md` (§Phase 1.1 Launch research consortium).
 
+> **Intentional overlap with the `research` skill.** The Codebase / Architecture / Web prompts
+> below are an enriched **superset** of the ones in
+> `../../research/references/expert-prompts.md` (here they add integration-points and
+> test-infra, plus the spec-only Business Analyst / Critical Evaluation / Dependency Chain
+> tracks). The two files are kept separate **on purpose** — each skill stays self-contained
+> per the toolbox model — so do not collapse them into one shared file. This mirrors the
+> `acceptance` ↔ `multiexpert-review` "same protocol, duplicated with a note" idiom.
+
 # Research-Agent Prompt Templates
 
 ## Codebase Expert (Explore subagent) — always include
