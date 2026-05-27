@@ -29,7 +29,8 @@ All scripts write to stdout. On error: `{"error":"<msg>","code":"<code>"}` + non
     "title": "string",
     "state": "OPEN|CLOSED",
     "labels": [{"id": "string", "name": "string", "color": "string"}],
-    "url": "string"
+    "url": "string",
+    "node_id": "string"
   }
 ]
 ```

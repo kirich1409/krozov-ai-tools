@@ -220,10 +220,8 @@ ALL_PRS=$(jq -n \
   '($a + $b) | unique_by(.number)')
 
 # Derive signal (merged PR > open PR > closed-as-done > none)
-RESULT=$(printf '%s' "$ALL_PRS" \
-  --arg issue_state "$ISSUE_STATE" \
-  --arg issue_state_reason "$ISSUE_STATE_REASON" | jq -n \
-  --argjson prs "$(printf '%s' "$ALL_PRS")" \
+RESULT=$(jq -n \
+  --argjson prs "$ALL_PRS" \
   --arg issue_state "$ISSUE_STATE" \
   --arg issue_state_reason "$ISSUE_STATE_REASON" '
   if ($prs | map(select(.state == "MERGED")) | length) > 0

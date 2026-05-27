@@ -369,7 +369,7 @@ else
     # Use explicit rc capture protected from set -e via "|| true" then re-check existence.
     create_out=$(gh label create "$lbl" -R "$IM_REPO" --color "ededed" --description "Issue status: $lbl" 2>&1) || true
     # After attempted create, verify the label actually exists (handles both success and "already exists").
-    if ! gh label list -R "$IM_REPO" --search "$lbl" --json name -q '.[].name' 2>/dev/null | grep -qF "$lbl"; then
+    if ! gh label list -R "$IM_REPO" --search "$lbl" --json name -q '.[].name' 2>/dev/null | grep -qxF "$lbl"; then
       im_error "Failed to ensure label $lbl exists: $create_out" "gh_failed"
       exit 1
     fi
@@ -379,8 +379,15 @@ else
     }
   done
 
-  # Remove old status labels only after the new one is in place
+  # Remove old status labels only after the new one is in place.
+  # Skip any label that is in TARGET_ADD_LABELS (just added — do not remove it).
   for lbl in "status:in-progress" "status:blocked"; do
+    # Check if lbl is in TARGET_ADD_LABELS
+    _skip=false
+    for _added in "${TARGET_ADD_LABELS[@]+"${TARGET_ADD_LABELS[@]}"}"; do
+      if [[ "$_added" == "$lbl" ]]; then _skip=true; break; fi
+    done
+    if [[ "$_skip" == true ]]; then continue; fi
     if printf '%s' "$ISSUE_LABELS" | grep -qF "$lbl"; then
       rm_out=$(gh issue edit "$IM_NUMBER" -R "$IM_REPO" --remove-label "$lbl" 2>&1) || {
         im_error "Failed to remove label $lbl: $rm_out" "gh_failed"

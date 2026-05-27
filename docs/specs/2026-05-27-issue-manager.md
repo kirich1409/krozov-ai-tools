@@ -68,7 +68,7 @@ Phase 1 (эта спека): общее ядро + единственный exec
       write-операции `scripts/gh/` идемпотентны (read-before-write или upsert-by-marker), не только
       переход статуса — `add_comment`/`link_pr` на resume не дублируют коммент/связь.
 - [ ] **AC-6** — Задача, провалившая свой флоу (completion signal `failed`/`blocked`), НЕ доходит
-      до PR: помечается на доске состоянием **blocked** (label `blocked`, и при наличии Project v2 —
+      до PR: помечается на доске состоянием **blocked** (label `status:blocked`, и при наличии Project v2 —
       соответствующий status-option), не имеет связанного PR, и зависящие от неё issues НЕ
       переводятся в In-Progress и не диспетчатся. Блокировка распространяется на всю downstream-ветку
       DAG от заблокированного узла (транзитивно зависящие тоже не диспетчатся). Blocked-список
@@ -216,7 +216,7 @@ adapter-скрипта (gh недоступен/нет прав) → стоп с
 | Граница прогона | До открытого PR | Внутри автономного прогона нет места человеческим гейтам; merge — необратим, оставлен человеку |
 | Точка останова PR | Ready-for-review (не draft) | Память `feedback_pr_ready_immediately`: в batch-обработке issues PR открывается сразу ready; более специфичное правило, чем generic draft→promote; merge всё равно остаётся человеческим гейтом (AC-9) |
 | Гейт менеджера | Один — Phase0 (план+DAG→одобрение) | Порядок решается раз; повторное одобрение на каждой задаче = confirmation-spam; внутреннее качество гарантируют finalize/acceptance |
-| Модель статуса доски | detect Project v2 status field → fallback open/closed + label-конвенция (`status:in-progress`, `blocked`) | Не у всех репо есть Project v2; нужен носитель для In-Progress/blocked (AC-3/AC-6) |
+| Модель статуса доски | detect Project v2 status field → fallback open/closed + label-конвенция (`status:in-progress`, `status:blocked`) | Не у всех репо есть Project v2; нужен носитель для In-Progress/blocked (AC-3/AC-6) |
 | DAG на GitHub | Эвристический (sub-issues + parse «blocked by») + ручное подтверждение в Phase0 | У GitHub нет типизированных blocks/blocked-by; эвристика ненадёжна → человек подтверждает |
 | Per-task флоу | Адаптивная глубина: implement→check→finalize→acceptance→create-pr обязательны; research/spec по необходимости | Пользователь кладёт исчерпывающую инфу в issue → research/spec нужны не всем; finalize/acceptance — обязательные quality/acceptance гейты |
 | Трекеры | Только GitHub | Явный фокус, не распыляться; другие — Future за тем же контрактом |

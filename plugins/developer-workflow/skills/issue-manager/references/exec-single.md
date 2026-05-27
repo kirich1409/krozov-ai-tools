@@ -95,7 +95,9 @@ Success path:
 }
 ```
 
-The core (RECONCILE phase) reads this signal and calls `link_pr` + `add_comment` + `transition_status("done")`.
+The core (RECONCILE phase) reads this signal, calls `link_pr` + `add_comment`, and keeps the
+issue open (phase → `pr-open`). The board advances to `done` only later, when
+`get_completion_signal` returns `signal: done` (PR merged or issue closed-as-done).
 
 ## Context Ceiling Note
 

@@ -60,9 +60,11 @@ signal = call_backend(task_id, scope, allowed_depth)
 
 if signal.status == "done":
     record pr_url in state file
-    call transition_status(issue_ref, "done")   # abstract action
     call link_pr(issue_ref, pr_ref)             # abstract action
     call add_comment(issue_ref, key="batch-done", body="PR: " + signal.pr_url)
+    # Keep issue IN-PROGRESS (do NOT call transition_status here). Board phase → pr-open.
+    # transition_status(issue_ref, "done") is called only during a later RECONCILE/resume
+    # when get_completion_signal returns signal: done (PR merged or issue closed-as-done).
 
 elif signal.status == "failed":
     log "Gate failed: " + signal.failed_gate    # log only — no branching on the value
