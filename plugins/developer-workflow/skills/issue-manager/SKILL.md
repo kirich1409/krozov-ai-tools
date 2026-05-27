@@ -12,7 +12,6 @@ description: >
 
   Do NOT use for: a single issue with no GitHub board tracking needed (use the pipeline skills individually);
   merging PRs (use /drive-to-merge); code review only (use /finalize); ad-hoc GitHub queries.
-disable-model-invocation: true
 ---
 
 # Issue Manager
