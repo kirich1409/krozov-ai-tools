@@ -138,20 +138,16 @@ fi
 
 NODE_ID=$(printf '%s' "$out" | jq -r '.id')
 BODY=$(printf '%s' "$out" | jq -r '.body // ""')
-COMMENTS_TEXT=$(printf '%s' "$out" | jq -r '[.comments[].body] | join("\n")' 2>/dev/null || echo "")
+COMMENTS_TEXT=$(printf '%s' "$out" | jq -r '[.comments[].body] | join("\n")') || {
+  im_error "Failed to parse comments from issue response" "parse_failed"
+  exit 1
+}
 
 # ---------------------------------------------------------------------------
 # Source A: sub-issues via GraphQL
-# Note: subIssues returns issues that are children of this issue.
-# A sub-issue's parent is the blocker/dependency; the sub-issue depends on its parent
-# completing context — but in GitHub sub-issues model, parent contains sub-issues.
-# We emit: sub-issue depends-on (is a child of) parent. Direction: from=sub to=parent.
-# However the spec requests: from=blocked, to=blocker.
-# GitHub sub-issues: parent CONTAINS sub-issues. Sub-issues are tasks within parent.
-# We represent: parent blocks sub-issues? No — the conventional reading is sub-issues
-# must be done for parent to complete. So sub-issue -> parent would be "enables", not "blocks".
-# Per spec the direction chosen: sub-issue IS a dependency edge where THIS issue has sub-issues
-# that must be completed. We emit: from=sub-issue-number, to=THIS (meaning sub blocks parent).
+# Sub-issue edge: the parent is blocked by each child (children must complete before the
+# parent can close). Per the contract {from=blocked, to=blocker}, this is
+# {from=parent, to=child}.
 # ---------------------------------------------------------------------------
 
 graphql_query='query($nodeId:ID!){
@@ -175,9 +171,9 @@ fi
 
 im_check_graphql_errors "$gql_out"
 
-# Build sub-issue edges: sub-issue depends on (from=sub, to=parent)
+# Build sub-issue edges: parent blocked by each child (from=parent, to=child)
 SUBISSUE_EDGES=$(printf '%s' "$gql_out" | jq --argjson parent "$THIS_NUMBER" \
-  '[.data.node.subIssues.nodes[]? | {from: .number, to: $parent, source: "sub-issue"}]')
+  '[.data.node.subIssues.nodes[]? | {from: $parent, to: .number, source: "sub-issue"}]')
 
 # ---------------------------------------------------------------------------
 # Source B: regex parse — "blocked by #N" and "depends on #N"

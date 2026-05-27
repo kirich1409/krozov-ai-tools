@@ -172,6 +172,10 @@ if [[ $rc -ne 0 ]]; then
 fi
 
 ISSUE_NODE_ID=$(printf '%s' "$out" | jq -r '.id')
+if [[ -z "$ISSUE_NODE_ID" || "$ISSUE_NODE_ID" == "null" ]]; then
+  im_error "Could not resolve issue node id for $IM_NUMBER" "invalid_ref"
+  exit 1
+fi
 ISSUE_STATE=$(printf '%s' "$out" | jq -r '.state') # OPEN or CLOSED
 ISSUE_LABELS=$(printf '%s' "$out" | jq -r '[.labels[].name] | join(",")')
 
@@ -268,7 +272,10 @@ else
   # Scan owner's projects
   proj_list_out=$(gh project list --owner "$REPO_OWNER" --format json 2>&1); proj_rc=$?
   if [[ $proj_rc -eq 0 ]]; then
-    proj_ids=$(printf '%s' "$proj_list_out" | jq -r '.projects[].id' 2>/dev/null || true)
+    proj_ids=$(printf '%s' "$proj_list_out" | jq -r '.projects[].id') || {
+      im_error "Failed to parse project list response" "parse_failed"
+      exit 1
+    }
     while IFS= read -r pid; do
       [[ -z "$pid" ]] && continue
       if detect_project "$pid" 2>/dev/null; then
@@ -361,22 +368,41 @@ else
   # Remove old status labels first
   for lbl in "status:in-progress" "status:blocked"; do
     if printf '%s' "$ISSUE_LABELS" | grep -qF "$lbl"; then
-      gh issue edit "$IM_NUMBER" -R "$IM_REPO" --remove-label "$lbl" >/dev/null 2>&1 || true
+      rm_out=$(gh issue edit "$IM_NUMBER" -R "$IM_REPO" --remove-label "$lbl" 2>&1) || {
+        im_error "Failed to remove label $lbl: $rm_out" "gh_failed"
+        exit 1
+      }
     fi
   done
 
   # Add new status label if needed
   for lbl in "${TARGET_ADD_LABELS[@]+"${TARGET_ADD_LABELS[@]}"}"; do
-    # Ensure label exists
-    gh label create "$lbl" -R "$IM_REPO" --color "ededed" --description "Issue status: $lbl" 2>/dev/null || true
-    gh issue edit "$IM_NUMBER" -R "$IM_REPO" --add-label "$lbl" >/dev/null 2>&1
+    # Ensure label exists; gh label create exits non-zero when label already exists —
+    # tolerate that case but error on real failures (e.g. permission denied).
+    # Use explicit rc capture protected from set -e via "|| true" then re-check existence.
+    create_out=$(gh label create "$lbl" -R "$IM_REPO" --color "ededed" --description "Issue status: $lbl" 2>&1) || true
+    # After attempted create, verify the label actually exists (handles both success and "already exists").
+    if ! gh label list -R "$IM_REPO" --search "$lbl" --json name -q '.[].name' 2>/dev/null | grep -qF "$lbl"; then
+      im_error "Failed to create label $lbl and label does not exist: $create_out" "gh_failed"
+      exit 1
+    fi
+    add_out=$(gh issue edit "$IM_NUMBER" -R "$IM_REPO" --add-label "$lbl" 2>&1) || {
+      im_error "Failed to add label $lbl: $add_out" "gh_failed"
+      exit 1
+    }
   done
 
   # Apply open/closed state
   if [[ "$TARGET_OPEN" == "false" && "$ISSUE_STATE" == "OPEN" ]]; then
-    gh issue close "$IM_NUMBER" -R "$IM_REPO" >/dev/null 2>&1
+    close_out=$(gh issue close "$IM_NUMBER" -R "$IM_REPO" 2>&1) || {
+      im_error "Failed to close issue $IM_NUMBER: $close_out" "gh_failed"
+      exit 1
+    }
   elif [[ "$TARGET_OPEN" == "true" && "$ISSUE_STATE" == "CLOSED" ]]; then
-    gh issue reopen "$IM_NUMBER" -R "$IM_REPO" >/dev/null 2>&1
+    reopen_out=$(gh issue reopen "$IM_NUMBER" -R "$IM_REPO" 2>&1) || {
+      im_error "Failed to reopen issue $IM_NUMBER: $reopen_out" "gh_failed"
+      exit 1
+    }
   fi
 fi
 

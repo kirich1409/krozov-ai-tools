@@ -93,6 +93,11 @@ if [[ -z "$MARKER_KEY" ]]; then
   exit 1
 fi
 
+if [[ ! "$MARKER_KEY" =~ ^[A-Za-z0-9:_.-]+$ ]]; then
+  im_error "--key must match [A-Za-z0-9:_.-]+" "usage"
+  exit 1
+fi
+
 if [[ -z "$BODY_TEXT" ]]; then
   im_error "--body is required" "usage"
   exit 1
@@ -140,7 +145,10 @@ if [[ $rc -ne 0 ]]; then
 fi
 
 EXISTING=$(printf '%s' "$out" | jq -r --arg marker "$MARKER" \
-  '.comments[] | select(.body | contains($marker)) | .id' 2>/dev/null | head -1 || true)
+  '.comments[] | select(.body | contains($marker)) | .id' 2>/dev/null | head -1) || {
+  im_error "Failed to parse comments while checking idempotency marker" "parse_failed"
+  exit 1
+}
 
 if [[ -n "$EXISTING" ]]; then
   jq -n \
@@ -188,10 +196,13 @@ if [[ $rc -ne 0 ]]; then
 fi
 
 NEW_COMMENT_ID=$(printf '%s' "$out2" | jq -r --arg marker "$MARKER" \
-  '.comments[] | select(.body | contains($marker)) | .id' 2>/dev/null | tail -1 || true)
+  '.comments[] | select(.body | contains($marker)) | .id' 2>/dev/null | tail -1) || {
+  im_error "Failed to parse comments after posting (id rescan)" "parse_failed"
+  exit 1
+}
 
 jq -n \
   --argjson issue "$ISSUE_NUMBER" \
   --arg key "$MARKER_KEY" \
-  --arg comment_id "$NEW_COMMENT_ID" \
-  '{action:"commented",issue:$issue,key:$key,comment_id:$comment_id,dry_run:false}'
+  --arg cid "$NEW_COMMENT_ID" \
+  '{action:"commented",issue:$issue,key:$key,comment_id:($cid | if . == "" then null else . end),dry_run:false}'

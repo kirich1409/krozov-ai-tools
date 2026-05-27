@@ -27,19 +27,20 @@ All scripts write to stdout. On error: `{"error":"<msg>","code":"<code>"}` + non
   {
     "number": 42,
     "title": "string",
-    "state": "open|closed",
+    "state": "OPEN|CLOSED",
     "labels": [{"id": "string", "name": "string", "color": "string"}],
     "url": "string"
   }
 ]
 ```
+Note: `state` is the GitHub-native uppercase value (`"OPEN"` or `"CLOSED"`).
 
 ### `fetch_issue`
 ```json
 {
   "number": 42,
   "title": "string",
-  "state": "open|closed",
+  "state": "OPEN|CLOSED",
   "body": "string",
   "labels": [{"id": "string", "name": "string", "color": "string"}],
   "url": "string",
@@ -47,6 +48,7 @@ All scripts write to stdout. On error: `{"error":"<msg>","code":"<code>"}` + non
 }
 ```
 `node_id` is the GraphQL global node id, required for Project v2 mutations.
+`state` is the GitHub-native uppercase value (`"OPEN"` or `"CLOSED"`).
 
 ### `get_dependencies`
 ```json
@@ -54,8 +56,9 @@ All scripts write to stdout. On error: `{"error":"<msg>","code":"<code>"}` + non
   {"from": 17, "to": 12, "source": "sub-issue|blocked-by|depends-on"}
 ]
 ```
-Direction: `from` is the BLOCKED issue, `to` is the BLOCKER. Sub-issue edge: `from` = child
-number, `to` = parent number. Empty dependency set → `[]`.
+Direction: `from` is the BLOCKED issue, `to` is the BLOCKER. Sub-issue edge: the parent is
+blocked by each child (children must complete before the parent can close) — `from` = parent
+number, `to` = child number. Empty dependency set → `[]`.
 
 ### `get_completion_signal`
 ```json
@@ -80,10 +83,11 @@ number, `to` = parent number. Empty dependency set → `[]`.
   "dry_run": false
 }
 ```
-`--dry-run` adds `resolved_payload`. Target statuses accepted: `todo`, `in-progress`,
-`blocked`, `done` (also accepts `open`→`todo`, `closed`→`done` for convenience). Project v2
-detected → uses status option; else fallback: open/closed state + label convention
-(`status:in-progress`, `status:blocked`).
+`from` is always a non-null string (current normalized status). `--dry-run` adds
+`resolved_payload` with the write that would be sent. Target statuses accepted: `todo`,
+`in-progress`, `blocked`, `done` (also accepts `open`→`todo`, `closed`→`done` for
+convenience). Project v2 detected → uses status option; else fallback: open/closed state +
+label convention (`status:in-progress`, `status:blocked`).
 
 ### `link_pr`
 ```json
@@ -95,6 +99,9 @@ detected → uses status option; else fallback: open/closed state + label conven
   "dry_run": false
 }
 ```
+`comment_id` is the GitHub GraphQL node id string (e.g. `IC_kwDO...`) of the newly posted
+comment, or `null` on noop or dry-run. On `--dry-run` (non-noop path), a `would_post` field
+contains the comment body that would be posted.
 Idempotent: checks for marker `<!-- issue-manager:link-pr:<pr-number> -->` before posting.
 
 ### `add_comment`
@@ -107,6 +114,9 @@ Idempotent: checks for marker `<!-- issue-manager:link-pr:<pr-number> -->` befor
   "dry_run": false
 }
 ```
+`comment_id` is the GitHub GraphQL node id string (e.g. `IC_kwDO...`) of the newly posted
+comment, or `null` on noop or dry-run. On `--dry-run` (non-noop path), a `would_post` field
+contains the comment body that would be posted.
 Idempotent: checks for marker `<!-- issue-manager:<key> -->` before posting.
 
 ## Adapter-Resolver Concept

@@ -25,7 +25,8 @@ edge: { from: BLOCKED, to: BLOCKER }
 ```
 
 - `from` is the issue that cannot start until `to` is done.
-- Sub-issue edges (from=child, to=parent) mean the child is blocked by the parent.
+- Sub-issue edges (from=parent, to=child) mean the parent is blocked by each child: children
+  must complete before the parent can close.
 
 **Ready set** = issues with no unsatisfied BLOCKER dependencies (all `to` nodes in their
 edges are either absent from the scope, already Done, or resolved externally).

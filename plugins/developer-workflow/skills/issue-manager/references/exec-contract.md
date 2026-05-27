@@ -75,6 +75,33 @@ elif signal.status == "blocked":
     hold entire transitive downstream DAG branch
 ```
 
+## Two Distinct Signals: Completion Signal vs Tracker Completion Fact
+
+These two vocabularies share some words but are different concepts — do not conflate them.
+
+**Completion signal** (this file's schema, emitted by the backend to the core):
+- `status: done` = the per-task flow finished and produced an **open, ready-for-review PR**. The core never merges.
+- `status: failed` = a gate did not pass; `status: blocked` = external blocker.
+
+**Tracker completion fact** (emitted by `get_completion_signal.sh`, used during RECONCILE
+and compaction-resume to read GitHub ground-truth):
+- `signal: done` = a linked PR is **merged** (or issue closed-as-done).
+- `signal: pr-open` = a linked PR exists and is open.
+- `signal: none` = no linked PR.
+
+**Mapping during reconcile/resume:** a task whose backend returned `status: done` (open PR)
+corresponds to the tracker fact `pr-open` until a human merges it, at which point the tracker
+fact becomes `done`. The core MUST NOT assume `signal: done` (merged) just because the backend
+returned `status: done` (open PR).
+
+## Field Mutual-Exclusivity Invariants
+
+The following MUST invariants hold for every completion signal:
+
+- `pr_url` is non-null ONLY when `status == "done"`; it MUST be null for `failed` and `blocked`.
+- `failed_gate` is non-null ONLY when `status == "failed"`; it MUST be null for `done` and `blocked`.
+- `blocked_reason` is non-null ONLY when `status == "blocked"`; it MUST be null for `done` and `failed`.
+
 ## Backend Registry
 
 | Backend ID | Reference | Description |

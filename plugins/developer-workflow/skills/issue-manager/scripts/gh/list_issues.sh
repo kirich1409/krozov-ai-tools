@@ -84,6 +84,10 @@ if [[ -n "$NUMBERS" ]]; then
   for n in "${NUMLIST[@]}"; do
     n="${n// /}"
     [[ -z "$n" ]] && continue
+    if [[ ! "$n" =~ ^[0-9]+$ ]]; then
+      im_error "Invalid issue number: $n" "invalid_ref"
+      exit 1
+    fi
     out=$(gh issue view "$n" -R "$REPO" \
       --json id,number,title,state,labels,url 2>&1); rc=$?
     if [[ $rc -ne 0 ]]; then
