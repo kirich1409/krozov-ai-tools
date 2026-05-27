@@ -153,15 +153,16 @@ Before launching any reviewer, grep all source docs the spec depends on for unad
 ```bash
 grep -rniE 'TODO|FIXME|verify|needs investigation|to be confirmed|TBD|XXX' \
   --exclude='<spec-filename>' \
-  docs/dpo/ docs/design/ docs/research/ \
-  2>/dev/null
+  <your-baseline-doc-dirs>
 ```
 
-Replace `<spec-filename>` with the actual spec file name (e.g. `feature-x-spec.md`) so the spec itself is never scanned.
+Replace `<spec-filename>` with the actual spec file name (e.g. `2026-05-27-offline-mode.md`) so the spec itself is never scanned.
+
+Replace `<your-baseline-doc-dirs>` with the actual directories that hold source docs for this repo (e.g. `docs/design/ docs/research/`). **Do NOT add `2>/dev/null`** — if a directory doesn't exist, grep will print an error, which is what you want: missing dirs with `2>/dev/null` silently produce zero output, indistinguishable from "no findings".
 
 For each hit:
 - **Closed in spec** — spec explicitly addresses (AC, Decision, or Technical Approach paragraph). No action.
-- **Out of Scope with owner** — spec's `## Out of Scope` section explicitly lists it + owner. No action.
+- **Out of Scope** — spec's `## Out of Scope` section explicitly lists it (optionally noting the owner or deferral target). No action.
 - **Neither** — gap. Either address inline or add to Out of Scope before proceeding. **Do not skip.**
 
 Why this exists: TODO lists in baseline / research / review docs encode the questions the source authors already knew were unanswered. A spec that ignores them is built on a knowingly incomplete foundation. Real-world failure mode: visual-parity doc says «Drop-shadow rendering TBD», spec never addresses it, pilot devs hit the gap in week 6 of implementation.

@@ -108,7 +108,7 @@ Choices locked in during spec. The implementing agent does NOT revisit these.
 Will NOT be implemented as part of this spec:
 
 - {Behavior or feature explicitly excluded}
-- {Edge case deferred to a future spec}
+- {Edge case deferred to a future spec} *(owner: {team/person}, target: {Phase N / separate spec})*
 - {Migration or compatibility concern left out}
 
 ## Open Questions
