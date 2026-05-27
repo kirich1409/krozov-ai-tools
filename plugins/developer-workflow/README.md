@@ -41,7 +41,7 @@ change?"* (codebase-only, ephemeral plan). Use **`/research`** for *"what are th
 this feasible / which approach?"* when the answer needs more than the codebase (web, docs,
 dependencies, architecture) — it produces a durable comparative report. Use **`/write-spec`**
 to turn an already-decided feature into a permanent implementation contract under `docs/specs/`.
-For a codebase-only topic `/research` steps aside and hands off to plan mode automatically.
+For a codebase-only topic `/research` steps aside and delegates to a single inline `Explore` agent instead of running the consortium.
 
 ### Implementation
 | Skill | Purpose |
