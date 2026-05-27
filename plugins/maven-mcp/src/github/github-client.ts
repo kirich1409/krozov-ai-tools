@@ -21,8 +21,10 @@ export interface GitHubRepoMeta {
 }
 
 export interface IssueStats {
-  open: number;
-  closed: number;
+  /** null when the Search API call failed (rate-limited or network error). */
+  open: number | null;
+  /** null when the Search API call failed (rate-limited or network error). */
+  closed: number | null;
   /** closed / (open + closed); null when either count is unavailable. */
   closeRatio: number | null;
   /** Median days-to-close over recent closed issues; null when unavailable. */
@@ -153,7 +155,7 @@ export class GitHubClient {
     const closeRatio =
       open !== null && closed !== null && total > 0 ? closed / total : null;
 
-    return { open: open ?? 0, closed: closed ?? 0, closeRatio, medianDaysToClose };
+    return { open, closed, closeRatio, medianDaysToClose };
   }
 
   private async searchIssueCount(

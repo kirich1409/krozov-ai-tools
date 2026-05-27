@@ -185,6 +185,131 @@ describe("getDependencyHealthHandler", () => {
     expect(r.github).toBeNull();
     expect(r.healthError).toContain("metadata unavailable");
   });
+
+  // Comment #1 fix: latestVersion always reflects real latest even when a specific version is requested
+  it("reports real latestVersion when a specific (older) version is requested", async () => {
+    const repo = mockRepo(["1.0.0", "1.1.0", "1.2.0"]);
+
+    globalThis.fetch = vi.fn()
+      .mockResolvedValueOnce(new Response(POM_WITH_SCM, { status: 200 }))
+      .mockResolvedValueOnce(json({
+        stargazers_count: 100,
+        forks_count: 10,
+        archived: false,
+        pushed_at: RECENT,
+        open_issues_count: 5,
+        created_at: "2020-01-01T00:00:00Z",
+        license: { spdx_id: "MIT", name: "MIT License" },
+        owner: { login: "ktorio", type: "Organization" },
+      }))
+      .mockResolvedValueOnce(json([
+        { tag_name: "1.2.0", body: "", html_url: "", published_at: RECENT },
+      ]))
+      .mockResolvedValueOnce(json({ total_count: 5 }))
+      .mockResolvedValueOnce(json({ total_count: 50 }))
+      .mockResolvedValueOnce(json({ items: [] }))
+      .mockResolvedValueOnce(json({ public_repos: 10, created_at: "2015-01-01T00:00:00Z" })) as typeof fetch;
+
+    const { results } = await getDependencyHealthHandler([repo], {
+      dependencies: [{ groupId: "io.ktor", artifactId: "ktor-core", version: "1.0.0" }],
+    });
+
+    const r = results[0];
+    // latestVersion must be 1.2.0 (real latest), not 1.0.0 (requested version)
+    expect(r.latestVersion).toBe("1.2.0");
+    expect(r.stability).toBe("stable");
+  });
+
+  // Comment #2 fix: issue stats should preserve null when one Search API call fails
+  it("returns null for issue counts when Search API calls fail", async () => {
+    const repo = mockRepo(["1.0.0", "1.1.0", "1.2.0"]);
+
+    globalThis.fetch = vi.fn()
+      .mockResolvedValueOnce(new Response(POM_WITH_SCM, { status: 200 }))
+      .mockResolvedValueOnce(json({
+        stargazers_count: 100,
+        forks_count: 10,
+        archived: false,
+        pushed_at: RECENT,
+        open_issues_count: 5,
+        created_at: "2020-01-01T00:00:00Z",
+        license: { spdx_id: "MIT", name: "MIT License" },
+        owner: { login: "ktorio", type: "Organization" },
+      }))
+      .mockResolvedValueOnce(json([]))  // releases
+      .mockResolvedValueOnce(json({ total_count: 200 }))              // open issues — success
+      .mockResolvedValueOnce(new Response("forbidden", { status: 403 }))  // closed issues — fail
+      .mockResolvedValueOnce(new Response("forbidden", { status: 403 }))  // median — fail
+      .mockResolvedValueOnce(json({ public_repos: 10, created_at: "2015-01-01T00:00:00Z" })) as typeof fetch;
+
+    const { results } = await getDependencyHealthHandler([repo], {
+      dependencies: [{ groupId: "io.ktor", artifactId: "ktor-core" }],
+    });
+
+    const r = results[0];
+    expect(r.github?.issues).not.toBeNull();
+    expect(r.github?.issues?.open).toBe(200);
+    // closed should be null (failed), not 0 (which would be misleading)
+    expect(r.github?.issues?.closed).toBeNull();
+    // closeRatio requires both counts — must be null when one is missing
+    expect(r.github?.issues?.closeRatio).toBeNull();
+  });
+
+  // Comment #3 fix: guess path should call fetchRepo only once (not repoExists + fetchRepo)
+  it("calls fetchRepo only once when guessing the GitHub repo", async () => {
+    const POM_NO_SCM_GITHUB_GROUP = `<?xml version="1.0" encoding="UTF-8"?>
+<project>
+  <groupId>io.github.someowner</groupId>
+  <artifactId>some-lib</artifactId>
+  <version>1.0.0</version>
+</project>`;
+
+    const repoWithGithubGroup = mockRepo(["1.0.0"]);
+    (repoWithGithubGroup.fetchMetadata as ReturnType<typeof vi.fn>).mockResolvedValue({
+      groupId: "io.github.someowner",
+      artifactId: "some-lib",
+      versions: ["1.0.0"],
+      latest: "1.0.0",
+      release: "1.0.0",
+      lastUpdated: "20240101000000",
+    });
+
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(POM_NO_SCM_GITHUB_GROUP, { status: 200 }))
+      // Single fetchRepo call for the guessed repo (owner=someowner, repo=some-lib)
+      .mockResolvedValueOnce(json({
+        stargazers_count: 50,
+        forks_count: 5,
+        archived: false,
+        pushed_at: RECENT,
+        open_issues_count: 2,
+        created_at: "2021-01-01T00:00:00Z",
+        license: { spdx_id: "MIT", name: "MIT License" },
+        owner: { login: "someowner", type: "User" },
+      }))
+      .mockResolvedValueOnce(json([]))  // releases
+      .mockResolvedValueOnce(json({ total_count: 2 }))    // open issues
+      .mockResolvedValueOnce(json({ total_count: 10 }))   // closed issues
+      .mockResolvedValueOnce(json({ items: [] }))         // median
+      .mockResolvedValueOnce(json({ public_repos: 5, created_at: "2018-01-01T00:00:00Z" })) as typeof fetch;
+
+    globalThis.fetch = fetchMock;
+
+    const { results } = await getDependencyHealthHandler([repoWithGithubGroup], {
+      dependencies: [{ groupId: "io.github.someowner", artifactId: "some-lib" }],
+    });
+
+    const r = results[0];
+    expect(r.repository?.owner).toBe("someowner");
+    expect(r.github).not.toBeNull();
+    // Verify fetchRepo was called exactly once for the guessed repo — no prior repoExists call.
+    // Use a regex that matches /repos/owner/repo exactly (no trailing path) to avoid
+    // matching /repos/owner/repo/releases or similar sub-paths.
+    const repoMetaCalls = fetchMock.mock.calls.filter(
+      (call) => typeof call[0] === "string" && /\/repos\/someowner\/some-lib$/.test(call[0]),
+    );
+    expect(repoMetaCalls).toHaveLength(1);
+  });
 });
 
 describe("scmHost", () => {

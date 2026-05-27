@@ -6,7 +6,7 @@ import { buildPomUrl, extractGitHubRepo, extractScmUrl, extractLicenses } from "
 import type { GitHubRepo } from "../github/pom-scm.js";
 import { guessGitHubRepo } from "../github/guess-repo.js";
 import { GitHubClient } from "../github/github-client.js";
-import type { GitHubRelease } from "../github/github-client.js";
+import type { GitHubRelease, GitHubRepoMeta } from "../github/github-client.js";
 import { fetchWithRetry } from "../http/client.js";
 
 const MS_PER_DAY = 86_400_000;
@@ -17,8 +17,10 @@ export interface DependencyHealthInput {
 }
 
 export interface IssueHealth {
-  open: number;
-  closed: number;
+  /** null when the Search API call failed (rate-limited or network error). */
+  open: number | null;
+  /** null when the Search API call failed (rate-limited or network error). */
+  closed: number | null;
   closeRatio: number | null;
   medianDaysToClose: number | null;
 }
@@ -154,13 +156,18 @@ async function evaluateOne(
     return result;
   }
 
-  const targetVersion =
-    dep.version ??
-    findLatestVersion(versions, "PREFER_STABLE") ??
-    versions[versions.length - 1];
-  result.latestVersion = targetVersion;
-  result.stability = targetVersion ? classifyVersion(targetVersion) : undefined;
+  // latestVersion/stability always reflect the real latest available version,
+  // regardless of which specific version was requested — the tool contract says
+  // "latest version & stability" even when a specific version is being assessed.
+  const latestVersion =
+    findLatestVersion(versions, "PREFER_STABLE") ?? versions[versions.length - 1];
+  result.latestVersion = latestVersion;
+  result.stability = latestVersion ? classifyVersion(latestVersion) : undefined;
   result.versionCount = versions.length;
+
+  // For POM fetch and SCM extraction, use the requested version when given
+  // (so license/SCM reflects the version actually being evaluated).
+  const targetVersion = dep.version ?? latestVersion;
   if (!findLatestVersion(versions, "STABLE_ONLY")) result.signals.push("no stable release");
 
   // POM gives SCM URL, license, and (often) the GitHub repo.
@@ -177,9 +184,15 @@ async function evaluateOne(
   }
 
   // Fall back to guessing the GitHub repo from io.github.* / com.github.* groups.
+  // Use fetchRepo directly — if it returns metadata the repo exists; this avoids
+  // a redundant repoExists call followed by fetchRepo for the same endpoint.
+  let cachedRepoMeta: GitHubRepoMeta | null = null;
   if (!ghRepo) {
     const guess = guessGitHubRepo(groupId, artifactId);
-    if (guess && (await client.repoExists(guess.owner, guess.repo))) ghRepo = guess;
+    if (guess) {
+      cachedRepoMeta = await client.fetchRepo(guess.owner, guess.repo);
+      if (cachedRepoMeta) ghRepo = guess;
+    }
   }
 
   if (!ghRepo) {
@@ -196,7 +209,8 @@ async function evaluateOne(
   };
   if (!result.scm) result.scm = { url: result.repository.url, host: "github" };
 
-  const repoMeta = await client.fetchRepo(ghRepo.owner, ghRepo.repo);
+  // Reuse the repo metadata fetched during the guess-path existence check if available.
+  const repoMeta = cachedRepoMeta ?? (await client.fetchRepo(ghRepo.owner, ghRepo.repo));
   if (!repoMeta) {
     if (pomLicenses.length === 0) result.signals.push("no license declared");
     result.healthError = "GitHub repository metadata unavailable (rate limit or network)";
@@ -244,7 +258,7 @@ async function evaluateOne(
     result.signals.push(`no release in ${releaseMonths} months`);
   }
   if (!license) result.signals.push("no license declared");
-  if (issues && issues.closeRatio !== null && issues.closeRatio < 0.5 && issues.open >= 50) {
+  if (issues && issues.closeRatio !== null && issues.closeRatio < 0.5 && (issues.open ?? 0) >= 50) {
     result.signals.push("high open-issue backlog, low close ratio");
   }
   if (issues && issues.medianDaysToClose !== null && issues.medianDaysToClose >= 180) {
@@ -254,13 +268,39 @@ async function evaluateOne(
   return result;
 }
 
+/**
+ * Run `fn` over `items` with at most `limit` concurrent inflight calls.
+ * Result order matches input order.
+ */
+async function mapWithConcurrency<T, R>(
+  items: T[],
+  limit: number,
+  fn: (item: T) => Promise<R>,
+): Promise<R[]> {
+  const results = new Array<R>(items.length);
+  let next = 0;
+  const worker = async (): Promise<void> => {
+    for (;;) {
+      const i = next++;
+      if (i >= items.length) return;
+      results[i] = await fn(items[i]);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+  return results;
+}
+
+const HEALTH_CONCURRENCY = 5;
+
 export async function getDependencyHealthHandler(
   repos: MavenRepository[],
   input: DependencyHealthInput,
 ): Promise<DependencyHealthResult> {
   const client = new GitHubClient(process.env.GITHUB_TOKEN);
-  const results = await Promise.all(
-    input.dependencies.map((dep) => evaluateOne(repos, client, dep)),
+  const results = await mapWithConcurrency(
+    input.dependencies,
+    HEALTH_CONCURRENCY,
+    (dep) => evaluateOne(repos, client, dep),
   );
   return { results };
 }
