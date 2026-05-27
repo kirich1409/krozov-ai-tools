@@ -21,7 +21,7 @@
 #     "action":     "linked" | "noop",
 #     "issue":      <int>,
 #     "pr":         <int>,
-#     "comment_id": <int|null>,   -- new comment id (null on noop or dry-run)
+#     "comment_id": <string|null>,   -- new comment id (null on noop or dry-run)
 #     "dry_run":    <bool>
 #   }
 #

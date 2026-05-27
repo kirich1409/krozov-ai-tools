@@ -210,7 +210,7 @@ detect_project() {
     -f query='query($projId:ID!){node(id:$projId){... on ProjectV2{fields(first:30){nodes{... on ProjectV2FieldCommon{id name} ... on ProjectV2SingleSelectField{id name options{id name}}}}}}}' \
     -f projId="$project_id_to_use" 2>&1); local rc=$?
   if [[ $rc -ne 0 ]]; then return 1; fi
-  im_check_graphql_errors "$fields_out" 2>/dev/null || return 1
+  if jq -e '.errors' >/dev/null 2>&1 <<<"$fields_out"; then return 1; fi
 
   local status_field_id
   status_field_id=$(printf '%s' "$fields_out" | jq -r \
@@ -238,7 +238,7 @@ detect_project() {
     -f query='query($nodeId:ID!){node(id:$nodeId){... on Issue{projectItems(first:10){nodes{id project{id} fieldValues(first:20){nodes{... on ProjectV2ItemFieldSingleSelectValue{name optionId field{... on ProjectV2FieldCommon{name}}}}}}}}}}}' \
     -f nodeId="$ISSUE_NODE_ID" 2>&1); local rc2=$?
   if [[ $rc2 -ne 0 ]]; then return 1; fi
-  im_check_graphql_errors "$items_out" 2>/dev/null || return 1
+  if jq -e '.errors' >/dev/null 2>&1 <<<"$items_out"; then return 1; fi
 
   local item_id
   item_id=$(printf '%s' "$items_out" | jq -r \
@@ -365,17 +365,7 @@ if [[ "$MECHANISM" == "project-v2" ]]; then
   im_check_graphql_errors "$mut_out"
 else
   # Apply label changes and state changes
-  # Remove old status labels first
-  for lbl in "status:in-progress" "status:blocked"; do
-    if printf '%s' "$ISSUE_LABELS" | grep -qF "$lbl"; then
-      rm_out=$(gh issue edit "$IM_NUMBER" -R "$IM_REPO" --remove-label "$lbl" 2>&1) || {
-        im_error "Failed to remove label $lbl: $rm_out" "gh_failed"
-        exit 1
-      }
-    fi
-  done
-
-  # Add new status label if needed
+  # Add new status label first (before removing old ones) to avoid label-less limbo.
   for lbl in "${TARGET_ADD_LABELS[@]+"${TARGET_ADD_LABELS[@]}"}"; do
     # Ensure label exists; gh label create exits non-zero when label already exists —
     # tolerate that case but error on real failures (e.g. permission denied).
@@ -383,13 +373,23 @@ else
     create_out=$(gh label create "$lbl" -R "$IM_REPO" --color "ededed" --description "Issue status: $lbl" 2>&1) || true
     # After attempted create, verify the label actually exists (handles both success and "already exists").
     if ! gh label list -R "$IM_REPO" --search "$lbl" --json name -q '.[].name' 2>/dev/null | grep -qF "$lbl"; then
-      im_error "Failed to create label $lbl and label does not exist: $create_out" "gh_failed"
+      im_error "Failed to ensure label $lbl exists: $create_out" "gh_failed"
       exit 1
     fi
     add_out=$(gh issue edit "$IM_NUMBER" -R "$IM_REPO" --add-label "$lbl" 2>&1) || {
       im_error "Failed to add label $lbl: $add_out" "gh_failed"
       exit 1
     }
+  done
+
+  # Remove old status labels only after the new one is in place
+  for lbl in "status:in-progress" "status:blocked"; do
+    if printf '%s' "$ISSUE_LABELS" | grep -qF "$lbl"; then
+      rm_out=$(gh issue edit "$IM_NUMBER" -R "$IM_REPO" --remove-label "$lbl" 2>&1) || {
+        im_error "Failed to remove label $lbl: $rm_out" "gh_failed"
+        exit 1
+      }
+    fi
   done
 
   # Apply open/closed state
