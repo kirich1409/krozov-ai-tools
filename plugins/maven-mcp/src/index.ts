@@ -202,7 +202,7 @@ server.tool(
 
 function parsePort(): number | null {
   const args = process.argv.slice(2);
-  const parseValue = (value: string): number | null => {
+  const parseValue = (value: string): number => {
     const n = Number(value);
     if (Number.isInteger(n) && n > 0 && n <= 65535) return n;
     console.error(`Invalid --port value: "${value}". Expected an integer in range 1–65535.`);
