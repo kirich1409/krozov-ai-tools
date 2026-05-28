@@ -53,7 +53,7 @@ Then configure it in `.mcp.json`:
   "mcpServers": {
     "maven-mcp": {
       "type": "http",
-      "url": "http://localhost:3001/mcp"
+      "url": "http://127.0.0.1:3001/mcp"
     }
   }
 }
