@@ -38,9 +38,9 @@ An MCP server registers tools that Claude can call during a conversation. The se
 
 Custom repositories are auto-discovered from Gradle `settings.gradle(.kts)`/`build.gradle(.kts)` and Maven `pom.xml`, and the server queries these alongside Maven Central. Dependency scanning additionally reads `gradle/libs.versions.toml` for declared dependencies, but version catalogs are not used for repository discovery.
 
-## HTTP / SSE mode (Claude Cloud)
+## HTTP (Streamable HTTP) mode
 
-Claude Cloud (claude.ai/code web container) requires HTTP/SSE transport — stdio servers do not work there. Start the server in HTTP mode with `--port`:
+Claude Cloud (claude.ai/code web container) requires HTTP transport — stdio servers do not work there. Start the server in HTTP mode with `--port`:
 
 ```bash
 npx @krozov/maven-central-mcp --port 3001
@@ -52,8 +52,8 @@ Then configure it in `.mcp.json`:
 {
   "mcpServers": {
     "maven-mcp": {
-      "type": "sse",
-      "url": "http://localhost:3001/sse"
+      "type": "http",
+      "url": "http://localhost:3001/mcp"
     }
   }
 }
