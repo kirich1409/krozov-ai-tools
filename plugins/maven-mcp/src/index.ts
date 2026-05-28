@@ -1,6 +1,8 @@
 #!/usr/bin/env node
+import { createServer } from "node:http";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { z } from "zod";
 import { HttpMavenRepository, MAVEN_CENTRAL, GOOGLE_MAVEN, GRADLE_PLUGIN_PORTAL } from "./maven/repository.js";
 import type { MavenRepository } from "./maven/repository.js";
@@ -198,10 +200,39 @@ server.tool(
   },
 );
 
+function parsePort(): number | null {
+  const args = process.argv.slice(2);
+  const idx = args.indexOf("--port");
+  if (idx !== -1 && idx + 1 < args.length) {
+    const n = parseInt(args[idx + 1], 10);
+    return isNaN(n) ? null : n;
+  }
+  const eq = args.find((a) => a.startsWith("--port="));
+  if (eq) {
+    const n = parseInt(eq.slice("--port=".length), 10);
+    return isNaN(n) ? null : n;
+  }
+  return null;
+}
+
 async function main() {
-  const transport = new StdioServerTransport();
-  await server.connect(transport);
-  console.error("maven-central-mcp running on stdio");
+  const port = parsePort();
+  if (port !== null) {
+    const transport = new StreamableHTTPServerTransport();
+    await server.connect(transport);
+    const httpServer = createServer((req, res) => {
+      transport.handleRequest(req, res).catch((err) => {
+        console.error("HTTP request error:", err);
+        if (!res.headersSent) res.writeHead(500).end();
+      });
+    });
+    await new Promise<void>((resolve) => httpServer.listen(port, resolve));
+    console.error(`maven-central-mcp running on HTTP port ${port}`);
+  } else {
+    const transport = new StdioServerTransport();
+    await server.connect(transport);
+    console.error("maven-central-mcp running on stdio");
+  }
 }
 
 main().catch((error) => {
