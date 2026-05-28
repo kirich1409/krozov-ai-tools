@@ -202,23 +202,24 @@ server.tool(
 
 function parsePort(): number | null {
   const args = process.argv.slice(2);
+  const parseValue = (value: string): number | null => {
+    const n = Number(value);
+    if (Number.isInteger(n) && n > 0 && n <= 65535) return n;
+    console.error(`Invalid --port value: "${value}". Expected an integer in range 1–65535.`);
+    process.exit(1);
+  };
   const idx = args.indexOf("--port");
-  if (idx !== -1 && idx + 1 < args.length) {
-    const n = parseInt(args[idx + 1], 10);
-    return isNaN(n) ? null : n;
-  }
+  if (idx !== -1 && idx + 1 < args.length) return parseValue(args[idx + 1]);
   const eq = args.find((a) => a.startsWith("--port="));
-  if (eq) {
-    const n = parseInt(eq.slice("--port=".length), 10);
-    return isNaN(n) ? null : n;
-  }
+  if (eq) return parseValue(eq.slice("--port=".length));
   return null;
 }
 
 async function main() {
   const port = parsePort();
   if (port !== null) {
-    const transport = new StreamableHTTPServerTransport();
+    // Stateless mode: no session tracking — each request is independent
+    const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
     await server.connect(transport);
     const httpServer = createServer((req, res) => {
       transport.handleRequest(req, res).catch((err) => {
@@ -226,7 +227,7 @@ async function main() {
         if (!res.headersSent) res.writeHead(500).end();
       });
     });
-    await new Promise<void>((resolve) => httpServer.listen(port, resolve));
+    await new Promise<void>((resolve) => httpServer.listen(port, "127.0.0.1", resolve));
     console.error(`maven-central-mcp running on HTTP port ${port}`);
   } else {
     const transport = new StdioServerTransport();
