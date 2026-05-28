@@ -209,7 +209,13 @@ function parsePort(): number | null {
     process.exit(1);
   };
   const idx = args.indexOf("--port");
-  if (idx !== -1 && idx + 1 < args.length) return parseValue(args[idx + 1]);
+  if (idx !== -1) {
+    if (idx + 1 >= args.length) {
+      console.error("--port requires a value. Usage: --port <number> or --port=<number>");
+      process.exit(1);
+    }
+    return parseValue(args[idx + 1]);
+  }
   const eq = args.find((a) => a.startsWith("--port="));
   if (eq) return parseValue(eq.slice("--port=".length));
   return null;
@@ -227,7 +233,9 @@ async function main() {
         if (!res.headersSent) res.writeHead(500).end();
       });
     });
-    await new Promise<void>((resolve) => httpServer.listen(port, "127.0.0.1", resolve));
+    await new Promise<void>((resolve, reject) =>
+      httpServer.listen(port, "127.0.0.1", resolve).on("error", reject),
+    );
     console.error(`maven-central-mcp running on HTTP port ${port}`);
   } else {
     const transport = new StdioServerTransport();
