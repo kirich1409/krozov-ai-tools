@@ -51,6 +51,30 @@ PROJECT=$(glab repo view --output json | jq -r '.path_with_namespace | @uri')
 
 If the PR/MR is already merged or closed — stop and report the final state.
 
+### Merge policy detection
+
+After fetching repo metadata, derive the merge policy for this run. Record in the state file as `Merge policy:`.
+
+1. **Explicit config in CLAUDE.md** — scan the repo's `CLAUDE.md` (if present) for a line matching:
+   ```
+   Merge policy: auto
+   Merge policy: team-strict
+   ```
+   Use the first match.
+
+2. **Explicit config in `.claude/settings.json`** — check key `driveToMerge.mergePolicy`; values `"auto"` or `"team-strict"`.
+
+3. **Fallback: org vs personal heuristic** (GitHub only):
+   ```bash
+   IS_ORG=$(gh repo view --json isInOrganization -q .isInOrganization)
+   # true → team-strict; false → auto
+   ```
+   For GitLab, default to `team-strict` when the project namespace is a group, `auto` when it is a personal namespace.
+
+Policy semantics:
+- `auto` — `--auto` mode skips the merge gate and may use native platform auto-merge.
+- `team-strict` — merge gate always asks in any mode; GitLab `--when-pipeline-succeeds` disabled unless the user explicitly passes `--native-auto-merge` on invocation.
+
 ## 1.3 Preconditions
 
 Abort with a clear message if any of these fail:
@@ -74,12 +98,13 @@ Verify `swarm-report/` is gitignored by running `git check-ignore -q swarm-repor
 URL: <PR URL>
 Platform: github | gitlab
 Mode: default | auto | dry-run
+Merge policy: auto | team-strict
 Principal: <@actor>            # gh api user --jq .login
 Repository node id: <graphql node id of the repository>
 PR node id: <graphql node id of the pull request>
 Copilot node id: <graphql node id of copilot-pull-request-reviewer or `unavailable`>
 Started: <ISO8601>
-Status: running | waiting-for-user | merged | blocked
+Status: running | waiting-for-user | waiting-native-auto-merge | merged | blocked
 
 ## Branch change model
 analyzed_through_sha: <abbreviated sha the model is current as of, or empty before first build>
