@@ -16,10 +16,10 @@ fixes, delegate, push, re-request review, wait for new activity — until the PR
 or a true blocker requires the user.
 
 **Core principle:** keep the PR moving. Every obstacle (CI failure, review comment,
-stalled reviewer) is a loop iteration, not a stop. The skill stops only for: the final
-merge (requires user confirmation), true disagreements with a reviewer that need a
-human judgement call, or mechanical dead-ends (permission denied, rebase conflict the
-skill cannot resolve).
+stalled reviewer) is a loop iteration, not a stop. The skill stops only for: true
+disagreements with a reviewer that need a human judgement call, or mechanical dead-ends
+(permission denied, rebase conflict the skill cannot resolve). In default mode it also
+stops at the final merge step and waits for "merge"; in `--auto` mode it merges directly.
 
 **In-session, not in files.** All analysis, categorization, and proposed actions are
 rendered in the conversation as tables. A state file exists only to survive context
@@ -214,7 +214,7 @@ The skill decides these without asking, in any mode:
 
 **Proposals are concrete.** Every actionable row carries a snippet, a delegation instruction, or the exact question text. "BLOCKING / FIXABLE" alone is not a proposal.
 
-**Autonomous by default.** The user should only see decisions that require judgement: true disagreements, unresolvable rebases, final merge. Everything mechanical happens without asking.
+**Autonomous by default.** The user should only see decisions that require judgement: true disagreements, unresolvable rebases. Everything mechanical happens without asking. In default mode the final merge still waits for user confirmation; in `--auto` mode it executes automatically.
 
 **Approval gate and merge gate.** `--auto` removes both: the round-level approval gate and the final merge gate. In `--auto` mode the skill merges automatically once all Phase 5 conditions are met. Default mode retains explicit user confirmation at the merge step — the user types "merge" to execute. True blockers (DISCUSSION on P0/P1, unresolvable rebase, integrity mismatch) still stop the loop in any mode.
 
