@@ -63,7 +63,6 @@ For undirected exploratory QA without a spec — call the `manual-tester` agent 
 |---|---|
 | `/create-pr` | Create a draft or ready GitHub PR / GitLab MR with generated metadata |
 | `/drive-to-merge` | Autonomous CI-monitor + review-handler + merge loop: categorize comments inline, propose concrete fixes, delegate, reply, resolve threads, re-request review (Copilot + humans), poll, confirm merge with user |
-| `/issue-manager` | Backlog orchestrator — DAG-ordered sequential issue pipeline with board advancement (GitHub) |
 
 ## Agents (1)
 
