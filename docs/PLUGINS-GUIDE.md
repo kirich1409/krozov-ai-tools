@@ -1,6 +1,6 @@
 # krozov-ai-tools: Руководство по плагинам
 
-Монорепозиторий Claude Code плагинов от krozov. Версия 0.10.0. Все плагины используют единую версионность — каждый релиз обновляет все плагины до одной версии.
+Монорепозиторий Claude Code плагинов от krozov. Версия 0.21.2. Все плагины используют единую версионность — каждый релиз обновляет все плагины до одной версии.
 
 Репозиторий: [github.com/kirich1409/krozov-ai-tools](https://github.com/kirich1409/krozov-ai-tools)
 
@@ -22,7 +22,7 @@
 
 ```mermaid
 graph TB
-    subgraph repo["krozov-ai-tools v0.10.0"]
+    subgraph repo["krozov-ai-tools v0.21.2"]
         maven["maven-mcp<br/><i>MCP server</i>"]
         guard["sensitive-guard<br/><i>PreToolUse hook</i>"]
         subgraph dw_family["developer-workflow family"]
@@ -54,8 +54,8 @@ graph TB
 |--------|-----|------------|
 | maven-mcp | MCP server + skills + hook | Анализ Maven-зависимостей |
 | sensitive-guard | PreToolUse hook | Защита чувствительных данных |
-| developer-workflow | Skills + agent | Ядро жизненного цикла разработки (17 скиллов) |
-| developer-workflow-experts | Agents (9) | Переиспользуемые review-агенты (library, safe standalone) |
+| developer-workflow | Skills + agent | Ядро жизненного цикла разработки (13 скиллов) |
+| developer-workflow-experts | Agents (10) | Переиспользуемые review-агенты (library, safe standalone) |
 | developer-workflow-kotlin | Skills + agents | Kotlin/Android/KMP специалисты и migration skills |
 | developer-workflow-swift | Agents + references | Swift/iOS/macOS специалисты и SwiftUI/Swift references |
 
@@ -111,12 +111,13 @@ Maven dependency intelligence. MCP-сервер для запросов к Maven
 | `search_artifacts` | Поиск артефактов на Maven Central по ключевым словам |
 | `audit_project_dependencies` | Полный аудит: сканирование + сравнение версий + проверка уязвимостей |
 
-### Skills (3 штуки)
+### Skills (4 штуки)
 
 | Skill | Команда | Когда использовать |
 |-------|---------|-------------------|
 | latest-version | `/latest-version` | Нужно найти последнюю версию конкретной библиотеки |
 | check-deps | `/check-deps` | Проверить все зависимости проекта на актуальность |
+| check-deps-vulnerabilities | `/check-deps-vulnerabilities` | Проверить зависимости проекта на известные уязвимости (CVE/GHSA) |
 | dependency-changes | `/dependency-changes` | Узнать, что изменилось между версиями зависимости |
 
 ### Hook (1 штука)
@@ -280,8 +281,8 @@ sequenceDiagram
 
 | Плагин | Содержимое |
 |--------|-----------|
-| `developer-workflow` | Ядро: 17 lifecycle-скиллов + 1 QA-агент (`manual-tester`) |
-| `developer-workflow-experts` | 9 review/consult-агентов (library, безопасен standalone) |
+| `developer-workflow` | Ядро: 13 lifecycle-скиллов + 1 QA-агент (`manual-tester`) |
+| `developer-workflow-experts` | 10 review/consult-агентов (library, безопасен standalone) |
 | `developer-workflow-kotlin` | 3 migration-скилла + Kotlin/Compose engineer-агенты |
 | `developer-workflow-swift` | Swift/SwiftUI engineer-агенты + Swift/SwiftUI references |
 
@@ -319,7 +320,7 @@ flowchart LR
 
 ### developer-workflow (core)
 
-17 lifecycle-скиллов и 1 QA-агент. Только оркестрация — никаких platform-specific инженеров.
+13 lifecycle-скиллов и 1 QA-агент. Только оркестрация — никаких platform-specific инженеров.
 
 #### Skills: Research и Planning
 
@@ -360,6 +361,7 @@ flowchart LR
 |-------|---------|------------|
 | create-pr | `/create-pr` | Создание PR/MR: push, draft/ready, описание, reviewers |
 | drive-to-merge | `/drive-to-merge` | Автономный оркестратор после создания PR: мониторит CI, диагностирует падения, фетчит комменты, категоризирует их inline, предлагает конкретные фиксы (edit-сниппет или делегирование в `implement`/`debug`), пушит, отвечает в треды, резолвит, запрашивает повторное ревью (Copilot + люди), поллит активность через `ScheduleWakeup`, доводит PR до merge. Финальный merge всегда требует явного подтверждения пользователя. Режимы: default (ждёт `approve` между раундами), `--auto` (не ждёт), `--dry-run` (только анализ) |
+| issue-manager | `/issue-manager` | Backlog-оркестратор: последовательный DAG-пайплайн задач с автоматическим продвижением карточек GitHub Projects |
 
 #### Skills: Orchestrators
 
@@ -380,7 +382,7 @@ flowchart LR
 
 ### developer-workflow-experts
 
-9 переиспользуемых review/consult-агентов. Plugin безопасен standalone — не содержит скиллов, хуков или MCP. Автоматически устанавливается как зависимость core.
+10 переиспользуемых review/consult-агентов. Plugin безопасен standalone — не содержит скиллов, хуков или MCP. Автоматически устанавливается как зависимость core.
 
 | Agent | Роль | Model | Режим |
 |-------|------|-------|-------|
@@ -393,6 +395,7 @@ flowchart LR
 | performance-expert | N+1, memory leaks, jank, recomposition, батарея | sonnet | read-only |
 | security-expert | OWASP, auth flows, token storage, TLS, secrets management | opus | read-only |
 | ux-expert | UX ревью, accessibility, навигация, platform conventions | sonnet | read-only |
+| dependency-evaluator | Оценка целесообразности новой библиотеки: maintenance, активность, репутация, лицензия, CVE | sonnet | read-only |
 
 ---
 
@@ -550,6 +553,7 @@ flowchart LR
 |---------|--------|----------|
 | `/latest-version` | maven-mcp | Найти последнюю версию Maven-артефакта |
 | `/check-deps` | maven-mcp | Проверить все зависимости проекта на обновления |
+| `/check-deps-vulnerabilities` | maven-mcp | Проверить зависимости проекта на известные уязвимости (CVE/GHSA) |
 | `/dependency-changes` | maven-mcp | Показать changelog между версиями зависимости |
 | `/research` | developer-workflow | Параллельное исследование темы экспертами |
 | `/decompose-feature` | developer-workflow | Декомпозиция фичи в список задач |
@@ -565,6 +569,7 @@ flowchart LR
 | `/acceptance` | developer-workflow | Верификация фичи на устройстве |
 | `/create-pr` | developer-workflow | Создание pull request |
 | `/drive-to-merge` | developer-workflow | Автономный CI+review loop: categorize → propose concrete fix → delegate → reply → resolve → re-request review (Copilot + люди) → poll → merge (с подтверждением пользователя) |
+| `/issue-manager` | developer-workflow | Backlog-оркестратор: DAG-упорядоченный последовательный pipeline задач с продвижением карточек |
 | `/feature-flow` | developer-workflow | Оркестратор полного цикла feature (setup → research → plan → implement → PR → merge) |
 | `/bugfix-flow` | developer-workflow | Оркестратор bugfix (setup → debug → implement → PR → merge) |
 | `/migration` | developer-workflow-kotlin | Guided 8-phase migration — View→Compose, Android→KMP, DI, async, build plugin и другие |
