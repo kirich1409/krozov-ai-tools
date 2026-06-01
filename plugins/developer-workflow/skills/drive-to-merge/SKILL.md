@@ -16,10 +16,10 @@ fixes, delegate, push, re-request review, wait for new activity — until the PR
 or a true blocker requires the user.
 
 **Core principle:** keep the PR moving. Every obstacle (CI failure, review comment,
-stalled reviewer) is a loop iteration, not a stop. The skill stops only for: the final
-merge (requires user confirmation), true disagreements with a reviewer that need a
-human judgement call, or mechanical dead-ends (permission denied, rebase conflict the
-skill cannot resolve).
+stalled reviewer) is a loop iteration, not a stop. The skill stops only for: true
+disagreements with a reviewer that need a human judgement call, or mechanical dead-ends
+(permission denied, rebase conflict the skill cannot resolve). In default mode it also
+stops at the final merge step and waits for "merge"; in `--auto` mode it merges directly.
 
 **In-session, not in files.** All analysis, categorization, and proposed actions are
 rendered in the conversation as tables. A state file exists only to survive context
@@ -31,13 +31,11 @@ compaction — the user never edits it.
 
 | Mode | What it changes |
 |---|---|
-| default | Between rounds shows a decision table and waits for `approve` / `skip` / `stop` |
-| `--auto` | Same table shown for visibility, then proceeds without waiting; merge step still asks |
+| default | Between rounds shows a decision table and waits for `approve` / `skip` / `stop`; merge step asks for confirmation |
+| `--auto` | Same table shown for visibility, then proceeds without waiting; merge gate also skipped — when all Phase 5 conditions are met the skill merges automatically |
 | `--dry-run` | Runs analysis and renders the decision table once; makes no edits, pushes, or posts; exits |
 
 Trigger words equivalent to `--auto`: "act autonomously", "without confirmations", "auto mode", "don't ask". The skill echoes which mode it is running in before Phase 2.
-
-The merge step in Phase 5 **always** asks — `--auto` does not override that.
 
 ---
 
@@ -88,7 +86,7 @@ Classify:
 | PR attribute | Values that matter |
 |---|---|
 | `state` | OPEN → continue; MERGED / CLOSED → Phase 5 terminal |
-| `isDraft` | `true` → handle review comments and CI, but never enter Phase 5; surface to user with "PR is draft — promote to ready with `gh pr ready` or abort" when everything else would be merge-ready |
+| `isDraft` | `true` → handle review comments and CI, but do not enter Phase 5 until promoted. When everything else would be merge-ready: in `--auto` mode promote automatically (`gh pr ready` / `glab mr update --remove-draft`) and continue to Phase 5; in default mode surface to user with "PR is draft — promote to ready with `gh pr ready` or abort" |
 | `statusCheckRollup` | Any `FAILURE` / `CANCELLED` / `TIMED_OUT` → 2.2 CI handling; all `SUCCESS` → skip 2.2; mix of `IN_PROGRESS` + no failures → wait (Phase 4) |
 | `reviewDecision` | `CHANGES_REQUESTED` → 2.3 must run; `APPROVED` → candidate for merge; `REVIEW_REQUIRED` → 2.4 (request review) |
 | `mergeable` + `mergeStateStatus` | `CONFLICTING` → 2.6 rebase; `BLOCKED` (missing approval, failing required check) → identify and loop |
@@ -174,11 +172,14 @@ Procedure and delaySeconds matrix in [`references/polling.md`](references/pollin
 
 ---
 
-## Phase 5: Merge (always user-confirmed)
+## Phase 5: Merge
 
-Pre-merge checks → confirmation message → final re-check → `gh pr merge` / `glab mr merge`.
-`--auto` does not skip this gate — by design, final merge always requires explicit user
-approval.
+Pre-merge checks → summary message → final re-check → `gh pr merge` / `glab mr merge`.
+
+In **default mode** the summary message blocks until the user replies "merge".
+In **`--auto` mode** the summary is shown for visibility and the merge executes immediately
+without waiting. If `isDraft == true` and everything else is merge-ready, promote the PR/MR
+first (`gh pr ready` / `glab mr update --remove-draft`) before running pre-merge checks.
 
 Procedure in [`references/merge.md`](references/merge.md).
 
@@ -213,9 +214,9 @@ The skill decides these without asking, in any mode:
 
 **Proposals are concrete.** Every actionable row carries a snippet, a delegation instruction, or the exact question text. "BLOCKING / FIXABLE" alone is not a proposal.
 
-**Autonomous by default.** The user should only see decisions that require judgement: true disagreements, unresolvable rebases, final merge. Everything mechanical happens without asking.
+**Autonomous by default.** The user should only see decisions that require judgement: true disagreements, unresolvable rebases. Everything mechanical happens without asking. In default mode the final merge still waits for user confirmation; in `--auto` mode it executes automatically.
 
-**Approval gate ≠ merge gate.** `--auto` removes the round-level approval gate. It does not remove the merge gate — by design, final merge always requires explicit user confirmation.
+**Approval gate and merge gate.** `--auto` removes both: the round-level approval gate and the final merge gate. In `--auto` mode the skill merges automatically once all Phase 5 conditions are met. Default mode retains explicit user confirmation at the merge step — the user types "merge" to execute. True blockers (DISCUSSION on P0/P1, unresolvable rebase, integrity mismatch) still stop the loop in any mode.
 
 **Safe by construction.** Replies go through the sanitize pipeline; thread ownership is re-verified before every POST; POST bodies go through stdin, never shell args. Force-push policy per globals.
 

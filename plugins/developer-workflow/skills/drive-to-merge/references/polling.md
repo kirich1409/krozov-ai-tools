@@ -1,6 +1,40 @@
 # drive-to-merge — Phase 4 Polling (ScheduleWakeup)
 
-When the round ended with "wait" (CI running or review pending) — schedule the next round. The wake-up prompt is built from the stored `Mode` in the state file (per "Mode precedence on resume" in `references/setup.md`) — never hardcoded.
+When the round ended with "wait" (CI running or review pending) — decide whether to use
+native auto-merge (exit immediately) or schedule the next round via ScheduleWakeup.
+
+## Native auto-merge path (`--auto` mode, CI still running)
+
+When mode is `--auto` **and** `Merge policy` is `auto` **and** CI is still in progress
+(no failures, only `IN_PROGRESS` / `PENDING` checks) — delegate the wait to the platform
+instead of polling. Procedure in [`references/merge.md`](merge.md) § "Native auto-merge path".
+
+If native auto-merge succeeds: exit the loop (no ScheduleWakeup). If it fails (repo setting
+disabled), fall through to normal ScheduleWakeup below.
+
+For `team-strict` policy: skip native auto-merge entirely regardless of mode; proceed to
+ScheduleWakeup.
+
+## Proactive autonomy offer (default mode, long waits)
+
+Before scheduling ScheduleWakeup in **default mode**, when the wait will be long:
+
+- **Slow CI** (pipeline ≥5 min, detected on first entry to this wait): show once —
+  > "CI is running (slow pipeline). Type `auto-merge` to set native auto-merge and exit now, or I'll keep polling."
+- **Human reviewer not responding** (two or more consecutive 1800s polls with no new review
+  activity): show once —
+  > "No reviewer activity after two rounds. Type `auto-merge` to set native auto-merge and exit, or I'll keep polling."
+
+If the user types `auto-merge`: execute the native auto-merge path from `references/merge.md`
+and exit. Do not offer again after the user declines (silently) — offer at most once per
+category per run.
+
+In `--auto` mode this offer is unnecessary — native auto-merge is used automatically above.
+
+## ScheduleWakeup
+
+The wake-up prompt is built from the stored `Mode` in the state file (per "Mode precedence on
+resume" in `references/setup.md`) — never hardcoded.
 
 ```
 WAKEUP_PROMPT="/drive-to-merge"
