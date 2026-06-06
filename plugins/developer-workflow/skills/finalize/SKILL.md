@@ -69,6 +69,8 @@ Non-negotiables violations from applicable `CLAUDE.md` `## Non-negotiables` are 
 
 FAIL verdict → this phase has BLOCKs to address before continuing.
 
+**Why a dedicated `code-reviewer`, not the built-in `/code-review`.** Phase A intentionally does NOT call `/code-review` by name: that name collides between a Tier-1 core built-in and a Tier-3 marketplace plugin (`claude-plugins-official`, published without `version` fields), breaking semver resolution — in a foreign install finalize could bind the Tier-3 shadow, which needs a PR number and cannot review a working tree. `code-reviewer` (from `developer-workflow-experts`) owns plan-conformance anchoring and the rule "a `CLAUDE.md` Non-negotiables violation is always BLOCK regardless of confidence" — neither of which generic `/code-review` performs. The cloud multi-agent `/code-review ultra` is a manual user escape OUTSIDE this gate; it is deliberately not wired into the default round loop (a third generic reviewer stacked on Phase A + Phase C would raise duplication, not lower it).
+
 ---
 
 ## Phase B — Built-in simplification (`/simplify`)
@@ -261,6 +263,21 @@ Findings the user explicitly decided to accept (e.g. at escalation). Not auto-po
 ## Commits added during finalize
 - <hash> <message>
 ```
+
+### Quality receipt (terse)
+
+Also save `swarm-report/<slug>-quality.md` on the same exit (PASS or ESCALATE). This is the terse receipt consumed by downstream skills (`acceptance` Step 2.5 dedup probe and `create-pr`'s status table) — the detailed `<slug>-finalize.md` above is the round-by-round log, this is the one-glance gate result.
+
+```markdown
+# Quality receipt: <slug>
+
+Status: PASS | FAIL
+Date: <date>
+Escalate: <true — only on ESCALATE; omit otherwise>
+Detail: swarm-report/<slug>-finalize.md
+```
+
+Verdict mapping: `Exit: PASS` → `Status: PASS`; `Exit: ESCALATE` → `Status: FAIL` plus `Escalate: true`. `Date:` is mandatory — `acceptance` Step 2.5 infers freshness from `Date:` against the branch commit window; if it cannot confirm, it does NOT skip `code-reviewer`, so `Date:` alone is sufficient and no commit SHA is needed.
 
 ### Chat summary on exit (≤20 lines)
 
