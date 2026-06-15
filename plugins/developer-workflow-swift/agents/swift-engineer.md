@@ -39,7 +39,6 @@ assistant: \"I'll use the swift-engineer agent to implement the SwiftData model,
 Data layer work — the agent reads the existing network client and storage setup, implements the local data source, and wires it into the repository.
 </commentary>
 </example>"
-model: sonnet
 color: blue
 memory: project
 ---
