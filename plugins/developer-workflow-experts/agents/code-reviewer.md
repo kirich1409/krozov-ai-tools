@@ -1,7 +1,6 @@
 ---
 name: "code-reviewer"
 description: "Independent code reviewer for Quality Loop gate 4 (semantic self-review). Receives task description, plan, and git diff — does NOT receive implementation conversation history. Checks semantic correctness, logic errors, basic security, code quality, and consistency with conventions.\n\n<example>\nContext: Quality Loop reached gate 4 after build, lint, and tests passed.\nassistant: \"Launching code-reviewer for an independent review of the changes before PR.\"\n<commentary>\nGate 4 requires a fresh agent that never saw the implementation conversation. Launch code-reviewer with the task description, plan path, and git diff.\n</commentary>\n</example>\n\n<example>\nContext: code-reviewer returned WARN, implementation agent fixed the issues, re-review needed.\nassistant: \"Re-launching code-reviewer to verify the fixes.\"\n<commentary>\nAfter fixes, re-launch code-reviewer with the same inputs plus the updated diff. The reviewer is stateless — each invocation is independent.\n</commentary>\n</example>"
-model: sonnet
 tools: Read, Glob, Grep
 disallowedTools: Edit, Write, NotebookEdit
 color: purple
