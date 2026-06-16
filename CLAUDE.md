@@ -21,7 +21,7 @@ Monorepo for Claude Code plugins by krozov. Contains six plugins:
 | sensitive-guard | `plugins/sensitive-guard/` | Scans files for secrets and PII before they reach AI servers |
 | developer-workflow | `plugins/developer-workflow/` | Toolbox of on-demand skills — research, write-spec, reverse-spec, multiexpert review, evaluate-dependency, write-tests, check, finalize, generate-test-plan, acceptance, create-pr, drive-to-merge (exploratory QA: call manual-tester agent directly) |
 | developer-workflow-experts | `plugins/developer-workflow-experts/` | 10 reusable review/consult agents (code-reviewer, architecture-expert, security-expert, dependency-evaluator, …) — safe standalone |
-| developer-workflow-kotlin | `plugins/developer-workflow-kotlin/` | Kotlin/Android/KMP specialists and migration skills |
+| developer-workflow-kotlin | `plugins/developer-workflow-kotlin/` | Kotlin/Android/KMP specialists and the snapshot skill |
 | developer-workflow-swift | `plugins/developer-workflow-swift/` | Swift/iOS/macOS specialists and Swift/SwiftUI references |
 
 ## Structure
@@ -32,7 +32,7 @@ plugins/
   sensitive-guard/              # Shell-based Claude Code plugin
   developer-workflow/           # Toolbox skills + manual-tester agent
   developer-workflow-experts/   # 10 reusable expert agents (library)
-  developer-workflow-kotlin/    # Kotlin/Android/KMP specialists and migrations
+  developer-workflow-kotlin/    # Kotlin/Android/KMP specialists and snapshot skill
   developer-workflow-swift/     # Swift/iOS specialists and references
 ```
 
