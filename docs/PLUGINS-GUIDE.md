@@ -40,7 +40,6 @@ graph TB
     swift -.->|dependency| experts
 
     maven -->|"MCP tools для<br/>проверки зависимостей"| workflow
-    kotlin -.->|"migration использует<br/>maven-mcp для анализа deps"| maven
 
     style maven fill:#4a9eff,color:#fff
     style guard fill:#ff6b6b,color:#fff
@@ -56,7 +55,7 @@ graph TB
 | sensitive-guard | PreToolUse hook | Защита чувствительных данных |
 | developer-workflow | Skills + agent | Ядро жизненного цикла разработки (17 скиллов) |
 | developer-workflow-experts | Agents (9) | Переиспользуемые review-агенты (library, safe standalone) |
-| developer-workflow-kotlin | Skills + agents | Kotlin/Android/KMP специалисты и migration skills |
+| developer-workflow-kotlin | Skills + agents | Kotlin/Android/KMP специалисты и snapshot skill |
 | developer-workflow-swift | Agents + references | Swift/iOS/macOS специалисты и SwiftUI/Swift references |
 
 ---
@@ -282,7 +281,7 @@ sequenceDiagram
 |--------|-----------|
 | `developer-workflow` | Ядро: 17 lifecycle-скиллов + 1 QA-агент (`manual-tester`) |
 | `developer-workflow-experts` | 9 review/consult-агентов (library, безопасен standalone) |
-| `developer-workflow-kotlin` | 3 migration-скилла + Kotlin/Compose engineer-агенты |
+| `developer-workflow-kotlin` | `snapshot`-скилл + Kotlin/Compose engineer-агенты |
 | `developer-workflow-swift` | Swift/SwiftUI engineer-агенты + Swift/SwiftUI references |
 
 Установка любого из `developer-workflow`, `-kotlin`, `-swift` автоматически подтянет зависимости через `dependencies` в `plugin.json`.
@@ -400,11 +399,10 @@ flowchart LR
 
 Специализация для Kotlin/Android/KMP. Устанавливать для Kotlin-разработки.
 
-#### Skills: Migration
+#### Skills
 
 | Skill | Команда | Назначение |
 |-------|---------|------------|
-| migration | `/migration` | Guided 8-phase migration between technologies — View→Compose, Android→KMP, Databinding→ViewBinding, DI, async, build plugin — с гарантией поведенческой эквивалентности |
 | snapshot | `/snapshot` | Фиксация текущего поведения кода перед миграцией или рефакторингом |
 
 #### Agents
@@ -449,7 +447,7 @@ flowchart TB
     end
 
     subgraph kotlin_p ["developer-workflow-kotlin"]
-        mig[/migration/]
+        snap[/snapshot/]
         ke[kotlin-engineer]
         cd[compose-developer]
     end
@@ -472,7 +470,6 @@ flowchart TB
     end
 
     impl --> ke & cd & se & sd
-    mig --> ke & cd
     debug --> de
     research --> arch & ba
     decompose --> arch & ba
@@ -567,7 +564,6 @@ flowchart LR
 | `/drive-to-merge` | developer-workflow | Автономный CI+review loop: categorize → propose concrete fix → delegate → reply → resolve → re-request review (Copilot + люди) → poll → merge (с подтверждением пользователя) |
 | `/feature-flow` | developer-workflow | Оркестратор полного цикла feature (setup → research → plan → implement → PR → merge) |
 | `/bugfix-flow` | developer-workflow | Оркестратор bugfix (setup → debug → implement → PR → merge) |
-| `/migration` | developer-workflow-kotlin | Guided 8-phase migration — View→Compose, Android→KMP, DI, async, build plugin и другие |
 | `/snapshot` | developer-workflow-kotlin | Фиксация текущего поведения кода перед миграцией или рефакторингом |
 
 ---

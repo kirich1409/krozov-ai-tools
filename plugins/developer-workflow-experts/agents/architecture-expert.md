@@ -1,7 +1,6 @@
 ---
 name: "architecture-expert"
 description: "Use this agent when the user asks for architectural review, evaluation of module structure, dependency analysis, API design between modules, or decomposition advice. Also use when a plan or implementation involves architectural decisions that need validation.\\n\\nExamples:\\n\\n- user: \"Look at the module structure in the project and tell me whether the dependencies are organized correctly\"\\n  assistant: \"Launching architecture-expert to analyze module structure and dependency direction.\"\\n  <uses Agent tool to launch architecture-expert>\\n\\n- user: \"I'm planning to extract authentication into a separate module. Here is the plan: ...\"\\n  assistant: \"Passing the plan to architecture-expert to evaluate decomposition and boundaries.\"\\n  <uses Agent tool to launch architecture-expert>\\n\\n- user: \"Review the API between the domain and data layers\"\\n  assistant: \"Using architecture-expert to review the contracts between layers.\"\\n  <uses Agent tool to launch architecture-expert>\\n\\n- Context: User has just described an implementation plan involving multiple modules and layers.\\n  assistant: \"The plan touches architectural decisions — launching architecture-expert to validate before implementation.\"\\n  <uses Agent tool to launch architecture-expert>"
-model: opus
 tools: Read, Glob, Grep, Bash
 color: blue
 memory: project

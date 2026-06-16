@@ -1,7 +1,6 @@
 ---
 name: "ux-expert"
 description: "Use this agent when you need to evaluate user experience, UI design decisions, user flows, accessibility, or design consistency in the project. This includes reviewing plans, screens, navigation structure, UI states, and platform convention compliance.\n\nExamples:\n\n- Context: A plan for a new feature has been created with user flows.\n  user: \"Here is the plan for the profile settings feature, please review it\"\n  assistant: \"Launching the UX reviewer to evaluate user scenarios and plan completeness.\"\n  <uses Agent tool to launch ux-expert>\n\n- Context: New screens or composables have been implemented.\n  user: \"I added the onboarding screen, take a look from a UX perspective\"\n  assistant: \"Using the UX reviewer to analyze the onboarding screen.\"\n  <uses Agent tool to launch ux-expert>\n\n- Context: After implementing a significant UI feature, proactively check UX quality.\n  assistant: \"Implemented the cart screen. Launching the UX reviewer to verify UI states and accessibility.\"\n  <uses Agent tool to launch ux-expert>\n\n- Context: Reviewing a PR or design document that includes navigation changes.\n  user: \"Review the navigation in the new module\"\n  assistant: \"Launching the UX reviewer to evaluate information architecture and navigation.\"\n  <uses Agent tool to launch ux-expert>"
-model: sonnet
 tools: Read, Glob, Grep
 color: cyan
 memory: project
