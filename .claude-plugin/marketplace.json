@@ -30,7 +30,7 @@
     },
     {
       "name": "developer-workflow",
-      "description": "Developer workflow toolbox \u2014 on-demand skills for research, specification (write-spec, reverse-spec), multiexpert review, retroactive tests, code-quality finalize, mechanical /check, QA (test plans, acceptance), PR creation, and autonomous drive-to-merge (CI monitor, review handler, re-request, poll). Exploratory QA without a spec is performed by calling the manual-tester agent directly. Platform-neutral; platform-specific engineers live in developer-workflow-kotlin and developer-workflow-swift.",
+      "description": "Developer workflow toolbox \u2014 on-demand skills for research, specification (write-spec), multiexpert review, retroactive tests, code-quality finalize, mechanical /check, QA (test plans, acceptance), PR creation, and autonomous drive-to-merge (CI monitor, review handler, re-request, poll). Exploratory QA without a spec is performed by calling the manual-tester agent directly. Platform-neutral; platform-specific engineers live in developer-workflow-kotlin and developer-workflow-swift.",
       "author": {
         "name": "kirich1409"
       },
@@ -52,7 +52,7 @@
     },
     {
       "name": "developer-workflow-kotlin",
-      "description": "Kotlin, Android, and KMP specialist agents and the snapshot skill \u2014 kotlin-engineer, compose-developer, snapshot. Extends developer-workflow for Kotlin/Android projects.",
+      "description": "Kotlin, Android, and KMP specialist agents \u2014 kotlin-engineer, compose-developer. Extends developer-workflow for Kotlin/Android projects.",
       "author": {
         "name": "kirich1409"
       },

@@ -1,7 +1,7 @@
 {
   "name": "developer-workflow",
   "version": "0.22.0",
-  "description": "Developer workflow toolbox \u2014 on-demand skills for research, specification (write-spec, reverse-spec), multiexpert review, retroactive tests, code-quality finalize, mechanical /check, QA (test plans, acceptance), PR creation, and autonomous drive-to-merge (CI monitor, review handler, re-request, poll). Exploratory QA without a spec is performed by calling the manual-tester agent directly. Platform-neutral; platform-specific engineers live in developer-workflow-kotlin and developer-workflow-swift.",
+  "description": "Developer workflow toolbox \u2014 on-demand skills for research, specification (write-spec), multiexpert review, retroactive tests, code-quality finalize, mechanical /check, QA (test plans, acceptance), PR creation, and autonomous drive-to-merge (CI monitor, review handler, re-request, poll). Exploratory QA without a spec is performed by calling the manual-tester agent directly. Platform-neutral; platform-specific engineers live in developer-workflow-kotlin and developer-workflow-swift.",
   "author": {
     "name": "kirich1409"
   },

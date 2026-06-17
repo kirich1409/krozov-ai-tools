@@ -24,7 +24,7 @@ This plugin is part of a split family. Depending on the task, Claude Code will h
 |---|---|
 | `developer-workflow` (this) | 12 on-demand skills + `manual-tester` |
 | `developer-workflow-experts` | `code-reviewer`, `architecture-expert`, `security-expert`, `performance-expert`, `ux-expert`, `build-engineer`, `devops-expert`, `business-analyst`, `debugging-expert` — required, auto-installed as a dependency |
-| `developer-workflow-kotlin` | `kotlin-engineer`, `compose-developer`; skill `snapshot` — install for Kotlin/Android/KMP work |
+| `developer-workflow-kotlin` | `kotlin-engineer`, `compose-developer` — install for Kotlin/Android/KMP work |
 | `developer-workflow-swift` | `swift-engineer`, `swiftui-developer` — install for Swift/iOS/macOS work |
 
 Skills in this plugin delegate to engineer agents (kotlin-engineer / compose-developer / swift-engineer / swiftui-developer) by short name via the Task tool. Agent names are unique across the family, so short-name resolution works as long as the corresponding platform plugin is installed. If `write-tests` is invoked and the referenced engineer is not installed, the Task call will fail with a clear message — install the matching platform plugin and retry.
@@ -43,9 +43,9 @@ Skills in this plugin delegate to engineer agents (kotlin-engineer / compose-dev
 - Skills use YAML frontmatter: `name`, `description` (≤ 1024 chars), optionally `disable-model-invocation`.
 - `code-reviewer` (in `developer-workflow-experts`) is read-only — no Edit, Write, NotebookEdit, or Bash tools.
 
-## Skills roster (12)
+## Skills roster (11)
 
-- Planning / research: `research`, `write-spec`, `reverse-spec`, `multiexpert-review`, `evaluate-dependency`
+- Planning / research: `research`, `write-spec`, `multiexpert-review`, `evaluate-dependency`
 - Implementation: `check`, `finalize`, `write-tests`
 - QA: `generate-test-plan`, `acceptance`
 - PR / orchestration: `create-pr`, `drive-to-merge`
