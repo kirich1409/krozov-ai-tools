@@ -31,16 +31,22 @@ Skills are independent on-demand tools — invoke them when the task calls for t
 |---|---|
 | `/research` | Parallel expert investigation (up to 5 agents) — codebase, web, docs, dependencies, architecture |
 | `/write-spec` | Specification-Driven Development — multi-round interview producing an exhaustive spec |
+| `/plan` | Plan-as-document — the autonomous replacement for built-in plan mode. Persists `docs/plans/<slug>/` (plan.md + tasks.md + progress.md), runs a mandatory adversarial multiexpert-review loop as the gate, then proceeds without an approval pause (`--interactive` to add one back) |
 | `/multiexpert-review` | Panel of LLM evaluators (PoLL) review of a plan, spec, or test-plan via the appropriate profile |
 | `/evaluate-dependency` | Vet a new library before adding it — gathers health signals (via maven-mcp when available) + web reputation, delegates to `dependency-evaluator` for an adopt/avoid verdict |
 
-`/research`, `/write-spec`, and built-in **plan mode** all investigate before acting, but
-answer different questions. Use **plan mode** for *"how do I build this already-decided
-change?"* (codebase-only, ephemeral plan). Use **`/research`** for *"what are the options / is
-this feasible / which approach?"* when the answer needs more than the codebase (web, docs,
-dependencies, architecture) — it produces a durable comparative report. Use **`/write-spec`**
-to turn an already-decided feature into a permanent implementation contract under `docs/specs/`.
+`/research`, `/write-spec`, and `/plan` all investigate before acting, but answer different
+questions. Use **`/plan`** for *"how do I build this already-decided change?"* (codebase-only) — it
+persists a reviewable plan under `docs/plans/<slug>/` and runs a mandatory expert-review gate
+instead of a plan-mode approval pause. Use **`/research`** for *"what are the options / is this
+feasible / which approach?"* when the answer needs more than the codebase (web, docs, dependencies,
+architecture) — it produces a durable comparative report. Use **`/write-spec`** to turn an
+already-decided feature into a permanent implementation contract under `docs/specs/`.
 For a codebase-only topic `/research` steps aside and delegates to a single inline `Explore` agent instead of running the consortium.
+
+Prefer `/plan` over built-in plan mode: plan mode's plan is ephemeral (not saved, not reviewable)
+and its `ExitPlanMode` approval pause blocks autonomous runs. `/plan` removes both — keep plan mode
+only for throwaway scratch planning you don't want to persist.
 
 ### Implementation
 | Skill | Purpose |

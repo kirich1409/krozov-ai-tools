@@ -12,13 +12,13 @@ Available sections (include only those that apply):
 <!-- From task description or plan artifact; link ticket if URL in commits -->
 
 ## Artifacts
-<!-- Bullet list of swarm-report/ paths that exist -->
-- Plan: swarm-report/<slug>-plan.md
+<!-- Bullet list of swarm-report/ and docs/ paths that exist -->
+- Plan: docs/plans/<slug>/plan.md
 - Test plan: swarm-report/<slug>-test-plan.md
 - ...
 
 ## How to test
-<!-- From test-plan.md or plan.md acceptance criteria; checkbox list -->
+<!-- From test-plan.md or plan/tasks.md task acceptance; checkbox list -->
 - [ ] Scenario 1
 - [ ] Scenario 2
 
