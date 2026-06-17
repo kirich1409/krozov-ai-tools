@@ -43,9 +43,9 @@ Skills in this plugin delegate to engineer agents (kotlin-engineer / compose-dev
 - Skills use YAML frontmatter: `name`, `description` (≤ 1024 chars), optionally `disable-model-invocation`.
 - `code-reviewer` (in `developer-workflow-experts`) is read-only — no Edit, Write, NotebookEdit, or Bash tools.
 
-## Skills roster (12)
+## Skills roster (11)
 
-- Planning / research: `research`, `write-spec`, `reverse-spec`, `multiexpert-review`, `evaluate-dependency`
+- Planning / research: `research`, `write-spec`, `multiexpert-review`, `evaluate-dependency`
 - Implementation: `check`, `finalize`, `write-tests`
 - QA: `generate-test-plan`, `acceptance`
 - PR / orchestration: `create-pr`, `drive-to-merge`

@@ -66,7 +66,7 @@ Four plugins that split the dev-workflow pipeline along coherent lines. `develop
 
 Toolbox of on-demand skills — research, spec authoring, multiexpert review, mechanical checks, code-quality finalize, retroactive tests, QA, and PR lifecycle. No forced sequencing; plan mode picks the right skill.
 
-**Skills (11):** `/research`, `/write-spec`, `/reverse-spec`, `/multiexpert-review`, `/check`, `/finalize`, `/write-tests`, `/generate-test-plan`, `/acceptance`, `/create-pr`, `/drive-to-merge`
+**Skills (10):** `/research`, `/write-spec`, `/multiexpert-review`, `/check`, `/finalize`, `/write-tests`, `/generate-test-plan`, `/acceptance`, `/create-pr`, `/drive-to-merge`
 
 **Agent:** `manual-tester` (covers exploratory QA without a spec — call directly via the Task tool; heuristics live in the agent file)
 
