@@ -12,12 +12,6 @@ Kotlin, Android, and KMP specialization layer for `developer-workflow`. Contains
 Shared reference material in `agents/references/`:
 - `coroutines.md` — coroutines, Flow, dispatchers, test patterns (used by both Kotlin engineer and — in KMP-awareness mode — Swift engineer).
 
-## Skills
-
-| Skill | Purpose |
-|---|---|
-| `snapshot` | Capture current behavior of code targets (logic / ui / api) as `behavior-spec.md` before any migration or refactor |
-
 ## Dependencies
 
 - [`developer-workflow`](../developer-workflow/) — toolbox skills (`write-tests`, `check`, `finalize`, etc.) used during platform work
