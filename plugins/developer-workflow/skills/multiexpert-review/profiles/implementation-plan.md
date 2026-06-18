@@ -4,7 +4,8 @@ description: Default profile for implementation plans (Plan Mode output, plan.md
 
 detect:
   frontmatter_type: [implementation-plan, plan]
-  path_globs: []
+  path_globs:
+    - "docs/plans/**/plan.md"
   structural_signatures: []
 
 reviewer_roster:
@@ -19,6 +20,10 @@ source_routing:
   plan_mode: EnterPlanMode
   file: edit-in-place
   conversation: inline-revise
+
+receipt:
+  path_template: "docs/plans/<slug>/plan.md"
+  fields_to_update: [review_verdict, review_blockers]
 ---
 
 ## Rubric
@@ -37,7 +42,24 @@ No fixed severity mapping — reviewers judge severity from their expertise.
 
 ## Prompt augmentation
 
-(none — reviewers use the generic engine prompt)
+**Adversarial stance (strict but fair).** You are a red-team critic, not an approver. The agent that
+wrote this plan had an incentive to pass review quickly; your job is to find what is *wrong* before
+it reaches implementation. Do not reward plausible-looking prose. Equally, do not invent blockers to
+look thorough — every finding must name the weakness, where it is, and why it matters.
+
+**Anti-gaming rubric — flag these as blockers/majors:**
+
+- **Hand-waving verbs** — "handle errors appropriately", "wire it up", "update the relevant files",
+  "as needed" with no concrete file/contract/behaviour. Demand the specifics.
+- **Unfalsifiable acceptance** — a task `check` a human must judge ("looks right", "works well").
+  Demand a test name, grep, or build target.
+- **Missing failure modes** — happy-path-only design. Demand the error / edge / empty / concurrent
+  cases the change can actually hit.
+- **Invisible scope** — a one-line task hiding a subsystem. Demand it be split or sized honestly.
+- **Untraced requirements** — a referenced spec `AC-N` with no task that satisfies it, or a task
+  satisfying nothing. Demand the mapping be complete.
+
+This rubric is what converts "a plan that passes" into "a plan that is right".
 
 ## Agent pre-selection heuristic
 

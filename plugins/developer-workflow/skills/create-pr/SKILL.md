@@ -106,7 +106,7 @@ Look for artifacts in `./swarm-report/` that match the current branch/task slug.
 |---|---|---|
 | research | `swarm-report/research/research-<slug>.md` | Link + 1-sentence abstract in "Context" section |
 | spec | `docs/specs/<YYYY-MM-DD>-<slug>.md` (written by `write-spec`) | Reference as "Specification" |
-| plan | `swarm-report/<slug>-plan.md` | Reference as "Plan"; acceptance criteria extracted for "How to test" |
+| plan | `docs/plans/<slug>/plan.md` (written by `plan`; falls back to legacy `swarm-report/<slug>-plan.md`) | Reference as "Plan"; task acceptance from `docs/plans/<slug>/tasks.md` feeds "How to test" |
 | debug | `swarm-report/<slug>-debug.md` | Root cause + reproduction steps — primary context for bug-fix PRs |
 | test plan | `swarm-report/<slug>-test-plan.md` | Reference; test cases become checklist in "How to test" |
 | quality | `swarm-report/<slug>-quality.md` | Gate pass/fail summary for status table |
@@ -117,7 +117,7 @@ Slug resolution:
 1. Prefer slug if the caller passed it as an argument.
 2. Fallback to branch name with common prefix stripped: `feature/`, `fix/`, `hotfix/`, `bug/`, `chore/`, `refactor/`, `docs/`.
 
-Artifacts are gitignored — include them as **references** in the body (e.g., "See `swarm-report/my-slug-plan.md`"), never inline content.
+Working artifacts under `swarm-report/` are gitignored; committed ones live under `docs/` (`docs/specs/`, `docs/plans/`). Either way, include them as **references** in the body (e.g., "See `docs/plans/my-slug/plan.md`"), never inline content.
 
 ---
 
