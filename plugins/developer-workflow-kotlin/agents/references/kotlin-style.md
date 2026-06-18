@@ -44,6 +44,28 @@ A nullable parameter on an extension or top-level function is a **design smell**
 - If a caller may have a nullable value, provide an overload or let the caller use `?.` at the call site
 - Prefer overloads over a single function with nullable/default parameters when the two variants have meaningfully different behaviour — Kotlin overloads are idiomatic and cheap
 
+## Named Arguments for Primitive Literals
+
+A bare `Boolean`, number, or `String` **literal** passed positionally tells the reader nothing about what it controls — `download(url, true, false, 3)` is a puzzle that forces a jump to the function signature. Name primitive **literal** arguments at the call site so the call reads on its own.
+
+- **Name every primitive literal** (`Boolean`, numeric, `String`) when a call passes **two or more** of them, or when **any** boolean literal is present:
+
+```kotlin
+download(url, true, false, 3)                                           // bad
+download(url, overwrite = true, followRedirects = false, retries = 3)   // good
+```
+
+- A lone `true` / `false` is the worst offender — name it even when it is the only primitive: `setVisible(visible = true)`, not `setVisible(true)`.
+- This rule targets **opaque literals only**. An argument that is already a descriptively-named variable or property (`send(message)`, `copy(userName)`) is self-documenting — naming it is optional.
+
+**Skip naming when:**
+
+- A **single** numeric or `String` literal is obvious from the function name — `delay(500)`, `repeat(3)`, `Email("a@b.c")`, `StringBuilder(16)`. Naming is ceremony. A single *boolean* literal is **not** covered by this exception — name it (see above).
+- `vararg`, collection, or builder literals — `listOf(1, 2, 3)`, `setOf("a", "b")`.
+- Well-known stdlib and operator-like calls where position is unambiguous — `println(x)`, `max(a, b)`, `a to b`.
+
+Rule of thumb: if a reviewer can't tell what a literal means without opening the called function's signature, name it.
+
 ## KMP / commonMain
 
 - No imports from `android.*`, `java.*`, `javax.*`, `dalvik.*` in `commonMain`
