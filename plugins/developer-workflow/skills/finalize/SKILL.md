@@ -23,7 +23,7 @@ Code-quality pass over the current branch. Multi-round review-and-fix loop focus
 
 - **`slug`** — task slug for artifact naming.
 - **Branch state** — reads the current branch; never switches.
-- **Context artifact (optional)** — Phase A `code-reviewer` anchor: feature plan (`swarm-report/<slug>-plan.md`) or, for bug fixes, debug artifact (`swarm-report/<slug>-debug.md`).
+- **Context artifact (optional)** — Phase A `code-reviewer` anchor: feature plan (`docs/plans/<slug>/plan.md`, written by `plan`; falls back to legacy `swarm-report/<slug>-plan.md`) or, for bug fixes, debug artifact (`swarm-report/<slug>-debug.md`).
 - **Diff artifact (derived)** — before invoking `code-reviewer`, materialize the diff to `swarm-report/<slug>-diff.txt`. Do not hardcode `origin/main`: derive the remote's default branch (same as `create-pr` — `git remote show origin | grep "HEAD branch" | awk '{print $NF}'`, fallbacks `main` / `master` / `develop`), then `git merge-base origin/<base> HEAD`.
 
 **Tolerance flags (optional):**
@@ -57,7 +57,7 @@ Round N:
 
 ## Phase A — Semantic review (code-reviewer)
 
-Launch `code-reviewer` (from `developer-workflow-experts`) with task description verbatim, plan artifact path (`swarm-report/<slug>-plan.md`) if it exists, and `git diff` of all branch changes. Returns PASS / WARN / FAIL with findings on the 0/25/50/75/100 confidence rubric (only above-threshold findings surface).
+Launch `code-reviewer` (from `developer-workflow-experts`) with task description verbatim, plan artifact path (`docs/plans/<slug>/plan.md`, else legacy `swarm-report/<slug>-plan.md`) if it exists, and `git diff` of all branch changes. Returns PASS / WARN / FAIL with findings on the 0/25/50/75/100 confidence rubric (only above-threshold findings surface).
 
 Non-negotiables violations from applicable `CLAUDE.md` `## Non-negotiables` are always BLOCK regardless of confidence — never moved to "acknowledged risks".
 

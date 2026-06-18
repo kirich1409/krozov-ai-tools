@@ -24,7 +24,7 @@ This plugin is part of a split family. Depending on the task, Claude Code will h
 |---|---|
 | `developer-workflow` (this) | 12 on-demand skills + `manual-tester` |
 | `developer-workflow-experts` | `code-reviewer`, `architecture-expert`, `security-expert`, `performance-expert`, `ux-expert`, `build-engineer`, `devops-expert`, `business-analyst`, `debugging-expert` — required, auto-installed as a dependency |
-| `developer-workflow-kotlin` | `kotlin-engineer`, `compose-developer`; skills `migration`, `snapshot` — install for Kotlin/Android/KMP work |
+| `developer-workflow-kotlin` | `kotlin-engineer`, `compose-developer` — install for Kotlin/Android/KMP work |
 | `developer-workflow-swift` | `swift-engineer`, `swiftui-developer` — install for Swift/iOS/macOS work |
 
 Skills in this plugin delegate to engineer agents (kotlin-engineer / compose-developer / swift-engineer / swiftui-developer) by short name via the Task tool. Agent names are unique across the family, so short-name resolution works as long as the corresponding platform plugin is installed. If `write-tests` is invoked and the referenced engineer is not installed, the Task call will fail with a clear message — install the matching platform plugin and retry.
@@ -45,21 +45,29 @@ Skills in this plugin delegate to engineer agents (kotlin-engineer / compose-dev
 
 ## Skills roster (12)
 
-- Planning / research: `research`, `write-spec`, `reverse-spec`, `multiexpert-review`, `evaluate-dependency`
+- Planning / research: `research`, `write-spec`, `plan`, `multiexpert-review`, `evaluate-dependency`
 - Implementation: `check`, `finalize`, `write-tests`
 - QA: `generate-test-plan`, `acceptance`
 - PR / orchestration: `create-pr`, `drive-to-merge`
 
 ### Planning: which tool to reach for
 
-`research`, `/write-spec`, and built-in **plan mode** look similar (all do read-only
-investigation first) but answer different questions. Pick by the question, not the surface:
+`research`, `/write-spec`, and `/plan` look similar (all do read-only investigation first) but
+answer different questions. Pick by the question, not the surface:
 
 | Reach for | When the question is | Output |
 |---|---|---|
-| **plan mode** (built-in) | "How do I build this *already-decided* change?" — investigation stays inside the codebase | Ephemeral plan, then implement |
 | **`research`** | "What are the options / is this feasible / which approach?" — needs ≥2 of codebase·web·docs·dependencies·architecture | Durable comparative report in `swarm-report/research/` |
 | **`/write-spec`** | "Specify this *already-decided* feature as an implementation contract" — interview-heavy | Permanent spec in `docs/specs/` |
+| **`/plan`** | "How do I build this *already-decided* change?" — investigation stays inside the codebase | Persistent, expert-reviewed plan in `docs/plans/<slug>/` (plan.md + tasks.md + progress.md), then implement |
+
+**Prefer `/plan` over built-in plan mode.** Built-in plan mode produces an *ephemeral* plan and a
+hard `ExitPlanMode` approval pause: the plan is not saved, cannot be reviewed by a multiexpert panel,
+and the pause blocks autonomous/headless runs. `/plan` removes all three — it persists the plan as a
+reviewable document, runs a mandatory adversarial multiexpert-review loop (the gate that replaces
+human approval), and proceeds without pausing by default (`--interactive` re-adds a checkpoint when
+you want one). Reach for built-in plan mode only for throwaway, codebase-only scratch planning you
+do not want to keep.
 
 `research` deliberately steps aside for codebase-only topics: its min-2-tracks rule redirects
 a single-track investigation to a plain inline Explore agent instead of running the consortium. `research` and `write-spec` each run a parallel expert consortium; their

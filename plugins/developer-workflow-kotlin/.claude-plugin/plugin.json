@@ -1,7 +1,7 @@
 {
   "name": "developer-workflow-kotlin",
-  "version": "0.21.2",
-  "description": "Kotlin, Android, and KMP specialist agents and migration skills \u2014 kotlin-engineer, compose-developer, migration, snapshot. Extends developer-workflow for Kotlin/Android projects.",
+  "version": "0.22.0",
+  "description": "Kotlin, Android, and KMP specialist agents \u2014 kotlin-engineer, compose-developer. Extends developer-workflow for Kotlin/Android projects.",
   "author": {
     "name": "kirich1409"
   },
@@ -12,17 +12,16 @@
     "android",
     "compose",
     "kmp",
-    "migration",
     "jetpack-compose"
   ],
   "dependencies": [
     {
       "name": "developer-workflow",
-      "version": "^0.21.0"
+      "version": "^0.22.0"
     },
     {
       "name": "developer-workflow-experts",
-      "version": "^0.21.0"
+      "version": "^0.22.0"
     }
   ]
 }

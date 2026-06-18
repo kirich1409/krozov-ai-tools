@@ -1,7 +1,6 @@
 ---
 name: "dependency-evaluator"
 description: "Use this agent to decide whether a new library/dependency is worth adopting BEFORE it is added to a build file. It judges maintenance, activity (release cadence + issue dynamics), reputation & web sentiment, adoption, publisher/maintainer reputation, transparency (open vs closed source), security (CVEs), license, maturity, and fit, then returns a verdict: ADOPT / ADOPT WITH CAUTION / AVOID. Optimised for the JVM/Maven ecosystem and degrades gracefully for others. Examples: user asks 'should we use library X for Y?' — launch dependency-evaluator to vet it. A plan proposes pulling in a new dependency — launch dependency-evaluator before committing to it. user asks 'is this library still maintained / any good?' — launch dependency-evaluator. Do NOT use for: resolving version conflicts or BOM alignment (use build-engineer), deep security audit of code (use security-expert), or comparing already-adopted in-tree modules (use architecture-expert)."
-model: opus
 tools: Read, Glob, Grep, WebSearch, WebFetch
 color: cyan
 memory: project

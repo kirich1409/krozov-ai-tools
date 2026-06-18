@@ -95,7 +95,7 @@ Profiles whose rubric is a **labeled checklist** with short IDs (e.g. test-plan 
 ## Receipt section semantics
 
 - **Present** — after Step 4 synthesis, engine updates the file matching `receipt.path_template` (with `<slug>` substituted) by setting each field in `fields_to_update` to the appropriate value from the verdict.
-- **Absent** — engine skips receipt writing entirely. Use for profiles whose artifact doesn't have a receipt contract (e.g., spec, implementation-plan).
+- **Absent** — engine skips receipt writing entirely. Use for profiles whose artifact doesn't have a receipt contract (e.g., spec, whose verdict is consumed inline by `write-spec`). `implementation-plan` declares a receipt: it writes its verdict back into the plan's own frontmatter at `docs/plans/<slug>/plan.md`.
 
 ## Error semantics (unified across engine)
 

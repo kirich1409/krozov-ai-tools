@@ -55,7 +55,6 @@ assistant: \"I'll use the swiftui-developer agent to implement the NavigationSta
 NavigationStack, route definitions, and navigation transitions are SwiftUI UI infrastructure — swiftui-developer owns them.
 </commentary>
 </example>"
-model: sonnet
 color: cyan
 memory: project
 ---

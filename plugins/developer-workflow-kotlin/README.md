@@ -1,6 +1,6 @@
 # developer-workflow-kotlin
 
-Kotlin, Android, and KMP specialization layer for `developer-workflow`. Contains engineer agents and migration skills specific to the Kotlin ecosystem.
+Kotlin, Android, and KMP specialization layer for `developer-workflow`. Contains engineer agents and skills specific to the Kotlin ecosystem.
 
 ## Agents
 
@@ -11,13 +11,6 @@ Kotlin, Android, and KMP specialization layer for `developer-workflow`. Contains
 
 Shared reference material in `agents/references/`:
 - `coroutines.md` — coroutines, Flow, dispatchers, test patterns (used by both Kotlin engineer and — in KMP-awareness mode — Swift engineer).
-
-## Skills
-
-| Skill | Purpose |
-|---|---|
-| `migration` | Guided 8-phase migration between technologies (DI, async, UI idiom, build plugin, View→Compose, Android→KMP) with behavioral parity and old-stack cleanup |
-| `snapshot` | Capture current behavior of code targets (logic / ui / api) as `behavior-spec.md` before any migration or refactor |
 
 ## Dependencies
 

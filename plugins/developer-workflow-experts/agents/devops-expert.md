@@ -1,7 +1,6 @@
 ---
 name: "devops-expert"
 description: "Use this agent when the user needs help with CI/CD pipelines, build systems, deployment automation, packaging, release workflows, dependency scanning, environment management, or monitoring/alerting infrastructure. Examples:\\n\\n- user: \"GitHub Actions build fails on the matrix build for iOS\"\\n  assistant: \"Launching the devops-expert agent to diagnose the CI pipeline issue.\"\\n  <uses Agent tool to launch devops-expert>\\n\\n- user: \"Need to set up automated releases with a changelog driven by tags\"\\n  assistant: \"Using devops-expert to design the release automation.\"\\n  <uses Agent tool to launch devops-expert>\\n\\n- user: \"How can I cut build time on GitLab CI? It is 25 minutes right now\"\\n  assistant: \"Handing the task to the devops-expert agent to analyze and optimize the pipeline.\"\\n  <uses Agent tool to launch devops-expert>\\n\\n- user: \"Need to build a Docker image for our service and set up staging deployment\"\\n  assistant: \"Launching devops-expert to configure containerization and deployment.\"\\n  <uses Agent tool to launch devops-expert>\\n\\n- user: \"Scan dependencies for vulnerabilities\"\\n  assistant: \"Using the devops-expert agent for dependency scanning.\"\\n  <uses Agent tool to launch devops-expert>"
-model: sonnet
 tools: Read, Write, Edit, Bash, Glob, Grep
 color: green
 memory: project
