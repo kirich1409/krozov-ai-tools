@@ -19,6 +19,7 @@ import { getDependencyHealthHandler } from "./tools/get-dependency-health.js";
 import { searchArtifactsHandler } from "./tools/search-artifacts.js";
 import { auditProjectDependenciesHandler } from "./tools/audit-project-dependencies.js";
 import { PACKAGE_VERSION } from "./version.js";
+import { parsePortArg, InvalidPortError } from "./cli/parse-port.js";
 
 const server = new McpServer({
   name: "maven-central-mcp",
@@ -201,24 +202,15 @@ server.tool(
 );
 
 function parsePort(): number | null {
-  const args = process.argv.slice(2);
-  const parseValue = (value: string): number => {
-    const n = Number(value);
-    if (Number.isInteger(n) && n > 0 && n <= 65535) return n;
-    console.error(`Invalid --port value: "${value}". Expected an integer in range 1–65535.`);
-    process.exit(1);
-  };
-  const idx = args.indexOf("--port");
-  if (idx !== -1) {
-    if (idx + 1 >= args.length) {
-      console.error("--port requires a value. Usage: --port <number> or --port=<number>");
+  try {
+    return parsePortArg(process.argv.slice(2));
+  } catch (err) {
+    if (err instanceof InvalidPortError) {
+      console.error(err.message);
       process.exit(1);
     }
-    return parseValue(args[idx + 1]);
+    throw err;
   }
-  const eq = args.find((a) => a.startsWith("--port="));
-  if (eq) return parseValue(eq.slice("--port=".length));
-  return null;
 }
 
 async function main() {
