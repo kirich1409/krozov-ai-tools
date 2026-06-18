@@ -15,7 +15,7 @@ type: plan
 slug: <kebab-case>
 date: <YYYY-MM-DD>
 status: draft           # draft → approved (set by Phase 4 on PASS/CONDITIONAL); stays draft on escalate (review_verdict carries escalate, not this field)
-spec: docs/specs/YYYY-MM-DD-<slug>.md      # real path if a spec exists (date is the spec's own date, format matches write-spec output); if no spec exists, write: none — do NOT invent a path
+spec: docs/specs/<YYYY-MM-DD>-<slug>.md    # real path if a spec exists (date is the spec's own date, format matches write-spec output); if no spec exists, write: none — do NOT invent a path
 risk_areas: []          # subset of [auth, payment, pii, data-migration, perf-critical] — advisory only; reviewer selection is driven by the plan's prose (Technical Approach / Risks), so risks must also be described there for the matching expert (e.g. security-expert) to be triggered
 review_verdict: pending # pending → pass | conditional | escalate (set by Phase 3)
 review_blockers: []     # filled by the review loop when blockers remain

@@ -50,7 +50,10 @@ The *what* is assumed decided. Extract:
 
 - **The decided change** — what we are building (from the request, a spec, or research).
 - **Source of truth** — auto-discover a spec: newest `docs/specs/*-<slug>.md` whose slug or title
-  matches, or `--from-spec`. Record the path; the plan references it, never restates its AC.
+  matches the candidate slug. If `--from-spec <path>` was passed, use that path directly and skip
+  auto-discovery (verify the path exists; if not, stop and report). Record the path; the plan
+  references it, never restates its AC. The slug is always the branch/task-derived candidate — do
+  not parse a slug out of the `--from-spec` filename.
 - **Known constraints** — platform, libraries, "no new deps", deadlines.
 
 If the request is actually *undecided* ("should we use X or Y?", "is this feasible?"), STOP and
@@ -58,9 +61,10 @@ redirect to `research`. If it is a feature contract that has not been written ("
 requirements?"), redirect to `write-spec`. This skill plans execution; it does not decide scope.
 
 Generate a kebab-case slug (`offline-mode`, `push-notifications`). Strip common branch prefixes
-(`feature/`, `fix/`, `chore/`, `claude/`, `hotfix/`). If a spec exists under `docs/specs/` whose
-slug or title matches the candidate slug, adopt the spec's slug for all output paths (spec slug
-wins over the branch-derived one).
+(`feature/`, `fix/`, `chore/`, `claude/`, `hotfix/`). This candidate slug is used consistently
+for all output paths (`docs/plans/<slug>/`). If a spec exists under `docs/specs/` whose slug or
+title matches the candidate slug, reference it — but do not change the slug; plan, create-pr, and
+finalize all resolve the same `docs/plans/<slug>/` path.
 
 ### 0.2 Artifacts
 
@@ -93,9 +97,9 @@ Write findings into `./swarm-report/plan-<slug>-state.md` as agents complete. Do
 anything that investigation can answer. If a genuine design fork appears that investigation cannot
 resolve, surface it with `AskUserQuestion` (each option with a recommended pick) — never park
 questions in the plan file. **Headless / non-interactive default:** if `--interactive` was not
-passed and no user is present, do NOT block on `AskUserQuestion`; instead record the fork as a
-`[blocking]` Open Question, set `review_verdict: escalate`, and stop. `AskUserQuestion` is only
-used when `--interactive` or a user is actively present.
+passed and no user is present, do NOT block on `AskUserQuestion` — stop and surface the blocking
+design fork to the caller (the plan is not yet written at this phase, so there is nothing to
+record in-file). `AskUserQuestion` is only used when `--interactive` or a user is actively present.
 
 `--quick`: skip the consortium; one inline Explore pass is enough.
 
@@ -161,7 +165,7 @@ reviewer.
 | Verdict | Action |
 |---|---|
 | **PASS** | Set `review_verdict: pass`, proceed to Phase 4. |
-| **CONDITIONAL** | Engine edits the plan to address majors; re-review. If still CONDITIONAL after the cap (cycle 3), set `review_verdict: conditional`, record the residual majors in `## Open Questions` (non-blocking), and proceed. |
+| **CONDITIONAL** | Engine edits the plan to address majors; re-review. If still CONDITIONAL after the cap (cycle 3), record the residual majors in `## Open Questions` (non-blocking), and proceed. |
 | **FAIL** | Engine edits the plan to fix the blockers, then re-reviews. On cycle 3 returning FAIL, go directly to escalate — no further re-review. |
 
 **Escalation:** if blockers remain after the 3rd cycle (cap), set `review_verdict: escalate`, write
@@ -179,8 +183,8 @@ implements it end-to-end, and reports every detail it would have to guess, every
 acceptance, every hand-waving verb, and every hidden-scope task. Strict but fair — only real gaps,
 no invented blockers. Feed its findings back: trivially fillable → edit inline; real design gap →
 fix the plan (or `AskUserQuestion` if it needs a decision and `--interactive` / user is present;
-otherwise record as `[blocking]` Open Question and escalate as in Phase 1); already-specified →
-no action.
+in a non-interactive run do NOT block — record as `[blocking]` Open Question and set
+`review_verdict: escalate`, then stop); already-specified → no action.
 
 Full brief and item handling in [`references/review-loop.md`](references/review-loop.md) §Phase 3.5.
 Skip only with `--quick` on a small, well-bounded change with no risky tasks.
@@ -215,10 +219,11 @@ On `review_verdict: escalate`, do not flip to `approved`. Retire (delete) the st
 
 Keep `progress.md` as the live execution ledger: as each `T-N` completes, check its box, append a
 one-line learning, and let the implementer commit plan + code together. Suggest the next step
-(implement the tasks; then `/write-tests`, `/check`, `/finalize`) — do not auto-invoke downstream
-skills; the user/agent drives the flow (toolbox model). The sole exception is the mandatory Phase 3
-inline `multiexpert-review` call: that is the review gate built into this skill, not a downstream
-chain, and must always be invoked.
+(implement the tasks; then `/write-tests`, `/check`, `/finalize`, `/acceptance`) — do not
+auto-invoke downstream skills; the user/agent drives the flow (toolbox model). The built-in
+exceptions are the mandatory Phase 3 inline `multiexpert-review` call and the Phase 3.5
+adversarial red-team Agent call: both are the review gate built into this skill, not downstream
+chains, and must always be invoked (unless `--quick` exempts Phase 3.5).
 
 See [`references/output-layout.md`](references/output-layout.md) for path conventions, the
 confirmation message, gitignore notes, and hand-off rules.

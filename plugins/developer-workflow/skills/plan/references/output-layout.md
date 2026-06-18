@@ -14,8 +14,10 @@
 resumable later — the exact property built-in plan mode lacks.
 
 Slug rules match the rest of the toolbox: kebab-case, derived from the feature/task or branch name
-with common prefixes (`feature/`, `fix/`, `chore/`, `claude/`, `hotfix/`, …) stripped. If a spec
-exists whose slug matches the candidate, adopt the spec's slug (spec slug takes precedence).
+with common prefixes (`feature/`, `fix/`, `chore/`, `claude/`, `hotfix/`, …) stripped. This
+candidate slug is used consistently for all output paths. If a spec exists whose slug or title
+matches the candidate, reference it — but do not change the slug; plan, create-pr, and finalize
+all resolve the same `docs/plans/<slug>/` path.
 
 ## Status lifecycle
 
@@ -40,8 +42,9 @@ before flipping to `approved`.
 
 - Do **not** auto-invoke downstream skills. Suggest the next step (implement the tasks; then
   `/write-tests`, `/check`, `/finalize`, `/acceptance`) and let the user/agent drive — toolbox
-  model. (The mandatory Phase 3 inline `multiexpert-review` call is the review gate within this
-  skill, not a downstream chain — it is the single sanctioned in-skill invocation.)
+  model. (The mandatory Phase 3 inline `multiexpert-review` call and the Phase 3.5 adversarial
+  red-team Agent call are the review gate built into this skill, not downstream chains — these are
+  the sanctioned in-skill invocations.)
 - `progress.md` is the live ledger: as each `T-N` lands, check its box and append a one-line
   learning. The implementer commits plan + code together so the PR shows the plan that produced the
   change.

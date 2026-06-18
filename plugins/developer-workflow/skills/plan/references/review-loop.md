@@ -25,7 +25,9 @@ matters.
 ## Phase 3 — multiexpert-review (the panel critic)
 
 Invoke `multiexpert-review` **inline** (the skill calls it directly, as `write-spec` Phase 4.3 calls
-it — skills do not chain through each other except this established inline use). Prepend the profile
+it — skills do not chain through each other except these established in-skill invocations: the Phase 3
+`multiexpert-review` call and the Phase 3.5 red-team Agent call are both part of the review gate, not
+forbidden downstream chaining). Prepend the profile
 hint so detection is deterministic for an inline file path:
 
 ```
@@ -47,11 +49,12 @@ drop a genuinely-triggered reviewer). `--quick` permits a single reviewer.
 | Verdict | Action |
 |---|---|
 | PASS | `review_verdict: pass` → Phase 4. |
-| CONDITIONAL | Engine edits the plan to address majors; re-review. Residual majors after the cap (cycle 3) → set `review_verdict: conditional`, record in `## Open Questions` (non-blocking), proceed. |
+| CONDITIONAL | Engine edits the plan to address majors; re-review. Residual majors after the cap (cycle 3) → record in `## Open Questions` (non-blocking), proceed. |
 | FAIL | Engine edits to fix blockers; re-review. On cycle 3 returning FAIL → go directly to escalate, no further re-review. |
 
 After the 3rd cycle with blockers remaining → `review_verdict: escalate`, write blockers into
-`## Open Questions` (tagged blocking) and surface. This is the only autonomous stop, and only for
+`## Open Questions` (tagged blocking), retire (delete) the state file
+`./swarm-report/plan-<slug>-state.md`, and surface. This is the only autonomous stop, and only for
 genuine blockers.
 
 ---
@@ -74,6 +77,8 @@ For each item:
 
 - **Trivially fillable** (one-line clarification) → edit the plan inline, move on.
 - **Real design gap** → fix the plan; if it needs a user decision, surface via `AskUserQuestion`.
+  In a non-interactive run do NOT block — record as `[blocking]` Open Question and set
+  `review_verdict: escalate`, then stop.
 - **Already specified, agent missed it** → no action.
 
 Skip only with `--quick` on a small, well-bounded change with no risky tasks.
