@@ -167,7 +167,7 @@ reviewer.
 [`references/review-loop.md`](references/review-loop.md). PASS → proceed to Phase 4;
 CONDITIONAL/FAIL → the engine edits the plan and re-reviews until the cap.
 
-**Escalation (the only autonomous STOP):** if blockers remain, set `review_verdict: escalate`, write
+**Escalation (the only autonomous STOP):** if blockers remain after the cap, set `review_verdict: escalate`, write
 the unresolved blockers into `## Open Questions` (tagged blocking), retire the state file (see Phase
 4.3), and surface them — only for genuine blockers, never for routine polish.
 
