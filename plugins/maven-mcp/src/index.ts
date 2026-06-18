@@ -1,6 +1,8 @@
 #!/usr/bin/env node
+import { createServer } from "node:http";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { z } from "zod";
 import { HttpMavenRepository, MAVEN_CENTRAL, GOOGLE_MAVEN, GRADLE_PLUGIN_PORTAL } from "./maven/repository.js";
 import type { MavenRepository } from "./maven/repository.js";
@@ -17,6 +19,7 @@ import { getDependencyHealthHandler } from "./tools/get-dependency-health.js";
 import { searchArtifactsHandler } from "./tools/search-artifacts.js";
 import { auditProjectDependenciesHandler } from "./tools/audit-project-dependencies.js";
 import { PACKAGE_VERSION } from "./version.js";
+import { parsePortArg, InvalidPortError } from "./cli/parse-port.js";
 
 const server = new McpServer({
   name: "maven-central-mcp",
@@ -198,10 +201,39 @@ server.tool(
   },
 );
 
+function parsePort(): number | null {
+  try {
+    return parsePortArg(process.argv.slice(2));
+  } catch (err) {
+    if (err instanceof InvalidPortError) {
+      console.error(err.message);
+      process.exit(1);
+    }
+    throw err;
+  }
+}
+
 async function main() {
-  const transport = new StdioServerTransport();
-  await server.connect(transport);
-  console.error("maven-central-mcp running on stdio");
+  const port = parsePort();
+  if (port !== null) {
+    // Stateless mode: no session tracking — each request is independent
+    const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
+    await server.connect(transport);
+    const httpServer = createServer((req, res) => {
+      transport.handleRequest(req, res).catch((err) => {
+        console.error("HTTP request error:", err);
+        if (!res.headersSent) res.writeHead(500).end();
+      });
+    });
+    await new Promise<void>((resolve, reject) =>
+      httpServer.listen(port, "127.0.0.1", resolve).on("error", reject),
+    );
+    console.error(`maven-central-mcp running on HTTP port ${port}`);
+  } else {
+    const transport = new StdioServerTransport();
+    await server.connect(transport);
+    console.error("maven-central-mcp running on stdio");
+  }
 }
 
 main().catch((error) => {
