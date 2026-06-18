@@ -1,6 +1,6 @@
 ---
 name: plan
-description: "Plan-as-document implementation planning — the autonomous replacement for built-in plan mode. Investigates the codebase read-only, writes a persistent, reviewable plan (docs/plans/<slug>/plan.md + tasks.md) instead of an ephemeral approval prompt, then runs a MANDATORY multiexpert-review loop over the plan and revises until it passes. No human approval pause by default, so an agent can plan and execute end-to-end; opt into a checkpoint with --interactive. Use when: \"plan this\", \"make a plan\", \"how do I build this\", \"plan the implementation\", \"break this into tasks\", \"plan before coding\" for an ALREADY-DECIDED change. Prefer this over built-in plan mode whenever the plan should be saved, reviewed by experts, or executed autonomously. Do NOT use for: deciding WHAT to build or comparing options (use research), writing the feature contract / acceptance criteria (use write-spec), or trivial single-line edits (just do them)."
+description: "Produce a committed implementation plan document — the autonomous replacement for built-in plan mode. Investigates the codebase read-only, writes a persistent, reviewable plan (docs/plans/<slug>/plan.md + tasks.md) instead of an ephemeral approval prompt, then runs a MANDATORY multiexpert-review loop over the plan and revises until it passes. No human approval pause by default, so an agent can plan and execute end-to-end; opt into a checkpoint with --interactive. Use when: \"plan this\", \"make a plan\", \"how do I build this\", \"plan the implementation\", \"break this into tasks\", \"plan before coding\" for an ALREADY-DECIDED change. Prefer this over built-in plan mode whenever the plan should be saved, reviewed by experts, or executed autonomously. Do NOT use for: deciding WHAT to build or comparing options (use research), writing the feature contract / acceptance criteria (use write-spec), or trivial single-line edits (just do them)."
 ---
 
 # Plan
@@ -28,6 +28,14 @@ task description.
    human pause. The default flow is autonomous; a human checkpoint is opt-in (`--interactive`).
 3. **Every task has a verifiable done-condition.** Tasks carry explicit acceptance (Given/When/Then
    or "THE SYSTEM SHALL …"). Autonomy is only safe when "done" is checkable, not approved.
+
+### Headless mode (the autonomy contract)
+
+`AskUserQuestion` is used **only** when `--interactive` was passed or a user is actively present.
+In a headless / non-interactive run, never block on it: surface a genuine design fork to the caller
+instead. Before the plan file exists (Phase 1), surface it as a blocking hand-off; after the plan
+exists, record it as a `[blocking]` Open Question, set `review_verdict: escalate`, and stop. This
+single rule governs every later phase — phases below reference it rather than restating it.
 
 ---
 
@@ -68,16 +76,12 @@ finalize all resolve the same `docs/plans/<slug>/` path.
 
 ### 0.2 Artifacts
 
-| File | Lifetime | Purpose |
-|---|---|---|
-| `docs/plans/<slug>/plan.md` | Permanent (committed) | Technical approach, affected files, decisions, risks. Reviewed in PR. |
-| `docs/plans/<slug>/tasks.md` | Permanent (committed) | Ordered task checklist with dependencies + per-task acceptance. |
-| `docs/plans/<slug>/progress.md` | Permanent (committed) | Volatile status + learnings log. Split from the stable plan so execution churn never rewrites the design. |
-| `./swarm-report/plan-<slug>-state.md` | Operational (gitignored) | Investigation findings, review-cycle log. Deleted after. |
-
-> Naming: `docs/plans/` is deliberately alongside `docs/specs/` (spec = *what*, plan = *how*) and
-> distinct from the gitignored `swarm-report/` working area. Plans live in git because their value
-> is being reviewable in the PR and resumable later.
+Three committed files under `docs/plans/<slug>/` (`plan.md`, `tasks.md`, `progress.md`) plus the
+gitignored operational `./swarm-report/plan-<slug>-state.md` (deleted after). `docs/plans/` is
+deliberately alongside `docs/specs/` (spec = *what*, plan = *how*); plans live in git because their
+value is being reviewable in the PR and resumable later. See
+[`references/output-layout.md`](references/output-layout.md) for the full file/lifetime/purpose
+table.
 
 ---
 
@@ -96,10 +100,9 @@ discarded. Launch investigation **in a single message** (parallel) sized to the 
 Write findings into `./swarm-report/plan-<slug>-state.md` as agents complete. Do not ask the user
 anything that investigation can answer. If a genuine design fork appears that investigation cannot
 resolve, surface it with `AskUserQuestion` (each option with a recommended pick) — never park
-questions in the plan file. **Headless / non-interactive default:** if `--interactive` was not
-passed and no user is present, do NOT block on `AskUserQuestion` — stop and surface the blocking
-design fork to the caller (the plan is not yet written at this phase, so there is nothing to
-record in-file). `AskUserQuestion` is only used when `--interactive` or a user is actively present.
+questions in the plan file. The plan file does not exist yet at this phase, so per the **Headless
+mode** contract above, a headless run surfaces the blocking fork to the caller (nothing to record
+in-file).
 
 `--quick`: skip the consortium; one inline Explore pass is enough.
 
@@ -160,17 +163,14 @@ The `implementation-plan` profile selects 2–3 reviewers by tech-match from the
 only on new modules / dependency-direction / public-API changes). `--quick` permits a single
 reviewer.
 
-**Loop** — 3 review cycles total: 1 initial review + up to 2 re-reviews (same cap as `finalize`):
+**Loop:** 3 review cycles total (1 initial + up to 2 re-reviews, same cap as `finalize`). PASS →
+proceed to Phase 4; CONDITIONAL/FAIL → the engine edits the plan and re-reviews until the cap. See
+[`references/review-loop.md`](references/review-loop.md) for the per-verdict action table and the
+residual-majors handling.
 
-| Verdict | Action |
-|---|---|
-| **PASS** | Set `review_verdict: pass`, proceed to Phase 4. |
-| **CONDITIONAL** | Engine edits the plan to address majors; re-review. If still CONDITIONAL after the cap (cycle 3), record the residual majors in `## Open Questions` (non-blocking), and proceed. |
-| **FAIL** | Engine edits the plan to fix the blockers, then re-reviews. On cycle 3 returning FAIL, go directly to escalate — no further re-review. |
-
-**Escalation:** if blockers remain after the 3rd cycle (cap), set `review_verdict: escalate`, write
-the unresolved blockers into `## Open Questions` (tagged blocking), and surface them. In an
-autonomous run this is the *only* stop — and only for genuine blockers, never for routine polish.
+**Escalation (the only autonomous STOP):** if blockers remain after the 3rd cycle, set
+`review_verdict: escalate`, write the unresolved blockers into `## Open Questions` (tagged blocking),
+retire the state file, and surface them — only for genuine blockers, never for routine polish.
 
 ---
 
@@ -182,9 +182,8 @@ ordered to build from the plan with no questions allowed: it picks the riskiest 
 implements it end-to-end, and reports every detail it would have to guess, every unfalsifiable
 acceptance, every hand-waving verb, and every hidden-scope task. Strict but fair — only real gaps,
 no invented blockers. Feed its findings back: trivially fillable → edit inline; real design gap →
-fix the plan (or `AskUserQuestion` if it needs a decision and `--interactive` / user is present;
-in a non-interactive run do NOT block — record as `[blocking]` Open Question and set
-`review_verdict: escalate`, then stop); already-specified → no action.
+fix the plan (or surface for a decision, subject to the **Headless mode** contract above);
+already-specified → no action.
 
 Full brief and item handling in [`references/review-loop.md`](references/review-loop.md) §Phase 3.5.
 Skip only with `--quick` on a small, well-bounded change with no risky tasks.

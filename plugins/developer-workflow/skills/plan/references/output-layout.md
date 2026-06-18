@@ -2,22 +2,20 @@
 
 ## Paths
 
-| File | Lifetime | Committed? |
-|---|---|---|
-| `docs/plans/<slug>/plan.md` | Permanent | Yes — reviewed in the PR |
-| `docs/plans/<slug>/tasks.md` | Permanent | Yes |
-| `docs/plans/<slug>/progress.md` | Permanent (volatile content) | Yes — the execution ledger / audit trail |
-| `./swarm-report/plan-<slug>-state.md` | Operational | No (gitignored) — delete after |
+| File | Lifetime | Committed? | Purpose |
+|---|---|---|---|
+| `docs/plans/<slug>/plan.md` | Permanent | Yes — reviewed in the PR | Technical approach, affected files, decisions, risks. |
+| `docs/plans/<slug>/tasks.md` | Permanent | Yes | Ordered task checklist with dependencies + per-task acceptance. |
+| `docs/plans/<slug>/progress.md` | Permanent (volatile content) | Yes — the execution ledger / audit trail | Volatile status + learnings log. Split from the stable plan so execution churn never rewrites the design. |
+| `./swarm-report/plan-<slug>-state.md` | Operational | No (gitignored) — delete after | Investigation findings, review-cycle log. Deleted after. |
 
 `docs/plans/` is intentionally a sibling of `docs/specs/`: spec = *what* (requirements + AC), plan =
 *how* (design + tasks). Both live in git because their value is being reviewable in the PR and
 resumable later — the exact property built-in plan mode lacks.
 
-Slug rules match the rest of the toolbox: kebab-case, derived from the feature/task or branch name
-with common prefixes (`feature/`, `fix/`, `chore/`, `claude/`, `hotfix/`, …) stripped. This
-candidate slug is used consistently for all output paths. If a spec exists whose slug or title
-matches the candidate, reference it — but do not change the slug; plan, create-pr, and finalize
-all resolve the same `docs/plans/<slug>/` path.
+Slug rules are defined in `SKILL.md` Phase 0.1 (kebab-case, branch-prefixes stripped, one candidate
+slug for all output paths — plan, create-pr, and finalize all resolve the same `docs/plans/<slug>/`
+path). The slug never changes even when a matching spec is referenced.
 
 ## Status lifecycle
 

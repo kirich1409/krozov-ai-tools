@@ -76,9 +76,9 @@ against a rubric — it tries to build from it and reports every place it would 
 For each item:
 
 - **Trivially fillable** (one-line clarification) → edit the plan inline, move on.
-- **Real design gap** → fix the plan; if it needs a user decision, surface via `AskUserQuestion`.
-  In a non-interactive run do NOT block — record as `[blocking]` Open Question and set
-  `review_verdict: escalate`, then stop.
+- **Real design gap** → fix the plan; if it needs a user decision, surface it subject to the
+  **Headless mode** contract in `SKILL.md` (`AskUserQuestion` only when interactive / a user is
+  present; otherwise record as a `[blocking]` Open Question, set `review_verdict: escalate`, stop).
 - **Already specified, agent missed it** → no action.
 
 Skip only with `--quick` on a small, well-bounded change with no risky tasks.
