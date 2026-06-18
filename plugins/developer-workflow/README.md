@@ -24,7 +24,7 @@ Installing this plugin automatically pulls `developer-workflow-experts`. Install
 
 ## Skills (12)
 
-Skills are independent on-demand tools — invoke them when the task calls for the capability. They do not orchestrate each other; the model drives sequencing through plan mode.
+Skills are independent on-demand tools — invoke them when the task calls for the capability. They do not orchestrate each other; the model reaches for the right skill when its capability is needed.
 
 ### Planning / research
 | Skill | Purpose |
@@ -45,8 +45,8 @@ already-decided feature into a permanent implementation contract under `docs/spe
 For a codebase-only topic `/research` steps aside and delegates to a single inline `Explore` agent instead of running the consortium.
 
 Prefer `/plan` over built-in plan mode: plan mode's plan is ephemeral (not saved, not reviewable)
-and its `ExitPlanMode` approval pause blocks autonomous runs. `/plan` removes both — keep plan mode
-only for throwaway scratch planning you don't want to persist.
+and its `ExitPlanMode` approval pause blocks autonomous runs. `/plan` removes all three — keep plan
+mode only for throwaway scratch planning you don't want to persist.
 
 ### Implementation
 | Skill | Purpose |

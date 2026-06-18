@@ -14,7 +14,8 @@
 resumable later — the exact property built-in plan mode lacks.
 
 Slug rules match the rest of the toolbox: kebab-case, derived from the feature/task or branch name
-with common prefixes (`feature/`, `fix/`, …) stripped.
+with common prefixes (`feature/`, `fix/`, `chore/`, `claude/`, `hotfix/`, …) stripped. If a spec
+exists whose slug matches the candidate, adopt the spec's slug (spec slug takes precedence).
 
 ## Status lifecycle
 
@@ -39,7 +40,8 @@ before flipping to `approved`.
 
 - Do **not** auto-invoke downstream skills. Suggest the next step (implement the tasks; then
   `/write-tests`, `/check`, `/finalize`, `/acceptance`) and let the user/agent drive — toolbox
-  model.
+  model. (The mandatory Phase 3 inline `multiexpert-review` call is the review gate within this
+  skill, not a downstream chain — it is the single sanctioned in-skill invocation.)
 - `progress.md` is the live ledger: as each `T-N` lands, check its box and append a one-line
   learning. The implementer commits plan + code together so the PR shows the plan that produced the
   change.

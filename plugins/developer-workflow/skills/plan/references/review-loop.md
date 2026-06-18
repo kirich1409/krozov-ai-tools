@@ -42,15 +42,15 @@ frontmatter via the profile's `receipt`.
 The profile selects 2–3 reviewers by tech-match from the plan content (do not pad the panel; do not
 drop a genuinely-triggered reviewer). `--quick` permits a single reviewer.
 
-**Loop** — initial + up to 2 re-reviews (cap 3, same as `finalize`):
+**Loop** — 3 review cycles total: 1 initial review + up to 2 re-reviews (same cap as `finalize`):
 
 | Verdict | Action |
 |---|---|
 | PASS | `review_verdict: pass` → Phase 4. |
-| CONDITIONAL | Engine edits the plan to address majors; re-review. Residual majors after the cap → `## Open Questions` (non-blocking), proceed. |
-| FAIL | Engine edits to fix blockers; re-review until PASS/CONDITIONAL or cap. |
+| CONDITIONAL | Engine edits the plan to address majors; re-review. Residual majors after the cap (cycle 3) → set `review_verdict: conditional`, record in `## Open Questions` (non-blocking), proceed. |
+| FAIL | Engine edits to fix blockers; re-review. On cycle 3 returning FAIL → go directly to escalate, no further re-review. |
 
-After the cap with blockers remaining → `review_verdict: escalate`, write blockers into
+After the 3rd cycle with blockers remaining → `review_verdict: escalate`, write blockers into
 `## Open Questions` (tagged blocking) and surface. This is the only autonomous stop, and only for
 genuine blockers.
 

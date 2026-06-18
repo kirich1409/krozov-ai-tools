@@ -57,7 +57,10 @@ If the request is actually *undecided* ("should we use X or Y?", "is this feasib
 redirect to `research`. If it is a feature contract that has not been written ("what exactly are the
 requirements?"), redirect to `write-spec`. This skill plans execution; it does not decide scope.
 
-Generate a kebab-case slug (`offline-mode`, `push-notifications`).
+Generate a kebab-case slug (`offline-mode`, `push-notifications`). Strip common branch prefixes
+(`feature/`, `fix/`, `chore/`, `claude/`, `hotfix/`). If a spec exists under `docs/specs/` whose
+slug or title matches the candidate slug, adopt the spec's slug for all output paths (spec slug
+wins over the branch-derived one).
 
 ### 0.2 Artifacts
 
@@ -89,7 +92,10 @@ discarded. Launch investigation **in a single message** (parallel) sized to the 
 Write findings into `./swarm-report/plan-<slug>-state.md` as agents complete. Do not ask the user
 anything that investigation can answer. If a genuine design fork appears that investigation cannot
 resolve, surface it with `AskUserQuestion` (each option with a recommended pick) — never park
-questions in the plan file.
+questions in the plan file. **Headless / non-interactive default:** if `--interactive` was not
+passed and no user is present, do NOT block on `AskUserQuestion`; instead record the fork as a
+`[blocking]` Open Question, set `review_verdict: escalate`, and stop. `AskUserQuestion` is only
+used when `--interactive` or a user is actively present.
 
 `--quick`: skip the consortium; one inline Explore pass is enough.
 
@@ -150,15 +156,15 @@ The `implementation-plan` profile selects 2–3 reviewers by tech-match from the
 only on new modules / dependency-direction / public-API changes). `--quick` permits a single
 reviewer.
 
-**Loop** (initial + up to 2 re-reviews, same cap as `finalize`):
+**Loop** — 3 review cycles total: 1 initial review + up to 2 re-reviews (same cap as `finalize`):
 
 | Verdict | Action |
 |---|---|
 | **PASS** | Set `review_verdict: pass`, proceed to Phase 4. |
-| **CONDITIONAL** | Engine edits the plan to address majors; re-review. If still CONDITIONAL after the cap, record the residual majors in `## Open Questions` (non-blocking) and proceed. |
-| **FAIL** | Engine edits the plan to fix the blockers, then re-reviews. Repeat until PASS/CONDITIONAL or the cap. |
+| **CONDITIONAL** | Engine edits the plan to address majors; re-review. If still CONDITIONAL after the cap (cycle 3), set `review_verdict: conditional`, record the residual majors in `## Open Questions` (non-blocking), and proceed. |
+| **FAIL** | Engine edits the plan to fix the blockers, then re-reviews. On cycle 3 returning FAIL, go directly to escalate — no further re-review. |
 
-**Escalation:** if blockers remain after the cap (3 cycles), set `review_verdict: escalate`, write
+**Escalation:** if blockers remain after the 3rd cycle (cap), set `review_verdict: escalate`, write
 the unresolved blockers into `## Open Questions` (tagged blocking), and surface them. In an
 autonomous run this is the *only* stop — and only for genuine blockers, never for routine polish.
 
@@ -172,7 +178,9 @@ ordered to build from the plan with no questions allowed: it picks the riskiest 
 implements it end-to-end, and reports every detail it would have to guess, every unfalsifiable
 acceptance, every hand-waving verb, and every hidden-scope task. Strict but fair — only real gaps,
 no invented blockers. Feed its findings back: trivially fillable → edit inline; real design gap →
-fix the plan (or `AskUserQuestion` if it needs a decision); already-specified → no action.
+fix the plan (or `AskUserQuestion` if it needs a decision and `--interactive` / user is present;
+otherwise record as `[blocking]` Open Question and escalate as in Phase 1); already-specified →
+no action.
 
 Full brief and item handling in [`references/review-loop.md`](references/review-loop.md) §Phase 3.5.
 Skip only with `--quick` on a small, well-bounded change with no risky tasks.
@@ -197,8 +205,9 @@ the plan-mode approval gate — present only, never the default.
 
 ### 4.3 Escalate
 
-On `review_verdict: escalate`, do not flip to `approved`. Surface the blocking open questions and
-stop, exactly as `finalize` escalates on unresolved BLOCKs.
+On `review_verdict: escalate`, do not flip to `approved`. Retire (delete) the state file
+`./swarm-report/plan-<slug>-state.md`, surface the blocking open questions, and stop — exactly as
+`finalize` escalates on unresolved BLOCKs.
 
 ---
 
@@ -207,7 +216,9 @@ stop, exactly as `finalize` escalates on unresolved BLOCKs.
 Keep `progress.md` as the live execution ledger: as each `T-N` completes, check its box, append a
 one-line learning, and let the implementer commit plan + code together. Suggest the next step
 (implement the tasks; then `/write-tests`, `/check`, `/finalize`) — do not auto-invoke downstream
-skills; the user/agent drives the flow (toolbox model).
+skills; the user/agent drives the flow (toolbox model). The sole exception is the mandatory Phase 3
+inline `multiexpert-review` call: that is the review gate built into this skill, not a downstream
+chain, and must always be invoked.
 
 See [`references/output-layout.md`](references/output-layout.md) for path conventions, the
 confirmation message, gitignore notes, and hand-off rules.
