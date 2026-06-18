@@ -155,22 +155,21 @@ profile: implementation-plan
 docs/plans/<slug>/plan.md
 ```
 
-(The hint short-circuits detection deterministically — see
-[`references/review-loop.md`](references/review-loop.md) for why and for the full loop script.)
+(Why the hint and the full loop script: see
+[`references/review-loop.md`](references/review-loop.md).)
 
 The `implementation-plan` profile selects 2–3 reviewers by tech-match from the plan content
 (e.g. `security-expert` only when the plan touches auth / tokens / user data; `architecture-expert`
 only on new modules / dependency-direction / public-API changes). `--quick` permits a single
 reviewer.
 
-**Loop:** 3 review cycles total (1 initial + up to 2 re-reviews, same cap as `finalize`). PASS →
-proceed to Phase 4; CONDITIONAL/FAIL → the engine edits the plan and re-reviews until the cap. See
-[`references/review-loop.md`](references/review-loop.md) for the per-verdict action table and the
-residual-majors handling.
+**Loop:** run the review loop — the cap and per-verdict actions live in
+[`references/review-loop.md`](references/review-loop.md). PASS → proceed to Phase 4;
+CONDITIONAL/FAIL → the engine edits the plan and re-reviews until the cap.
 
-**Escalation (the only autonomous STOP):** if blockers remain after the 3rd cycle, set
-`review_verdict: escalate`, write the unresolved blockers into `## Open Questions` (tagged blocking),
-retire the state file, and surface them — only for genuine blockers, never for routine polish.
+**Escalation (the only autonomous STOP):** if blockers remain, set `review_verdict: escalate`, write
+the unresolved blockers into `## Open Questions` (tagged blocking), retire the state file (see Phase
+4.3), and surface them — only for genuine blockers, never for routine polish.
 
 ---
 
@@ -178,14 +177,10 @@ retire the state file, and surface them — only for genuine blockers, never for
 
 Reviewers grade against a rubric; an *implementer* discovers missing pieces — different failure
 modes. After the panel passes, run **one** Agent (general-purpose, sonnet) as a hostile implementer
-ordered to build from the plan with no questions allowed: it picks the riskiest task, mentally
-implements it end-to-end, and reports every detail it would have to guess, every unfalsifiable
-acceptance, every hand-waving verb, and every hidden-scope task. Strict but fair — only real gaps,
-no invented blockers. Feed its findings back: trivially fillable → edit inline; real design gap →
-fix the plan (or surface for a decision, subject to the **Headless mode** contract above);
-already-specified → no action.
+that tries to build from the plan and reports every gap it would hit; feeding findings back is
+subject to the **Headless mode** contract above. The full agent brief and per-item handling live in
+[`references/review-loop.md`](references/review-loop.md) §Phase 3.5.
 
-Full brief and item handling in [`references/review-loop.md`](references/review-loop.md) §Phase 3.5.
 Skip only with `--quick` on a small, well-bounded change with no risky tasks.
 
 ---
@@ -216,16 +211,13 @@ On `review_verdict: escalate`, do not flip to `approved`. Retire (delete) the st
 
 ## Phase 5: Hand Off
 
-Keep `progress.md` as the live execution ledger: as each `T-N` completes, check its box, append a
-one-line learning, and let the implementer commit plan + code together. Suggest the next step
-(implement the tasks; then `/write-tests`, `/check`, `/finalize`, `/acceptance`) — do not
-auto-invoke downstream skills; the user/agent drives the flow (toolbox model). The built-in
-exceptions are the mandatory Phase 3 inline `multiexpert-review` call and the Phase 3.5
-adversarial red-team Agent call: both are the review gate built into this skill, not downstream
-chains, and must always be invoked (unless `--quick` exempts Phase 3.5).
+Keep `progress.md` as the live execution ledger: as each `T-N` completes, check its box and append a
+one-line learning. Suggest the next step (implement the tasks; then `/write-tests`, `/check`,
+`/finalize`, `/acceptance`).
 
 See [`references/output-layout.md`](references/output-layout.md) for path conventions, the
-confirmation message, gitignore notes, and hand-off rules.
+confirmation message, gitignore notes, and the hand-off rules (do-not-auto-invoke, the toolbox model,
+and the Phase 3 / Phase 3.5 built-in exceptions).
 
 ---
 

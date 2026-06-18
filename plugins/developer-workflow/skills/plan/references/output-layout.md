@@ -13,9 +13,7 @@
 *how* (design + tasks). Both live in git because their value is being reviewable in the PR and
 resumable later — the exact property built-in plan mode lacks.
 
-Slug rules are defined in `SKILL.md` Phase 0.1 (kebab-case, branch-prefixes stripped, one candidate
-slug for all output paths — plan, create-pr, and finalize all resolve the same `docs/plans/<slug>/`
-path). The slug never changes even when a matching spec is referenced.
+Slug derivation: see `SKILL.md` Phase 0.1.
 
 ## Status lifecycle
 
