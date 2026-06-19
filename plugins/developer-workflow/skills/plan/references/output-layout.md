@@ -4,14 +4,18 @@
 
 | File | Lifetime | Committed? | Purpose |
 |---|---|---|---|
-| `docs/plans/<slug>/plan.md` | Permanent | Yes — reviewed in the PR | Technical approach, affected files, decisions, risks. |
-| `docs/plans/<slug>/tasks.md` | Permanent | Yes | Ordered task checklist with dependencies + per-task acceptance. |
-| `docs/plans/<slug>/progress.md` | Permanent (volatile content) | Yes — the execution ledger / audit trail | Volatile status + learnings log. Split from the stable plan so execution churn never rewrites the design. |
+| `docs/plans/<slug>/plan.md` | Transient — deleted after merge | Yes — reviewed in the PR | Technical approach, affected files, decisions, risks. |
+| `docs/plans/<slug>/tasks.md` | Transient — deleted after merge | Yes | Ordered task checklist with dependencies + per-task acceptance. |
+| `docs/plans/<slug>/progress.md` | Transient (volatile content) — deleted after merge | Yes — the execution ledger / audit trail | Volatile status + learnings log. Split from the stable plan so execution churn never rewrites the design. |
 | `./swarm-report/plan-<slug>-state.md` | Operational | No (gitignored) — delete after | Investigation findings, review-cycle log. Deleted after. |
 
 `docs/plans/` is intentionally a sibling of `docs/specs/`: spec = *what* (requirements + AC), plan =
-*how* (design + tasks). Both live in git because their value is being reviewable in the PR and
-resumable later — the exact property built-in plan mode lacks.
+*how* (design + tasks). Both live in git while the work is in progress because their value is being
+reviewable in the PR and resumable later — the exact property built-in plan mode lacks. Their
+lifetimes differ, though: the spec is **permanent**, the plan is **transient implementation
+scaffolding**. The whole `docs/plans/<slug>/` directory stays in git throughout implementation and
+PR review, then `drive-to-merge` deletes it once the change merges; it must not survive into the
+default branch after merge, nor outlive an abandoned / rejected change.
 
 Slug derivation: see `SKILL.md` Phase 0.1.
 
@@ -46,3 +50,6 @@ before flipping to `approved`.
   change.
 - `create-pr` discovers `docs/plans/<slug>/plan.md` and references it in the PR body; `finalize`
   anchors its `code-reviewer` pass on the same plan. No extra wiring needed beyond writing the file.
+- The plan is transient: `drive-to-merge` deletes the whole `docs/plans/<slug>/` directory after the
+  PR merges (a cleanup commit on the default branch), so the plan is reviewable in the PR diff but
+  never lingers in the merged history.

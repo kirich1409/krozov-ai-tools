@@ -193,7 +193,11 @@ While the user reviews, run a self-check:
 
 Fix any self-identified gaps.
 
-### 4.3 Run multiexpert-review (spec profile)
+### 4.3 Run multiexpert-review (spec profile) — MANDATORY
+
+This review is **not optional**. Every spec passes through a multiexpert-review loop before it can be
+approved — an unreviewed spec is the failure mode this skill exists to prevent. Run it even for small
+specs (the panel scales down, it is never skipped).
 
 Run `multiexpert-review` with explicit profile hint — prepend to args:
 

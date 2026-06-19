@@ -92,8 +92,33 @@ On failure (e.g. GitHub repo has auto-merge disabled):
 ## After merge
 
 1. Mark state file `Status: merged`, timestamp the `Rounds` final entry.
-2. Report the merged URL + commit sha to the user.
-3. Stop. No further polling.
+2. **Plan cleanup (transient-plan teardown).** The implementation plan under
+   `docs/plans/<slug>/` is transient scaffolding — reviewable in the PR diff, but it must not
+   survive into the default branch after merge. If that directory exists, remove it from the base
+   branch and commit the removal:
+
+   Resolve `<slug>` consistently with `create-pr` / `plan`: prefer a slug passed as an argument,
+   else derive it from the (pre-merge) head branch name with common prefixes stripped (`feature/`,
+   `fix/`, `hotfix/`, `bug/`, `chore/`, `refactor/`, `docs/`, `claude/`).
+
+   ```bash
+   # Run against the freshly-updated default branch (the head branch was deleted on merge).
+   git fetch origin
+   git switch "$BASE"            # the PR base / default branch
+   git pull --ff-only origin "$BASE"
+   if [ -d "docs/plans/$SLUG" ]; then
+     git rm -r "docs/plans/$SLUG"
+     git commit -m "chore: remove transient plan docs/plans/$SLUG after merge"
+     git push origin "$BASE"
+   fi
+   ```
+
+   Honor the global "never commit/push directly to a protected default branch" rule: if direct
+   pushes to `$BASE` are blocked, open a tiny cleanup PR that deletes `docs/plans/$SLUG/` instead,
+   and note it in the final report rather than forcing a direct push.
+3. Report the merged URL + commit sha to the user, and note the plan-cleanup commit (or skip note if
+   no plan directory existed).
+4. Stop. No further polling.
 
 ## Rebase when base has advanced (Phase 2.6 companion)
 
