@@ -97,6 +97,53 @@ the phase labels present.
 See [`references/format-templates.md`](references/format-templates.md) for the full standard and lightweight templates (verbatim
 markdown), the phase-segmentation worked example, and the rules for when each variant applies.
 
+## Review Loop — MANDATORY
+
+After the test plan is written, run a multiexpert-review over it. This review is **not optional** —
+an unreviewed test plan ships blind spots (missing edge cases, unfalsifiable expected results,
+untraced acceptance criteria), exactly the failure this skill exists to prevent. It mirrors the
+inline review-loop idiom used by `plan` (Phase 3) and `write-spec` (Phase 4.3): invoke
+`multiexpert-review` **inline** with an explicit profile hint, and let the engine drive the
+revise-loop until the plan passes.
+
+The test plan is already a file (`docs/testplans/<slug>-test-plan.md`), so prepend the profile hint
+and the file path to the review args:
+
+```
+profile: test-plan
+---
+docs/testplans/<slug>-test-plan.md
+```
+
+The hint is defense-in-depth: inline-arg callsites lack the frontmatter the detector classifies on,
+and the prefix short-circuits detection deterministically (same rationale as `plan` / `write-spec`).
+Because the plan is on disk, the engine classifies the source as `file` and edits it in place on
+FAIL/CONDITIONAL.
+
+The `test-plan` profile is panel-led by `business-analyst` and adds domain specialists
+(`security-expert`, `performance-expert`, `ux-expert`) only when the spec invokes their concerns; do
+not pad the panel and do not drop a genuinely-triggered reviewer. Its 7-item rubric checks AC
+coverage, negative/edge balance, priority-risk alignment, a valid `Type` field per TC, and the
+`Non-functional / Instrumentation` section (filled or carrying an explicit `N/A: <reason>`).
+
+**Loop** — run the review loop with the same cap as the sibling skills (1 initial review + up to 2
+re-reviews). The `test-plan` profile's verdict alphabet is PASS / WARN / FAIL:
+
+| Verdict | Action |
+|---|---|
+| PASS | Proceed. |
+| WARN | Proceed; the engine records the non-blocking items in `review_warnings`. |
+| FAIL | Engine edits the plan to fix the blockers, then re-reviews until PASS/WARN or the cap. On the final cycle still FAIL → surface the blockers and stop; do not mark the plan `Ready`. |
+
+When invoked with a `slug`, write the verdict back into the receipt's frontmatter
+(`review_verdict`, `review_warnings` / `review_blockers`) per
+[`references/receipt-format.md`](references/receipt-format.md), and flip the receipt `status` to
+`Ready` only on PASS/WARN. Standalone invocations (no slug, no receipt) still run the review — the
+permanent file is the artifact reviewed and edited in place.
+
+The mandatory `multiexpert-review` call here is the in-skill review gate (like `plan` Phase 3 and
+`write-spec` Phase 4.3), not forbidden downstream chaining. Do not auto-invoke any other skill.
+
 ## Field Definitions
 
 ### Type

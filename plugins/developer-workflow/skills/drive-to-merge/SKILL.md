@@ -181,7 +181,10 @@ In **`--auto` mode** the summary is shown for visibility and the merge executes 
 without waiting. If `isDraft == true` and everything else is merge-ready, promote the PR/MR
 first (`gh pr ready` / `glab mr update --remove-draft`) before running pre-merge checks.
 
-Procedure in [`references/merge.md`](references/merge.md).
+After a successful merge, tear down the transient implementation plan: delete
+`docs/plans/<slug>/` from the default branch and commit that removal (the plan is reviewable in the
+PR diff but must not survive into the merged history). `<slug>` is resolved the same way as
+`create-pr` / `plan`. Procedure in [`references/merge.md`](references/merge.md).
 
 ---
 
@@ -189,7 +192,7 @@ Procedure in [`references/merge.md`](references/merge.md).
 
 | State | When | What the skill writes |
 |---|---|---|
-| `merged` | Phase 5 succeeded | state file marked merged, success summary in session |
+| `merged` | Phase 5 succeeded | state file marked merged, transient `docs/plans/<slug>/` removed from the default branch, success summary in session |
 | `blocked` | A blocker was surfaced (failure-loop guard, integrity mismatch, unresolvable rebase, DISCUSSION requires user, polling exceeded cap, or user explicitly says "stop") | state file `Blockers raised` filled (including reason `"user stop"` when applicable), session message explains next action |
 
 ---

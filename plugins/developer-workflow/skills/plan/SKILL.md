@@ -1,15 +1,19 @@
 ---
 name: plan
-description: "Produce a committed implementation plan document — the autonomous replacement for built-in plan mode. Investigates the codebase read-only, writes a persistent, reviewable plan (docs/plans/<slug>/plan.md + tasks.md) instead of an ephemeral approval prompt, then runs a MANDATORY multiexpert-review loop over the plan and revises until it passes. No human approval pause by default, so an agent can plan and execute end-to-end; opt into a checkpoint with --interactive. Use when: \"plan this\", \"make a plan\", \"how do I build this\", \"plan the implementation\", \"break this into tasks\", \"plan before coding\" for an ALREADY-DECIDED change. Prefer this over built-in plan mode whenever the plan should be saved, reviewed by experts, or executed autonomously. Do NOT use for: deciding WHAT to build or comparing options (use research), writing the feature contract / acceptance criteria (use write-spec), or trivial single-line edits (just do them)."
+description: "Produce a committed implementation plan document — the autonomous replacement for built-in plan mode. Investigates the codebase read-only, writes a reviewable plan (docs/plans/<slug>/plan.md + tasks.md) instead of an ephemeral approval prompt, then runs a MANDATORY multiexpert-review loop over the plan and revises until it passes. The plan is transient: kept through implementation and review, removed after merge. No approval pause by default, so an agent can plan and execute end-to-end; opt into a checkpoint with --interactive. Use when: \"plan this\", \"make a plan\", \"how do I build this\", \"plan the implementation\", \"break this into tasks\", \"plan before coding\" for an ALREADY-DECIDED change. Prefer this over built-in plan mode whenever the plan should be saved, reviewed by experts, or executed autonomously. Do NOT use for: deciding WHAT to build or comparing options (use research), writing the feature contract / acceptance criteria (use write-spec), or trivial single-line edits (just do them)."
 ---
 
 # Plan
 
-Turn an already-decided change into a **persistent, expert-reviewed implementation plan** that an
+Turn an already-decided change into an **expert-reviewed implementation plan** that an
 agent can execute end-to-end without stopping for approval. This is the autonomous replacement for
 built-in plan mode: the plan is a file on disk (not an ephemeral `ExitPlanMode` prompt), so it can
-be version-controlled, reviewed by a multiexpert panel, referenced by `create-pr` / `finalize`, and
-resumed across sessions.
+be reviewed by a multiexpert panel, diffed in the PR, referenced by `create-pr` / `finalize`, and
+resumed across sessions while the work is in progress. The plan is **transient implementation
+scaffolding**: it lives in `docs/plans/<slug>/` throughout implementation and PR review, then
+`drive-to-merge` deletes it after the change merges (and it should not survive an abandoned or
+rejected change either). The contrast with built-in plan mode is the *file*, not its permanence —
+an ephemeral approval prompt can be neither reviewed nor resumed.
 
 **Role:** Tech Lead translating *what* into *how*. The decision is made (by the user, a spec, or
 prior research); this skill produces the technical approach, the ordered task list, and the
@@ -78,8 +82,10 @@ finalize all resolve the same `docs/plans/<slug>/` path.
 
 Three committed files under `docs/plans/<slug>/` (`plan.md`, `tasks.md`, `progress.md`) plus the
 gitignored operational `./swarm-report/plan-<slug>-state.md` (deleted after). `docs/plans/` is
-deliberately alongside `docs/specs/` (spec = *what*, plan = *how*); plans live in git because their
-value is being reviewable in the PR and resumable later. See
+deliberately alongside `docs/specs/` (spec = *what*, plan = *how*), but their lifetimes differ: the
+spec is permanent, the plan is transient. Plans live in git only *while the work is in progress* —
+their value is being reviewable in the PR diff and resumable across sessions during implementation —
+and `drive-to-merge` deletes `docs/plans/<slug>/` after the change merges. See
 [`references/output-layout.md`](references/output-layout.md) for the full file/lifetime/purpose
 table.
 
