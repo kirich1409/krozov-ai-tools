@@ -33,8 +33,12 @@
   "engines": {
     "node": ">=18"
   },
+  "overrides": {
+    "hono": ">=4.12.25",
+    "brace-expansion": ">=5.0.6"
+  },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.27.1",
+    "@modelcontextprotocol/sdk": "^1.29.0",
     "zod": "^4.3.6"
   },
   "devDependencies": {
