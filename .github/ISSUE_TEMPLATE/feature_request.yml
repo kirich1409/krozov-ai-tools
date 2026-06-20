@@ -8,8 +8,6 @@ body:
       label: Plugin
       options:
         - maven-mcp
-        - sensitive-guard
-        - developer-workflow
         - new plugin
     validations:
       required: true

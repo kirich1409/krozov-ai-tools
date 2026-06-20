@@ -59,7 +59,7 @@ The user provides one or more `groupId:artifactId` coordinates, optionally with 
 
 4. Do NOT interpret signals or issue an adopt/reject verdict in this skill. The raw signals
    are the output. If the user wants an adopt/reject recommendation, suggest calling the
-   `dependency-evaluator` agent (from developer-workflow-experts) with the signals as input.
+   `dependency-evaluator` agent with the signals as input.
 
 ## Error handling
 
