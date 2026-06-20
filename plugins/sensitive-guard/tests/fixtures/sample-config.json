@@ -1,9 +1,0 @@
-{
-  "tools": ["Read"],
-  "pii": {
-    "enabled": false
-  },
-  "display": {
-    "maxValuePreview": 8
-  }
-}

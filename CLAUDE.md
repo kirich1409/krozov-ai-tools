@@ -7,45 +7,33 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 Rules that are not open for discussion. Violating these is an error, not a judgment call.
 
 - **Never run `npm publish` locally.** Publishing is exclusively via GitHub Actions — prevents partial releases and version skew.
-- **All 8 version locations must stay in sync.** A version bump touches all `plugin.json` files, `package.json`, and `marketplace.json` simultaneously — see Publishing for the list.
+- **All 3 version locations must stay in sync.** A version bump touches `plugin.json`, `package.json`, and `marketplace.json` simultaneously — see Publishing for the list.
 - **Critical or Major violations of PLUGIN-STANDARDS.md block the release.** Fix first, release later.
 - **All extension content is written in English.** Skills (`SKILL.md`, references, evals), agents (`agents/*.md`), hooks, MCP servers, plugin manifests (`plugin.json`, `marketplace.json`), and any prompt/instruction text shipped inside `plugins/` must be in English. User-facing chat in any language is fine; the shipped extension content itself targets an international audience and must not contain non-English prose. Code identifiers and external API field names keep their original form regardless of language. **Excluded:** repository documentation under `docs/` and top-level `README.md` — these are maintainer-facing and may be in any language. Do not "fix" them to English.
 
 ## Project
 
-Monorepo for Claude Code plugins by krozov. Contains six plugins:
+Monorepo for Claude Code plugins by krozov. Contains one plugin:
 
 | Plugin | Directory | Description |
 |--------|-----------|-------------|
 | maven-mcp | `plugins/maven-mcp/` | MCP server for Maven dependency intelligence |
-| sensitive-guard | `plugins/sensitive-guard/` | Scans files for secrets and PII before they reach AI servers |
-| developer-workflow | `plugins/developer-workflow/` | Toolbox of on-demand skills — research, write-spec, plan, multiexpert review, evaluate-dependency, write-tests, check, finalize, generate-test-plan, acceptance, create-pr, drive-to-merge (exploratory QA: call manual-tester agent directly) |
-| developer-workflow-experts | `plugins/developer-workflow-experts/` | 10 reusable review/consult agents (code-reviewer, architecture-expert, security-expert, dependency-evaluator, …) — safe standalone |
-| developer-workflow-kotlin | `plugins/developer-workflow-kotlin/` | Kotlin/Android/KMP specialists — kotlin-engineer, compose-developer |
-| developer-workflow-swift | `plugins/developer-workflow-swift/` | Swift/iOS/macOS specialists and Swift/SwiftUI references |
 
 ## Structure
 
 ```
 plugins/
   maven-mcp/                    # TypeScript, npm package @krozov/maven-central-mcp
-  sensitive-guard/              # Shell-based Claude Code plugin
-  developer-workflow/           # Toolbox skills + manual-tester agent
-  developer-workflow-experts/   # 10 reusable expert agents (library)
-  developer-workflow-kotlin/    # Kotlin/Android/KMP specialists
-  developer-workflow-swift/     # Swift/iOS specialists and references
 ```
 
-The `developer-workflow-*` plugins form a family connected through `dependencies` in plugin.json: core depends on `-experts`; `-kotlin` and `-swift` depend on core and `-experts`. Installing any of them automatically pulls the rest of the chain.
-
-See each plugin's own `CLAUDE.md` for plugin-specific instructions.
+See the plugin's own `CLAUDE.md` for plugin-specific instructions.
 
 ## Plugin Standards
 
 All plugins must comply with [`docs/PLUGIN-STANDARDS.md`](docs/PLUGIN-STANDARDS.md). Before every release:
 
 1. Run `bash scripts/validate.sh` — must be green
-2. Run `plugin-dev:plugin-validator` agent on each of the 6 plugins listed in `.claude-plugin/marketplace.json` — must be PASS or only Minor findings
+2. Run `plugin-dev:plugin-validator` agent on the 1 plugin (maven-mcp) listed in `.claude-plugin/marketplace.json` — must be PASS or only Minor findings
 3. Go through the pre-release checklist in `docs/PLUGIN-STANDARDS.md` section 10
 
 Any Critical or Major violations block the release — fix first, release later.
@@ -64,16 +52,10 @@ To release a new version:
 1. Bump `version` in all of these files to the new version:
    - `plugins/maven-mcp/package.json`
    - `plugins/maven-mcp/plugin/.claude-plugin/plugin.json`
-   - `plugins/sensitive-guard/.claude-plugin/plugin.json`
-   - `plugins/developer-workflow/.claude-plugin/plugin.json`
-   - `plugins/developer-workflow-experts/.claude-plugin/plugin.json`
-   - `plugins/developer-workflow-kotlin/.claude-plugin/plugin.json`
-   - `plugins/developer-workflow-swift/.claude-plugin/plugin.json`
-   - `.claude-plugin/marketplace.json` (all 6 plugin entries)
-2. Inside the `developer-workflow-*` family, also bump the semver ranges in each `dependencies` array if the range needs to widen (usually `^MAJOR.MINOR.0` is stable).
-3. Merge to `main`.
-4. Push a git tag matching the version: `git tag v0.9.0 && git push origin v0.9.0`.
-5. GitHub Actions (`.github/workflows/release.yml`) triggers on `v*` tags: verifies all versions match, runs lint/tests/build, publishes to npm, **then creates one per-plugin tag `{plugin-name}--v{version}` for each plugin in `marketplace.json`**. These per-plugin tags are what Claude Code uses to resolve `dependencies` semver ranges.
+   - `.claude-plugin/marketplace.json`
+2. Merge to `main`.
+3. Push a git tag matching the version: `git tag v0.9.0 && git push origin v0.9.0`.
+4. GitHub Actions (`.github/workflows/release.yml`) triggers on `v*` tags: verifies all versions match, runs lint/tests/build, publishes to npm, **then creates one per-plugin tag `{plugin-name}--v{version}` for each plugin in `marketplace.json`**. These per-plugin tags are what Claude Code uses to resolve `dependencies` semver ranges.
 
 ## Worktrees
 

@@ -1,5 +1,0 @@
-# Just a normal config
-app_name=my-service
-port=8080
-debug=true
-log_level=info

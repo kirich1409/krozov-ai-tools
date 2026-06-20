@@ -16,61 +16,6 @@
       "category": "development",
       "homepage": "https://github.com/kirich1409/krozov-ai-tools",
       "source": "./plugins/maven-mcp/plugin"
-    },
-    {
-      "name": "sensitive-guard",
-      "description": "Prevents sensitive data (secrets, PII) from reaching AI servers by scanning files before they are read into conversation",
-      "author": {
-        "name": "kirich1409"
-      },
-      "version": "0.23.0",
-      "category": "security",
-      "homepage": "https://github.com/kirich1409/krozov-ai-tools",
-      "source": "./plugins/sensitive-guard"
-    },
-    {
-      "name": "developer-workflow",
-      "description": "Developer workflow toolbox \u2014 on-demand skills for research, specification (write-spec), multiexpert review, retroactive tests, code-quality finalize, mechanical /check, QA (test plans, acceptance), PR creation, and autonomous drive-to-merge (CI monitor, review handler, re-request, poll). Exploratory QA without a spec is performed by calling the manual-tester agent directly. Platform-neutral; platform-specific engineers live in developer-workflow-kotlin and developer-workflow-swift.",
-      "author": {
-        "name": "kirich1409"
-      },
-      "version": "0.23.0",
-      "category": "development",
-      "homepage": "https://github.com/kirich1409/krozov-ai-tools",
-      "source": "./plugins/developer-workflow"
-    },
-    {
-      "name": "developer-workflow-experts",
-      "description": "Reusable expert agents for code review, architecture, security, performance, UX, build, DevOps, business analysis, and debugging. Safe to install standalone \u2014 no skills, no hooks, no MCP servers.",
-      "author": {
-        "name": "kirich1409"
-      },
-      "version": "0.23.0",
-      "category": "development",
-      "homepage": "https://github.com/kirich1409/krozov-ai-tools",
-      "source": "./plugins/developer-workflow-experts"
-    },
-    {
-      "name": "developer-workflow-kotlin",
-      "description": "Kotlin, Android, and KMP specialist agents \u2014 kotlin-engineer, compose-developer. Extends developer-workflow for Kotlin/Android projects.",
-      "author": {
-        "name": "kirich1409"
-      },
-      "version": "0.23.0",
-      "category": "development",
-      "homepage": "https://github.com/kirich1409/krozov-ai-tools",
-      "source": "./plugins/developer-workflow-kotlin"
-    },
-    {
-      "name": "developer-workflow-swift",
-      "description": "Swift, iOS, and macOS specialist agents \u2014 swift-engineer and swiftui-developer, with references covering Swift concurrency, testing, and SwiftUI patterns/state/performance. Extends developer-workflow for Apple platforms.",
-      "author": {
-        "name": "kirich1409"
-      },
-      "version": "0.23.0",
-      "category": "development",
-      "homepage": "https://github.com/kirich1409/krozov-ai-tools",
-      "source": "./plugins/developer-workflow-swift"
     }
   ]
 }
