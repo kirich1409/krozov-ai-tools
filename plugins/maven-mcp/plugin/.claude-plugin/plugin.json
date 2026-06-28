@@ -1,7 +1,7 @@
 {
   "name": "maven-mcp",
   "version": "0.23.0",
-  "description": "Maven dependency intelligence — auto-registers MCP server, provides /check-deps, /check-deps-vulnerabilities, /latest-version, /dependency-changes, and /dependency-health skills",
+  "description": "Maven dependency intelligence — provides /check-deps, /check-deps-vulnerabilities, /latest-version, /dependency-changes, and /dependency-health skills. Works in Claude cloud and local without any NPM setup.",
   "author": {
     "name": "kirich1409"
   },
@@ -11,16 +11,6 @@
     "maven",
     "gradle",
     "dependencies",
-    "mcp",
     "android"
-  ],
-  "mcpServers": {
-    "maven-mcp": {
-      "command": "npx",
-      "args": [
-        "-y",
-        "@krozov/maven-central-mcp@^0.23.0"
-      ]
-    }
-  }
+  ]
 }
