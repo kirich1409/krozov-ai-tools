@@ -415,7 +415,7 @@ def _gh_get(path: str) -> Optional[Any]:
         if status == 200:
             return json.loads(body)
     except Exception:
-        pass
+        pass  # Network or parse error — caller treats None as "unavailable"
     return None
 
 
@@ -467,7 +467,7 @@ def gh_fetch_issue_stats(owner: str, repo: str) -> Optional[Dict]:
                     if diff >= 0:
                         durations.append(diff)
                 except Exception:
-                    pass
+                    pass  # Skip malformed date strings in issue timeline
         if not durations:
             return None
         durations.sort()
@@ -533,7 +533,7 @@ def _summarize_releases(releases: List[Dict]) -> Dict:
             dt = _parse_iso(pub)
             times.append((dt, pub))
         except Exception:
-            pass
+            pass  # Skip releases with unparseable published_at dates
     times.sort(key=lambda x: x[0], reverse=True)
     count = len(times)
     if count == 0:
@@ -1355,7 +1355,6 @@ def handle_get_dependency_vulnerabilities(args: Dict) -> Any:
 
 
 def handle_get_dependency_health(args: Dict) -> Any:
-    MS_PER_DAY = 86_400_000
     results = []
     for dep in args["dependencies"]:
         group_id = dep["groupId"]
