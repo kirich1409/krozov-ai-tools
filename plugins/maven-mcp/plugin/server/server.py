@@ -1,0 +1,1910 @@
+#!/usr/bin/env python3
+"""
+Maven MCP server — MCP stdio (JSON-RPC 2.0) over stdin/stdout.
+No external dependencies; Python 3.6+ standard library only.
+"""
+
+import json
+import os
+import re
+import sys
+import urllib.request
+import urllib.parse
+import urllib.error
+from typing import Any, Dict, List, Optional, Tuple
+
+# ---------------------------------------------------------------------------
+# Constants
+# ---------------------------------------------------------------------------
+
+SERVER_NAME = "maven-mcp"
+SERVER_VERSION = "0.23.0"
+USER_AGENT = "maven-mcp/0.23.0"
+HTTP_TIMEOUT = 15
+
+MAVEN_CENTRAL_URL = "https://repo1.maven.org/maven2"
+GOOGLE_MAVEN_URL = "https://dl.google.com/dl/android/maven2"
+GRADLE_PLUGIN_PORTAL_URL = "https://plugins.gradle.org/m2"
+
+GOOGLE_MAVEN_GROUPS = (
+    "androidx.", "com.google.android.", "com.android.", "com.google.firebase.",
+    "com.google.gms.", "com.google.mlkit.", "com.google.ar.",
+)
+
+STABILITY_PATTERNS = [
+    (re.compile(r'[-.]?SNAPSHOT$', re.IGNORECASE), "snapshot"),
+    (re.compile(r'[-.](?:alpha|a(?=\d|[-.]|$))[-.]?\d*', re.IGNORECASE), "alpha"),
+    (re.compile(r'[-.](?:beta|b(?=\d|[-.]|$))[-.]?\d*', re.IGNORECASE), "beta"),
+    (re.compile(r'[-.](?:M|milestone)[-.]?\d*', re.IGNORECASE), "milestone"),
+    (re.compile(r'[-.](?:RC|CR)[-.]?\d*', re.IGNORECASE), "rc"),
+]
+
+PRERELEASE_WEIGHT = {"snapshot": 0, "alpha": 1, "beta": 2, "milestone": 3, "rc": 4, "stable": 5}
+
+GITHUB_API = "https://api.github.com"
+OSV_API = "https://api.osv.dev/v1/querybatch"
+SEARCH_API = "https://search.maven.org/solrsearch/select"
+
+GRADLE_BUILD_FILES = ["build.gradle.kts", "build.gradle"]
+GRADLE_SETTINGS_FILES = ["settings.gradle.kts", "settings.gradle"]
+MAX_MODULE_DEPTH = 5
+
+PRODUCTION_CONFIGURATIONS = {
+    "implementation", "api", "compileOnly", "runtimeOnly",
+}
+NON_PRODUCTION_CONFIGURATIONS = {
+    "testImplementation", "testCompileOnly", "testRuntimeOnly",
+    "kapt", "ksp", "annotationProcessor",
+}
+ALL_CONFIGURATIONS = PRODUCTION_CONFIGURATIONS | NON_PRODUCTION_CONFIGURATIONS
+
+SCOPE_TO_CONFIG = {
+    "compile": "implementation",
+    "runtime": "runtimeOnly",
+    "test": "testImplementation",
+    "provided": "compileOnly",
+    "system": "compileOnly",
+}
+
+# ---------------------------------------------------------------------------
+# HTTP utilities
+# ---------------------------------------------------------------------------
+
+def _make_headers(extra: Optional[Dict[str, str]] = None) -> Dict[str, str]:
+    h = {"User-Agent": USER_AGENT}
+    if extra:
+        h.update(extra)
+    return h
+
+
+def _github_headers() -> Dict[str, str]:
+    token = os.environ.get("GITHUB_TOKEN")
+    h = _make_headers({"Accept": "application/vnd.github.v3+json"})
+    if token:
+        h["Authorization"] = f"Bearer {token}"
+    return h
+
+
+def http_get(url: str, headers: Optional[Dict[str, str]] = None) -> Tuple[int, bytes]:
+    """Returns (status_code, body_bytes). Raises urllib.error.URLError on network error."""
+    req = urllib.request.Request(url, headers=headers or _make_headers())
+    try:
+        with urllib.request.urlopen(req, timeout=HTTP_TIMEOUT) as resp:
+            return resp.status, resp.read()
+    except urllib.error.HTTPError as e:
+        return e.code, b""
+
+
+def http_post_json(url: str, payload: Any, headers: Optional[Dict[str, str]] = None) -> Tuple[int, bytes]:
+    data = json.dumps(payload).encode()
+    h = _make_headers({"Content-Type": "application/json"})
+    if headers:
+        h.update(headers)
+    req = urllib.request.Request(url, data=data, headers=h, method="POST")
+    try:
+        with urllib.request.urlopen(req, timeout=HTTP_TIMEOUT) as resp:
+            return resp.status, resp.read()
+    except urllib.error.HTTPError as e:
+        return e.code, b""
+
+
+# ---------------------------------------------------------------------------
+# Repository resolution
+# ---------------------------------------------------------------------------
+
+def group_path(group_id: str) -> str:
+    return group_id.replace(".", "/")
+
+
+def _metadata_url(base: str, group_id: str, artifact_id: str) -> str:
+    return f"{base.rstrip('/')}/{group_path(group_id)}/{artifact_id}/maven-metadata.xml"
+
+
+def _pom_url(base: str, group_id: str, artifact_id: str, version: str) -> str:
+    gp = group_path(group_id)
+    return f"{base.rstrip('/')}/{gp}/{artifact_id}/{version}/{artifact_id}-{version}.pom"
+
+
+def _repos_for(group_id: str, artifact_id: str) -> List[Tuple[str, str]]:
+    """Return (name, url) list to try for this artifact, most-specific first."""
+    repos = []
+    if artifact_id.endswith(".gradle.plugin"):
+        repos.append(("Gradle Plugin Portal", GRADLE_PLUGIN_PORTAL_URL))
+    if any(group_id.startswith(p) for p in GOOGLE_MAVEN_GROUPS):
+        repos.append(("Google Maven", GOOGLE_MAVEN_URL))
+    repos.append(("Maven Central", MAVEN_CENTRAL_URL))
+    return repos
+
+
+def _parse_metadata_xml(xml: str, group_id: str, artifact_id: str) -> Dict[str, Any]:
+    versions = re.findall(r"<version>([^<]+)</version>", xml)
+    latest = (re.search(r"<latest>([^<]+)</latest>", xml) or [None, None])[1]
+    release = (re.search(r"<release>([^<]+)</release>", xml) or [None, None])[1]
+    last_updated = (re.search(r"<lastUpdated>([^<]+)</lastUpdated>", xml) or [None, None])[1]
+    return {
+        "groupId": group_id,
+        "artifactId": artifact_id,
+        "versions": versions,
+        "latest": latest,
+        "release": release,
+        "lastUpdated": last_updated,
+    }
+
+
+def fetch_metadata(group_id: str, artifact_id: str) -> Dict[str, Any]:
+    """Try repos in order and return first successful metadata parse."""
+    repos = _repos_for(group_id, artifact_id)
+    last_err = None
+    for name, base in repos:
+        url = _metadata_url(base, group_id, artifact_id)
+        try:
+            status, body = http_get(url)
+            if status == 200:
+                return _parse_metadata_xml(body.decode("utf-8", errors="replace"), group_id, artifact_id)
+            last_err = f"HTTP {status} from {name}"
+        except Exception as e:
+            last_err = str(e)
+    raise ValueError(f"Could not fetch metadata for {group_id}:{artifact_id}: {last_err}")
+
+
+def check_version_in_repos(group_id: str, artifact_id: str, version: str) -> Optional[str]:
+    """Returns repo name if version exists, else None."""
+    repos = _repos_for(group_id, artifact_id)
+    for name, base in repos:
+        url = _metadata_url(base, group_id, artifact_id)
+        try:
+            status, body = http_get(url)
+            if status == 200:
+                xml = body.decode("utf-8", errors="replace")
+                versions = re.findall(r"<version>([^<]+)</version>", xml)
+                if version in versions:
+                    return name
+        except Exception:
+            continue
+    return None
+
+
+def fetch_pom(group_id: str, artifact_id: str, version: str) -> Optional[str]:
+    repos = _repos_for(group_id, artifact_id)
+    for _name, base in repos:
+        url = _pom_url(base, group_id, artifact_id, version)
+        try:
+            status, body = http_get(url)
+            if status == 200:
+                return body.decode("utf-8", errors="replace")
+        except Exception:
+            continue
+    return None
+
+
+# ---------------------------------------------------------------------------
+# Version classification & comparison
+# ---------------------------------------------------------------------------
+
+def classify_version(version: str) -> str:
+    for pattern, stability in STABILITY_PATTERNS:
+        if pattern.search(version):
+            return stability
+    return "stable"
+
+
+def _parse_segments(version: str) -> List[int]:
+    core = re.split(r"[-+]", version, maxsplit=1)[0]
+    parts = []
+    for p in core.split("."):
+        try:
+            parts.append(int(p))
+        except ValueError:
+            parts.append(0)
+    return parts or [0]
+
+
+def _extract_prerelease_numbers(version: str) -> List[int]:
+    cut = -1
+    for ch in ("-", "+"):
+        idx = version.find(ch)
+        if idx != -1 and (cut == -1 or idx < cut):
+            cut = idx
+    if cut == -1:
+        return []
+    suffix = version[cut + 1:]
+    return [int(m) for m in re.findall(r"\d+", suffix)]
+
+
+def _compare_int_lists(a: List[int], b: List[int]) -> int:
+    max_len = max(len(a), len(b), 1)
+    for i in range(max_len):
+        ai = a[i] if i < len(a) else 0
+        bi = b[i] if i < len(b) else 0
+        if ai != bi:
+            return -1 if ai < bi else 1
+    return 0
+
+
+def compare_versions(a: str, b: str) -> int:
+    """Returns negative if a < b, positive if a > b, 0 if equal."""
+    core_diff = _compare_int_lists(_parse_segments(a), _parse_segments(b))
+    if core_diff != 0:
+        return core_diff
+    weight_diff = PRERELEASE_WEIGHT.get(classify_version(a), 5) - PRERELEASE_WEIGHT.get(classify_version(b), 5)
+    if weight_diff != 0:
+        return weight_diff
+    tail_diff = _compare_int_lists(_extract_prerelease_numbers(a), _extract_prerelease_numbers(b))
+    if tail_diff != 0:
+        return tail_diff
+    return -1 if a < b else (1 if a > b else 0)
+
+
+def find_latest_version(versions: List[str], filter_mode: str = "PREFER_STABLE") -> Optional[str]:
+    if not versions:
+        return None
+    if filter_mode == "ALL":
+        return versions[-1]
+    # Scan from the end for last stable
+    stable = None
+    for v in reversed(versions):
+        if classify_version(v) == "stable":
+            stable = v
+            break
+    if filter_mode == "STABLE_ONLY":
+        return stable
+    # PREFER_STABLE: stable if found, otherwise last version
+    return stable if stable is not None else versions[-1]
+
+
+def find_latest_version_for_current(versions: List[str], current_version: str) -> Optional[str]:
+    """Latest version at least as stable as current (mirrors TS findLatestVersionForCurrent)."""
+    current_stability = classify_version(current_version)
+    max_rank = PRERELEASE_WEIGHT.get(current_stability, 5)
+    for v in reversed(versions):
+        if PRERELEASE_WEIGHT.get(classify_version(v), 5) <= max_rank:
+            return v
+    return None
+
+
+def get_upgrade_type(current: str, latest: str) -> str:
+    if compare_versions(latest, current) <= 0:
+        return "none"
+    cur = _parse_segments(current)
+    lat = _parse_segments(latest)
+    max_len = max(len(cur), len(lat))
+    while len(cur) < max_len:
+        cur.append(0)
+    while len(lat) < max_len:
+        lat.append(0)
+    if lat[0] != cur[0]:
+        return "major"
+    if len(lat) > 1 and len(cur) > 1 and lat[1] != cur[1]:
+        return "minor"
+    if len(lat) > 2 and len(cur) > 2 and lat[2] != cur[2]:
+        return "patch"
+    return "patch"
+
+
+# ---------------------------------------------------------------------------
+# GitHub utilities
+# ---------------------------------------------------------------------------
+
+GITHUB_REPO_RE = re.compile(r"github\.com[/:]([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+)")
+
+
+def _strip_xml_comments(xml: str) -> str:
+    prev = None
+    while prev != xml:
+        prev = xml
+        xml = re.sub(r"<!--[\s\S]*?-->", "", xml)
+    return xml
+
+
+def extract_github_repo_from_pom(pom_xml: str) -> Optional[Dict[str, str]]:
+    xml = _strip_xml_comments(pom_xml)
+
+    def _parse_github_url(url: str) -> Optional[Dict[str, str]]:
+        m = GITHUB_REPO_RE.search(url)
+        if not m:
+            return None
+        owner = m.group(1)
+        repo = m.group(2).rstrip("/")
+        repo = re.sub(r"\.git$", "", repo)
+        repo = repo.split("/")[0]
+        return {"owner": owner, "repo": repo}
+
+    scm_match = re.search(r"<scm>([\s\S]*?)</scm>", xml)
+    if scm_match:
+        block = scm_match.group(1)
+        for tag in ("url", "connection", "developerConnection"):
+            m = re.search(rf"<{tag}>\s*(.*?)\s*</{tag}>", block)
+            if m:
+                r = _parse_github_url(m.group(1))
+                if r:
+                    return r
+
+    # Fallback: root <url>
+    without_scm = re.sub(r"<scm>[\s\S]*?</scm>", "", xml)
+    m = re.search(r"<url>\s*(.*?)\s*</url>", without_scm)
+    if m:
+        return _parse_github_url(m.group(1))
+    return None
+
+
+def extract_scm_url_from_pom(pom_xml: str) -> Optional[str]:
+    xml = _strip_xml_comments(pom_xml)
+
+    def _clean(v: str) -> str:
+        return re.sub(r"^scm:[a-z]+:", "", v, flags=re.IGNORECASE)
+
+    scm_match = re.search(r"<scm>([\s\S]*?)</scm>", xml)
+    if scm_match:
+        block = scm_match.group(1)
+        for tag in ("url", "connection", "developerConnection"):
+            m = re.search(rf"<{tag}>\s*(.*?)\s*</{tag}>", block)
+            if m and m.group(1):
+                return _clean(m.group(1).strip())
+
+    without_scm = re.sub(r"<scm>[\s\S]*?</scm>", "", xml)
+    m = re.search(r"<url>\s*(.*?)\s*</url>", without_scm)
+    if m and m.group(1):
+        return m.group(1).strip()
+    return None
+
+
+def extract_licenses_from_pom(pom_xml: str) -> List[str]:
+    xml = _strip_xml_comments(pom_xml)
+    block_m = re.search(r"<licenses>([\s\S]*?)</licenses>", xml)
+    if not block_m:
+        return []
+    names = []
+    for m in re.finditer(r"<license>([\s\S]*?)</license>", block_m.group(1)):
+        name_m = re.search(r"<name>\s*(.*?)\s*</name>", m.group(1))
+        if name_m and name_m.group(1):
+            names.append(name_m.group(1).strip())
+    return names
+
+
+def guess_github_repo(group_id: str, artifact_id: str) -> Optional[Dict[str, str]]:
+    for prefix in ("com.github.", "io.github."):
+        if group_id.startswith(prefix) and len(group_id) > len(prefix):
+            rest = group_id[len(prefix):]
+            owner = rest.split(".")[0]
+            return {"owner": owner, "repo": artifact_id}
+    return None
+
+
+def scm_host(url: str) -> str:
+    if not url:
+        return "other"
+    scp_m = re.match(r"^[^/@]+@([^:/]+):", url)
+    if scp_m:
+        host = scp_m.group(1).lower()
+    else:
+        m = re.match(r"https?://([^/]+)", url)
+        host = m.group(1).lower() if m else ""
+    if host in ("github.com",) or host.endswith(".github.com"):
+        return "github"
+    if host in ("gitlab.com",) or host.endswith(".gitlab.com"):
+        return "gitlab"
+    if host in ("bitbucket.org",) or host.endswith(".bitbucket.org"):
+        return "bitbucket"
+    return "other"
+
+
+def _gh_get(path: str) -> Optional[Any]:
+    url = f"{GITHUB_API}{path}"
+    try:
+        status, body = http_get(url, _github_headers())
+        if status == 200:
+            return json.loads(body)
+    except Exception:
+        pass
+    return None
+
+
+def gh_repo_exists(owner: str, repo: str) -> bool:
+    url = f"{GITHUB_API}/repos/{owner}/{repo}"
+    try:
+        status, _ = http_get(url, _github_headers())
+        return status == 200
+    except Exception:
+        return False
+
+
+def gh_fetch_repo(owner: str, repo: str) -> Optional[Dict]:
+    return _gh_get(f"/repos/{owner}/{repo}")
+
+
+def gh_fetch_releases(owner: str, repo: str) -> List[Dict]:
+    data = _gh_get(f"/repos/{owner}/{repo}/releases?per_page=100")
+    return data if isinstance(data, list) else []
+
+
+def gh_fetch_user(login: str) -> Optional[Dict]:
+    return _gh_get(f"/users/{login}")
+
+
+def gh_fetch_issue_stats(owner: str, repo: str) -> Optional[Dict]:
+    def search_count(state: str) -> Optional[int]:
+        q = urllib.parse.quote(f"repo:{owner}/{repo} type:issue state:{state}")
+        data = _gh_get(f"/search/issues?q={q}&per_page=1")
+        if data and isinstance(data.get("total_count"), int):
+            return data["total_count"]
+        return None
+
+    def median_days_to_close() -> Optional[int]:
+        q = urllib.parse.quote(f"repo:{owner}/{repo} type:issue state:closed")
+        data = _gh_get(f"/search/issues?q={q}&sort=updated&order=desc&per_page=30")
+        if not data or not isinstance(data.get("items"), list):
+            return None
+        durations = []
+        for item in data["items"]:
+            ca = item.get("created_at")
+            cl = item.get("closed_at")
+            if ca and cl:
+                import datetime
+                try:
+                    t_created = _parse_iso(ca)
+                    t_closed = _parse_iso(cl)
+                    diff = (t_closed - t_created).total_seconds()
+                    if diff >= 0:
+                        durations.append(diff)
+                except Exception:
+                    pass
+        if not durations:
+            return None
+        durations.sort()
+        mid = len(durations) // 2
+        if len(durations) % 2 == 1:
+            median_sec = durations[mid]
+        else:
+            median_sec = (durations[mid - 1] + durations[mid]) / 2
+        return round(median_sec / 86400)
+
+    open_count = search_count("open")
+    closed_count = search_count("closed")
+    if open_count is None and closed_count is None:
+        return None
+    total = (open_count or 0) + (closed_count or 0)
+    close_ratio = (closed_count / total) if (open_count is not None and closed_count is not None and total > 0) else None
+    median_days = median_days_to_close()
+    return {
+        "open": open_count,
+        "closed": closed_count,
+        "closeRatio": close_ratio,
+        "medianDaysToClose": median_days,
+    }
+
+
+def _parse_iso(s: str):
+    import datetime
+    # Handle Z suffix
+    s = s.replace("Z", "+00:00")
+    try:
+        return datetime.datetime.fromisoformat(s)
+    except Exception:
+        # Fallback for Python 3.6 which doesn't support +00:00 in fromisoformat
+        return datetime.datetime.strptime(s[:19], "%Y-%m-%dT%H:%M:%S")
+
+
+def _months_since(iso: Optional[str]) -> Optional[int]:
+    if not iso:
+        return None
+    try:
+        import datetime
+        dt = _parse_iso(iso)
+        now = datetime.datetime.utcnow()
+        # Make both offset-naive for comparison
+        if hasattr(dt, 'utcoffset') and dt.utcoffset() is not None:
+            dt = dt.replace(tzinfo=None)
+        delta = now - dt
+        return int(delta.days / 30)
+    except Exception:
+        return None
+
+
+def _summarize_releases(releases: List[Dict]) -> Dict:
+    import datetime
+    times = []
+    for r in releases:
+        if r.get("draft") or r.get("prerelease"):
+            continue
+        pub = r.get("published_at")
+        if not pub:
+            continue
+        try:
+            dt = _parse_iso(pub)
+            times.append((dt, pub))
+        except Exception:
+            pass
+    times.sort(key=lambda x: x[0], reverse=True)
+    count = len(times)
+    if count == 0:
+        return {"last": None, "cadenceDays": None, "count": 0}
+    last = times[0][1]
+    if count < 2:
+        return {"last": last, "cadenceDays": None, "count": count}
+    gaps = []
+    for i in range(len(times) - 1):
+        diff = (times[i][0] - times[i + 1][0]).total_seconds()
+        gaps.append(diff)
+    gaps.sort()
+    mid = len(gaps) // 2
+    if len(gaps) % 2 == 1:
+        median_sec = gaps[mid]
+    else:
+        median_sec = (gaps[mid - 1] + gaps[mid]) / 2
+    return {"last": last, "cadenceDays": round(median_sec / 86400), "count": count}
+
+
+def discover_github_repo(group_id: str, artifact_id: str, version: str) -> Optional[Dict[str, str]]:
+    """Try POM SCM, then guess from groupId. Returns {owner, repo} or None."""
+    pom = fetch_pom(group_id, artifact_id, version)
+    if pom:
+        r = extract_github_repo_from_pom(pom)
+        if r:
+            return r
+    guess = guess_github_repo(group_id, artifact_id)
+    if guess and gh_repo_exists(guess["owner"], guess["repo"]):
+        return guess
+    return None
+
+
+# ---------------------------------------------------------------------------
+# GitHub changelog / releases for get_dependency_changes
+# ---------------------------------------------------------------------------
+
+def _filter_version_range(versions: List[str], from_v: str, to_v: str) -> List[str]:
+    """Return versions between from_v (exclusive) and to_v (inclusive)."""
+    result = []
+    for v in versions:
+        gt_from = compare_versions(v, from_v) > 0
+        le_to = compare_versions(v, to_v) <= 0
+        if gt_from and le_to:
+            result.append(v)
+    return result
+
+
+def _get_dependency_changes_impl(group_id: str, artifact_id: str, from_version: str, to_version: str) -> Dict:
+    base = {
+        "groupId": group_id,
+        "artifactId": artifact_id,
+        "fromVersion": from_version,
+        "toVersion": to_version,
+        "changes": [],
+    }
+    try:
+        metadata = fetch_metadata(group_id, artifact_id)
+    except Exception as e:
+        return {**base, "error": str(e)}
+
+    versions_in_range = _filter_version_range(metadata["versions"], from_version, to_version)
+    if not versions_in_range:
+        return {**base, "error": f"No versions found between {from_version} and {to_version}"}
+
+    gh_repo = discover_github_repo(group_id, artifact_id, to_version)
+    if not gh_repo:
+        return {**base, "repositoryNotFound": True}
+
+    owner, repo = gh_repo["owner"], gh_repo["repo"]
+    releases = gh_fetch_releases(owner, repo)
+
+    # Build a map from version string to release info
+    release_map: Dict[str, Dict] = {}
+    for rel in releases:
+        tag = rel.get("tag_name", "")
+        # Try to match tag to version: strip leading 'v' or prefix
+        candidate = re.sub(r"^[^0-9]*", "", tag)
+        if candidate in versions_in_range:
+            release_map[candidate] = rel
+        elif tag in versions_in_range:
+            release_map[tag] = rel
+
+    changes = []
+    for v in versions_in_range:
+        rel = release_map.get(v)
+        if rel:
+            change = {"version": v}
+            if rel.get("html_url"):
+                change["releaseUrl"] = rel["html_url"]
+            if rel.get("body"):
+                change["body"] = rel["body"]
+            changes.append(change)
+        else:
+            changes.append({"version": v})
+
+    return {
+        **base,
+        "repositoryUrl": f"https://github.com/{owner}/{repo}",
+        "changes": changes,
+    }
+
+
+# ---------------------------------------------------------------------------
+# OSV vulnerability client
+# ---------------------------------------------------------------------------
+
+def _cvss_to_severity(score: float) -> str:
+    if score >= 9.0:
+        return "CRITICAL"
+    if score >= 7.0:
+        return "HIGH"
+    if score >= 4.0:
+        return "MEDIUM"
+    return "LOW"
+
+
+def _extract_severity(vuln: Dict) -> Optional[str]:
+    raw = (vuln.get("database_specific") or {}).get("severity", "")
+    if raw:
+        normalized = raw.upper()
+        if normalized == "MODERATE":
+            normalized = "MEDIUM"
+        if normalized in ("CRITICAL", "HIGH", "MEDIUM", "LOW"):
+            return normalized
+    for sev in (vuln.get("severity") or []):
+        if sev.get("type") in ("CVSS_V3", "CVSS_V4"):
+            try:
+                return _cvss_to_severity(float(sev["score"]))
+            except (ValueError, TypeError, KeyError):
+                pass
+    return None
+
+
+def _extract_fixed_version(vuln: Dict) -> Optional[str]:
+    for affected in (vuln.get("affected") or []):
+        for rng in (affected.get("ranges") or []):
+            if rng.get("type") != "ECOSYSTEM":
+                continue
+            for event in (rng.get("events") or []):
+                if "fixed" in event:
+                    return event["fixed"]
+    return None
+
+
+def _extract_url(vuln: Dict) -> str:
+    for ref in (vuln.get("references") or []):
+        if ref.get("type") == "ADVISORY":
+            return ref.get("url", "")
+    return f"https://osv.dev/vulnerability/{vuln['id']}"
+
+
+def query_osv_batch(deps: List[Dict]) -> List[Dict]:
+    """deps: list of {groupId, artifactId, version}. Returns list of {groupId, artifactId, version, vulnerabilities}."""
+    if not deps:
+        return []
+    queries = [
+        {"package": {"name": f"{d['groupId']}:{d['artifactId']}", "ecosystem": "Maven"}, "version": d["version"]}
+        for d in deps
+    ]
+    try:
+        status, body = http_post_json(OSV_API, {"queries": queries})
+        if status != 200:
+            return [{**d, "vulnerabilities": []} for d in deps]
+        data = json.loads(body)
+        results = data.get("results", [])
+        out = []
+        for i, dep in enumerate(deps):
+            vulns_raw = (results[i].get("vulns") or []) if i < len(results) else []
+            vulns_raw = [v for v in vulns_raw if v.get("withdrawn") is None]
+            vulns = []
+            for v in vulns_raw:
+                vuln_info = {
+                    "id": v.get("id", ""),
+                    "summary": v.get("summary", ""),
+                    "url": _extract_url(v),
+                }
+                sev = _extract_severity(v)
+                if sev:
+                    vuln_info["severity"] = sev
+                fixed = _extract_fixed_version(v)
+                if fixed:
+                    vuln_info["fixedVersion"] = fixed
+                vulns.append(vuln_info)
+            out.append({**dep, "vulnerabilities": vulns})
+        return out
+    except Exception:
+        return [{**d, "vulnerabilities": []} for d in deps]
+
+
+# ---------------------------------------------------------------------------
+# Maven Central search
+# ---------------------------------------------------------------------------
+
+def search_maven_central(query: str, limit: int = 10) -> List[Dict]:
+    try:
+        url = f"{SEARCH_API}?q={urllib.parse.quote(query)}&rows={limit}&wt=json"
+        status, body = http_get(url)
+        if status != 200:
+            return []
+        data = json.loads(body)
+        docs = data.get("response", {}).get("docs", [])
+        return [
+            {
+                "groupId": d.get("g", ""),
+                "artifactId": d.get("a", ""),
+                "latestVersion": d.get("latestVersion", ""),
+                "versionCount": d.get("versionCount", 0),
+            }
+            for d in docs
+        ]
+    except Exception:
+        return []
+
+
+# ---------------------------------------------------------------------------
+# Dependency scanning (local file system)
+# ---------------------------------------------------------------------------
+
+def _is_excluded_path(path: str) -> bool:
+    excluded = (".gradle" + os.sep, "build" + os.sep, ".idea" + os.sep)
+    # Normalize to use os.sep
+    np = path.replace("/", os.sep)
+    for ex in excluded:
+        if ex in np:
+            return True
+    # Also check directory components directly
+    parts = path.replace("\\", "/").split("/")
+    for part in parts:
+        if part in (".gradle", "build", ".idea"):
+            return True
+    return False
+
+
+def _is_test_configuration(config: str) -> bool:
+    if config.startswith("test"):
+        return True
+    return bool(re.search(r"[a-z]Test", config))
+
+
+def _parse_toml_catalog(content: str) -> Dict:
+    """Returns {libraries: {alias: {groupId, artifactId, version}}, plugins: {alias: {id, version}}}"""
+    libraries: Dict[str, Dict] = {}
+    plugins: Dict[str, Dict] = {}
+    versions: Dict[str, str] = {}
+
+    m = re.search(r"\[versions\]([\s\S]*?)(?=\n\[|$)", content)
+    if m:
+        for lm in re.finditer(r"^(\S+)\s*=\s*\"([^\"]+)\"", m.group(1), re.MULTILINE):
+            versions[lm.group(1)] = lm.group(2)
+
+    m = re.search(r"\[libraries\]([\s\S]*?)(?=\n\[|$)", content)
+    if m:
+        for lm in re.finditer(r"^(\S+)\s*=\s*\{([^}]+)\}", m.group(1), re.MULTILINE):
+            alias = lm.group(1)
+            props = lm.group(2)
+            group_id = None
+            artifact_id = None
+            version = None
+
+            mod_m = re.search(r'module\s*=\s*"([^"]+):([^"]+)"', props)
+            if mod_m:
+                group_id = mod_m.group(1)
+                artifact_id = mod_m.group(2)
+
+            g_m = re.search(r'group\s*=\s*"([^"]+)"', props)
+            n_m = re.search(r'name\s*=\s*"([^"]+)"', props)
+            if g_m and n_m:
+                group_id = g_m.group(1)
+                artifact_id = n_m.group(1)
+
+            vref_m = re.search(r'version\.ref\s*=\s*"([^"]+)"', props)
+            if vref_m:
+                version = versions.get(vref_m.group(1))
+            else:
+                vinline_m = re.search(r'\bversion\s*=\s*"([^"]+)"', props)
+                if vinline_m:
+                    version = vinline_m.group(1)
+
+            if group_id and artifact_id:
+                libraries[alias] = {"groupId": group_id, "artifactId": artifact_id, "version": version}
+
+        # Shorthand: alias = "group:artifact:version" or "group:artifact"
+        for lm in re.finditer(r'^(\S+)\s*=\s*"([^"]+):([^":]+)(?::([^"]+))?"', m.group(1), re.MULTILINE):
+            alias = lm.group(1)
+            if alias not in libraries:
+                gid = lm.group(2)
+                aid = lm.group(3)
+                ver = lm.group(4)
+                libraries[alias] = {"groupId": gid, "artifactId": aid, "version": ver}
+
+    m = re.search(r"\[plugins\]([\s\S]*?)(?=\n\[|$)", content)
+    if m:
+        plugins_section = m.group(1)
+        # Shorthand: alias = "id:version"
+        for lm in re.finditer(r'^(\S+)\s*=\s*"([^":]+):([^"]+)"', plugins_section, re.MULTILINE):
+            plugins[lm.group(1)] = {"id": lm.group(2), "version": lm.group(3)}
+        # Inline table
+        for lm in re.finditer(r"^(\S+)\s*=\s*\{([^}]+)\}", plugins_section, re.MULTILINE):
+            alias = lm.group(1)
+            if alias in plugins:
+                continue
+            props = lm.group(2)
+            id_m = re.search(r'\bid\s*=\s*"([^"]+)"', props)
+            if not id_m:
+                continue
+            plugin_id = id_m.group(1)
+            version = None
+            vref_m = re.search(r'version\.ref\s*=\s*"([^"]+)"', props)
+            if vref_m:
+                version = versions.get(vref_m.group(1))
+            else:
+                vinline_m = re.search(r'\bversion\s*=\s*"([^"]+)"', props)
+                if vinline_m:
+                    version = vinline_m.group(1)
+            plugins[alias] = {"id": plugin_id, "version": version}
+
+    return {"libraries": libraries, "plugins": plugins}
+
+
+def _parse_gradle_deps(content: str, source_file: str) -> List[Dict]:
+    """Returns list of dep dicts with keys: groupId, artifactId, version, configuration, catalogRef."""
+    deps = []
+    config_pattern = "|".join(re.escape(c) for c in sorted(ALL_CONFIGURATIONS, key=len, reverse=True))
+
+    # String notation: implementation("group:artifact:version")
+    string_re = re.compile(
+        rf'\b({config_pattern})\s*[( ]\s*["\']([^"\':\s]+):([^"\':\s]+)(?::([^"\']+))?["\']',
+    )
+    for m in string_re.finditer(content):
+        deps.append({
+            "groupId": m.group(2),
+            "artifactId": m.group(3),
+            "version": m.group(4),
+            "configuration": m.group(1),
+            "catalogRef": None,
+        })
+
+    # Catalog accessor: implementation(libs.foo.bar)
+    catalog_re = re.compile(
+        rf'\b({config_pattern})\s*\(\s*([a-zA-Z_][a-zA-Z0-9_]*)\.([a-zA-Z0-9.]+)\s*\)',
+    )
+    for m in catalog_re.finditer(content):
+        deps.append({
+            "groupId": None,
+            "artifactId": None,
+            "version": None,
+            "configuration": m.group(1),
+            "catalogRef": f"{m.group(2)}.{m.group(3)}",
+        })
+
+    return deps
+
+
+def _parse_gradle_plugins_block(content: str, is_settings: bool = False) -> List[Dict]:
+    """Parse plugins {} DSL blocks. Returns list of {pluginId, version, catalogRef}."""
+    results = []
+    # Find plugins { } blocks
+    plugins_re = re.compile(r'\bplugins\s*\{([^}]*)\}', re.DOTALL)
+    for block_m in plugins_re.finditer(content):
+        block = block_m.group(1)
+        # id("plugin.id") version "1.0"
+        id_ver_re = re.compile(r'\bid\s*\(\s*["\']([^"\']+)["\']\s*\)(?:\s+version\s+["\']([^"\']+)["\'])?')
+        for m in id_ver_re.finditer(block):
+            results.append({"pluginId": m.group(1), "version": m.group(2), "catalogRef": None, "settingsBlock": is_settings})
+        # alias(libs.plugins.foo)
+        alias_re = re.compile(r'\balias\s*\(\s*([a-zA-Z_][a-zA-Z0-9_]*)\.plugins\.([a-zA-Z0-9.]+)\s*\)')
+        for m in alias_re.finditer(block):
+            ref = f"{m.group(1)}.plugins.{m.group(2)}"
+            results.append({"pluginId": None, "version": None, "catalogRef": ref, "settingsBlock": is_settings})
+    return results
+
+
+def _parse_buildscript_classpath(content: str) -> List[Dict]:
+    """Parse buildscript { dependencies { classpath(...) } }"""
+    results = []
+    bs_re = re.compile(r'\bbuildscript\s*\{([\s\S]*?)\}', re.DOTALL)
+    for bs_m in bs_re.finditer(content):
+        block = bs_m.group(1)
+        cp_re = re.compile(r'\bclasspath\s*\(["\']([^"\':\s]+):([^"\':\s]+)(?::([^"\']+))?["\']')
+        for m in cp_re.finditer(block):
+            results.append({"groupId": m.group(1), "artifactId": m.group(2), "version": m.group(3)})
+    return results
+
+
+def _parse_settings_modules(content: str) -> List[str]:
+    """Extract include(":module") declarations from settings.gradle[.kts]."""
+    results = []
+    for m in re.finditer(r'\binclude\s*\(\s*["\']([^"\']+)["\']\s*\)', content):
+        results.append(m.group(1))
+    return results
+
+
+def _parse_settings_catalogs(content: str) -> List[Dict]:
+    """Extract version catalog descriptors from settings.gradle[.kts]. Returns [{name, tomlPath}]."""
+    results = []
+    # versionCatalogs { libs { from(files("gradle/libs.versions.toml")) } }
+    vc_re = re.compile(r'\bversionCatalogs\s*\{([\s\S]*?)\}(?=\s*\}|\s*$)', re.DOTALL)
+    for vc_m in vc_re.finditer(content):
+        block = vc_m.group(1)
+        # name { from(files("path")) }
+        entry_re = re.compile(r'(\w+)\s*\{[^}]*from\s*\(\s*files?\s*\(\s*"([^"]+)"\s*\)', re.DOTALL)
+        for m in entry_re.finditer(block):
+            results.append({"name": m.group(1), "tomlPath": m.group(2)})
+    return results
+
+
+def _parse_maven_deps(content: str) -> List[Dict]:
+    deps = []
+    for m in re.finditer(r"<dependency>([\s\S]*?)</dependency>", content):
+        block = m.group(1)
+        gid_m = re.search(r"<groupId>([^<]+)</groupId>", block)
+        aid_m = re.search(r"<artifactId>([^<]+)</artifactId>", block)
+        if not gid_m or not aid_m:
+            continue
+        group_id = gid_m.group(1).strip()
+        artifact_id = aid_m.group(1).strip()
+        ver_m = re.search(r"<version>([^<]+)</version>", block)
+        version = ver_m.group(1).strip() if ver_m else None
+        if version and version.startswith("${"):
+            version = None
+        scope_m = re.search(r"<scope>([^<]+)</scope>", block)
+        scope = scope_m.group(1).strip() if scope_m else "compile"
+        configuration = SCOPE_TO_CONFIG.get(scope, "implementation")
+        deps.append({"groupId": group_id, "artifactId": artifact_id, "version": version, "configuration": configuration})
+    return deps
+
+
+def _parse_maven_modules(content: str) -> List[str]:
+    modules = []
+    for m in re.finditer(r"<module>([^<]+)</module>", content):
+        modules.append(m.group(1).strip())
+    return modules
+
+
+def _detect_build_system(project_root: str) -> str:
+    for f in GRADLE_BUILD_FILES + GRADLE_SETTINGS_FILES:
+        if os.path.exists(os.path.join(project_root, f)):
+            return "gradle"
+    if os.path.exists(os.path.join(project_root, "gradle", "libs.versions.toml")):
+        return "gradle"
+    if os.path.exists(os.path.join(project_root, "pom.xml")):
+        return "maven"
+    return "unknown"
+
+
+def _scan_maven_recursive(module_path: str, label: Optional[str], acc: List[Dict], depth: int) -> None:
+    pom_path = os.path.join(module_path, "pom.xml")
+    if not os.path.exists(pom_path):
+        return
+    with open(pom_path, "r", encoding="utf-8", errors="replace") as f:
+        content = f.read()
+    for dep in _parse_maven_deps(content):
+        acc.append({
+            "groupId": dep["groupId"],
+            "artifactId": dep["artifactId"],
+            "version": dep["version"],
+            "source": {"kind": "module-direct", "file": "pom.xml", "module": label},
+            "usages": [{"module": label, "configuration": dep["configuration"]}],
+        })
+    if depth >= MAX_MODULE_DEPTH:
+        return
+    for sub in _parse_maven_modules(content):
+        child_path = os.path.join(module_path, sub)
+        child_label = sub if label is None else f"{label}/{sub}"
+        _scan_maven_recursive(child_path, child_label, acc, depth + 1)
+
+
+def _module_path_to_dir(project_root: str, module_path: str) -> str:
+    parts = module_path.lstrip(":").split(":")
+    parts = [p for p in parts if p]
+    return os.path.join(project_root, *parts)
+
+
+def scan_project(project_root: str) -> Dict:
+    """Returns {buildSystem, dependencies: [...ScannedDependency]}."""
+    build_system = _detect_build_system(project_root)
+    dependencies: List[Dict] = []
+
+    if build_system == "gradle":
+        # Step 1: Read settings file
+        settings_result = None
+        for f in GRADLE_SETTINGS_FILES:
+            p = os.path.join(project_root, f)
+            if os.path.exists(p):
+                with open(p, "r", encoding="utf-8", errors="replace") as fh:
+                    settings_result = {"content": fh.read(), "file": f}
+                break
+
+        # Step 2: Determine catalog descriptors
+        if settings_result:
+            descriptors = _parse_settings_catalogs(settings_result["content"])
+            if not descriptors:
+                # Default if not declared explicitly
+                default_toml = os.path.join(project_root, "gradle", "libs.versions.toml")
+                if os.path.exists(default_toml):
+                    descriptors = [{"name": "libs", "tomlPath": "gradle/libs.versions.toml"}]
+        else:
+            default_toml = os.path.join(project_root, "gradle", "libs.versions.toml")
+            descriptors = [{"name": "libs", "tomlPath": "gradle/libs.versions.toml"}] if os.path.exists(default_toml) else []
+
+        # Step 3: Load catalogs
+        catalogs: Dict[str, Dict] = {}  # name -> {tomlPath, parsed}
+        for desc in descriptors:
+            toml_path = os.path.join(project_root, desc["tomlPath"])
+            if not os.path.exists(toml_path):
+                continue
+            with open(toml_path, "r", encoding="utf-8", errors="replace") as f:
+                content = f.read()
+            catalogs[desc["name"]] = {"tomlPath": desc["tomlPath"], "parsed": _parse_toml_catalog(content)}
+
+        # Step 4: Emit catalog entries with empty usages
+        # catalog_entry_map: "catalogName.lib.alias" -> dep dict (shared reference)
+        catalog_entry_map: Dict[str, Dict] = {}
+        for catalog_name, catalog_data in catalogs.items():
+            toml_path = catalog_data["tomlPath"]
+            parsed = catalog_data["parsed"]
+            for alias, entry in parsed["libraries"].items():
+                dep = {
+                    "groupId": entry["groupId"],
+                    "artifactId": entry["artifactId"],
+                    "version": entry["version"],
+                    "source": {"kind": "catalog-library", "catalogName": catalog_name, "tomlPath": toml_path, "alias": alias},
+                    "usages": [],
+                }
+                dependencies.append(dep)
+                catalog_entry_map[f"{catalog_name}.lib.{alias}"] = dep
+                dashed = alias.replace(".", "-")
+                if dashed != alias:
+                    catalog_entry_map[f"{catalog_name}.lib.{dashed}"] = dep
+            for alias, entry in parsed["plugins"].items():
+                plugin_id = entry["id"]
+                dep = {
+                    "groupId": plugin_id,
+                    "artifactId": f"{plugin_id}.gradle.plugin",
+                    "version": entry["version"],
+                    "source": {"kind": "catalog-plugin", "catalogName": catalog_name, "tomlPath": toml_path, "alias": alias},
+                    "usages": [],
+                }
+                dependencies.append(dep)
+                catalog_entry_map[f"{catalog_name}.plugin.{alias}"] = dep
+                dashed = alias.replace(".", "-")
+                if dashed != alias:
+                    catalog_entry_map[f"{catalog_name}.plugin.{dashed}"] = dep
+
+        def _parse_catalog_ref(ref: str):
+            dot_idx = ref.find(".")
+            if dot_idx == -1:
+                return None
+            return ref[:dot_idx], ref[dot_idx + 1:]
+
+        def process_build_file_deps(content: str, file_name: str, module: Optional[str]) -> None:
+            for dep in _parse_gradle_deps(content, file_name):
+                if dep["catalogRef"]:
+                    parsed = _parse_catalog_ref(dep["catalogRef"])
+                    if not parsed:
+                        continue
+                    catalog_name, alias = parsed
+                    if catalog_name not in catalogs:
+                        continue
+                    dashed_alias = alias.replace(".", "-")
+                    entry = catalog_entry_map.get(f"{catalog_name}.lib.{alias}") or \
+                            catalog_entry_map.get(f"{catalog_name}.lib.{dashed_alias}")
+                    if entry:
+                        entry["usages"].append({"module": module, "configuration": dep["configuration"]})
+                elif dep["groupId"] and dep["artifactId"]:
+                    dependencies.append({
+                        "groupId": dep["groupId"],
+                        "artifactId": dep["artifactId"],
+                        "version": dep["version"],
+                        "source": {"kind": "module-direct", "file": file_name, "module": module},
+                        "usages": [{"module": module, "configuration": dep["configuration"]}],
+                    })
+
+        def process_plugins_block(content: str, file_name: str, module: Optional[str], is_settings: bool) -> None:
+            for decl in _parse_gradle_plugins_block(content, is_settings):
+                if decl["catalogRef"]:
+                    parsed = _parse_catalog_ref(decl["catalogRef"])
+                    if not parsed:
+                        continue
+                    catalog_name, alias_path = parsed
+                    if catalog_name not in catalogs:
+                        continue
+                    plugins_prefix = "plugins."
+                    if not alias_path.startswith(plugins_prefix):
+                        continue
+                    plugin_alias = alias_path[len(plugins_prefix):]
+                    dashed = plugin_alias.replace(".", "-")
+                    entry = catalog_entry_map.get(f"{catalog_name}.plugin.{plugin_alias}") or \
+                            catalog_entry_map.get(f"{catalog_name}.plugin.{dashed}")
+                    if entry:
+                        entry["usages"].append({"module": module, "configuration": "plugin-dsl"})
+                elif decl["pluginId"] and decl["pluginId"] != "(unresolved)":
+                    settings_block = True if decl.get("settingsBlock") else None
+                    source = {"kind": "plugins-dsl", "file": file_name, "module": module}
+                    if settings_block:
+                        source["settingsBlock"] = True
+                    dependencies.append({
+                        "groupId": decl["pluginId"],
+                        "artifactId": f"{decl['pluginId']}.gradle.plugin",
+                        "version": decl["version"],
+                        "source": source,
+                        "usages": [{"module": module, "configuration": "plugin-dsl"}],
+                    })
+
+        def process_buildscript_classpath(content: str, file_name: str) -> None:
+            for dep in _parse_buildscript_classpath(content):
+                dependencies.append({
+                    "groupId": dep["groupId"],
+                    "artifactId": dep["artifactId"],
+                    "version": dep["version"],
+                    "source": {"kind": "buildscript-classpath", "file": file_name},
+                    "usages": [{"module": None, "configuration": "classpath"}],
+                })
+
+        # Step 5: Scan module build files
+        modules = _parse_settings_modules(settings_result["content"]) if settings_result else []
+        for module_path in modules:
+            dir_path = _module_path_to_dir(project_root, module_path)
+            for build_file in GRADLE_BUILD_FILES:
+                path = os.path.join(dir_path, build_file)
+                if not os.path.exists(path):
+                    continue
+                with open(path, "r", encoding="utf-8", errors="replace") as f:
+                    content = f.read()
+                process_build_file_deps(content, build_file, module_path)
+                process_plugins_block(content, build_file, module_path, False)
+                break
+
+        # Step 6: Scan root build file
+        for build_file in GRADLE_BUILD_FILES:
+            path = os.path.join(project_root, build_file)
+            if not os.path.exists(path):
+                continue
+            with open(path, "r", encoding="utf-8", errors="replace") as f:
+                content = f.read()
+            process_build_file_deps(content, build_file, None)
+            process_plugins_block(content, build_file, None, False)
+            process_buildscript_classpath(content, build_file)
+            break
+
+        # Step 7: Scan settings for pluginManagement plugins {}
+        if settings_result:
+            process_plugins_block(settings_result["content"], settings_result["file"], None, True)
+
+    elif build_system == "maven":
+        _scan_maven_recursive(project_root, None, dependencies, 0)
+
+    return {"buildSystem": build_system, "dependencies": dependencies}
+
+
+def _source_file_path(source: Dict) -> str:
+    kind = source.get("kind", "")
+    if kind in ("catalog-library", "catalog-plugin"):
+        return source.get("tomlPath", "")
+    return source.get("file", "")
+
+
+def flatten_scan_result(scan: Dict) -> Dict:
+    deps = []
+    for dep in scan["dependencies"]:
+        source_file = _source_file_path(dep["source"])
+        source_kind = dep["source"]["kind"]
+        usages = dep.get("usages", [])
+        if not usages:
+            deps.append({
+                "groupId": dep["groupId"],
+                "artifactId": dep["artifactId"],
+                "version": dep["version"],
+                "configuration": "(unused)",
+                "module": None,
+                "source": source_file,
+                "sourceKind": source_kind,
+            })
+        else:
+            for usage in usages:
+                deps.append({
+                    "groupId": dep["groupId"],
+                    "artifactId": dep["artifactId"],
+                    "version": dep["version"],
+                    "configuration": usage.get("configuration", ""),
+                    "module": usage.get("module"),
+                    "source": source_file,
+                    "sourceKind": source_kind,
+                })
+    return {"buildSystem": scan["buildSystem"], "dependencies": deps}
+
+
+# ---------------------------------------------------------------------------
+# Tool handlers
+# ---------------------------------------------------------------------------
+
+def handle_get_latest_version(args: Dict) -> Any:
+    group_id = args["groupId"]
+    artifact_id = args["artifactId"]
+    filter_mode = args.get("stabilityFilter", "PREFER_STABLE")
+    metadata = fetch_metadata(group_id, artifact_id)
+    selected = find_latest_version(metadata["versions"], filter_mode)
+    if not selected:
+        raise ValueError(f"No stable version found for {group_id}:{artifact_id}")
+    return {
+        "groupId": group_id,
+        "artifactId": artifact_id,
+        "latestVersion": selected,
+        "stability": classify_version(selected),
+        "allVersionsCount": len(metadata["versions"]),
+    }
+
+
+def handle_check_version_exists(args: Dict) -> Any:
+    group_id = args["groupId"]
+    artifact_id = args["artifactId"]
+    version = args["version"]
+    repo_name = check_version_in_repos(group_id, artifact_id, version)
+    if repo_name:
+        return {
+            "groupId": group_id,
+            "artifactId": artifact_id,
+            "version": version,
+            "exists": True,
+            "stability": classify_version(version),
+            "repository": repo_name,
+        }
+    return {
+        "groupId": group_id,
+        "artifactId": artifact_id,
+        "version": version,
+        "exists": False,
+    }
+
+
+def handle_check_multiple_dependencies(args: Dict) -> Any:
+    results = []
+    for dep in args["dependencies"]:
+        try:
+            metadata = fetch_metadata(dep["groupId"], dep["artifactId"])
+            latest = find_latest_version(metadata["versions"], "PREFER_STABLE")
+            if not latest:
+                raise ValueError("No version found")
+            results.append({
+                "groupId": dep["groupId"],
+                "artifactId": dep["artifactId"],
+                "latestVersion": latest,
+                "stability": classify_version(latest),
+            })
+        except Exception as e:
+            results.append({
+                "groupId": dep["groupId"],
+                "artifactId": dep["artifactId"],
+                "latestVersion": "",
+                "stability": "",
+                "error": str(e),
+            })
+    return {"results": results}
+
+
+def handle_compare_dependency_versions(args: Dict) -> Any:
+    results = []
+    for dep in args["dependencies"]:
+        try:
+            metadata = fetch_metadata(dep["groupId"], dep["artifactId"])
+            latest = find_latest_version_for_current(metadata["versions"], dep["currentVersion"])
+            if not latest:
+                raise ValueError("No matching version found")
+            upgrade_type = get_upgrade_type(dep["currentVersion"], latest)
+            results.append({
+                "groupId": dep["groupId"],
+                "artifactId": dep["artifactId"],
+                "currentVersion": dep["currentVersion"],
+                "latestVersion": latest,
+                "latestStability": classify_version(latest),
+                "upgradeType": upgrade_type,
+                "upgradeAvailable": upgrade_type != "none",
+            })
+        except Exception as e:
+            results.append({
+                "groupId": dep["groupId"],
+                "artifactId": dep["artifactId"],
+                "currentVersion": dep.get("currentVersion", ""),
+                "latestVersion": "",
+                "latestStability": "",
+                "upgradeType": "none",
+                "upgradeAvailable": False,
+                "error": str(e),
+            })
+    summary = {
+        "total": len(results),
+        "upgradeable": sum(1 for r in results if r.get("upgradeAvailable")),
+        "major": sum(1 for r in results if r.get("upgradeType") == "major"),
+        "minor": sum(1 for r in results if r.get("upgradeType") == "minor"),
+        "patch": sum(1 for r in results if r.get("upgradeType") == "patch"),
+    }
+    return {"results": results, "summary": summary}
+
+
+def handle_get_dependency_changes(args: Dict) -> Any:
+    return _get_dependency_changes_impl(
+        args["groupId"],
+        args["artifactId"],
+        args["fromVersion"],
+        args["toVersion"],
+    )
+
+
+def handle_scan_project_dependencies(args: Dict) -> Any:
+    project_path = args.get("projectPath") or os.getcwd()
+    scan = scan_project(project_path)
+    return flatten_scan_result(scan)
+
+
+def handle_get_dependency_vulnerabilities(args: Dict) -> Any:
+    raw = query_osv_batch(args["dependencies"])
+    return {
+        "results": [
+            {**r, "vulnerabilityCount": len(r["vulnerabilities"])}
+            for r in raw
+        ]
+    }
+
+
+def handle_get_dependency_health(args: Dict) -> Any:
+    MS_PER_DAY = 86_400_000
+    results = []
+    for dep in args["dependencies"]:
+        group_id = dep["groupId"]
+        artifact_id = dep["artifactId"]
+        requested_version = dep.get("version")
+        result: Dict[str, Any] = {
+            "groupId": group_id,
+            "artifactId": artifact_id,
+            "versionCount": 0,
+            "repository": None,
+            "scm": None,
+            "github": None,
+            "signals": [],
+        }
+        try:
+            metadata = fetch_metadata(group_id, artifact_id)
+        except Exception as e:
+            result["healthError"] = str(e)
+            results.append(result)
+            continue
+
+        versions = metadata["versions"]
+        result["versionCount"] = len(versions)
+        result["lastPublishedToMaven"] = metadata.get("lastUpdated")
+        latest_version = find_latest_version(versions, "PREFER_STABLE") or (versions[-1] if versions else None)
+        result["latestVersion"] = latest_version
+        result["stability"] = classify_version(latest_version) if latest_version else None
+
+        target_version = requested_version or latest_version
+        if not find_latest_version(versions, "STABLE_ONLY"):
+            result["signals"].append("no stable release")
+
+        gh_repo = None
+        pom_licenses: List[str] = []
+        if target_version:
+            pom = fetch_pom(group_id, artifact_id, target_version)
+            if pom:
+                gh_repo = extract_github_repo_from_pom(pom)
+                pom_licenses = extract_licenses_from_pom(pom)
+                scm_url = extract_scm_url_from_pom(pom)
+                if scm_url:
+                    result["scm"] = {"url": scm_url, "host": scm_host(scm_url)}
+
+        cached_repo_meta = None
+        if not gh_repo:
+            guess = guess_github_repo(group_id, artifact_id)
+            if guess:
+                cached_repo_meta = gh_fetch_repo(guess["owner"], guess["repo"])
+                if cached_repo_meta:
+                    gh_repo = guess
+
+        if not gh_repo:
+            if not pom_licenses:
+                result["signals"].append("no license declared")
+            scm = result.get("scm")
+            if scm and scm["host"] != "github":
+                result["signals"].append(f"SCM hosted on {scm['host']}; GitHub metrics unavailable")
+            else:
+                result["signals"].append("no public GitHub repository found")
+                result["healthError"] = "GitHub repository not found; activity metrics unavailable"
+            results.append(result)
+            continue
+
+        owner = gh_repo["owner"]
+        repo = gh_repo["repo"]
+        result["repository"] = {"owner": owner, "repo": repo, "url": f"https://github.com/{owner}/{repo}"}
+        if not result.get("scm"):
+            result["scm"] = {"url": result["repository"]["url"], "host": "github"}
+
+        repo_meta = cached_repo_meta or gh_fetch_repo(owner, repo)
+        if not repo_meta:
+            if not pom_licenses:
+                result["signals"].append("no license declared")
+            result["healthError"] = "GitHub repository metadata unavailable (rate limit or network)"
+            results.append(result)
+            continue
+
+        releases = gh_fetch_releases(owner, repo)
+        issue_stats = gh_fetch_issue_stats(owner, repo)
+        release_summary = _summarize_releases(releases)
+
+        owner_login = (repo_meta.get("owner") or {}).get("login") or owner
+        owner_info = gh_fetch_user(owner_login)
+
+        spdx = (repo_meta.get("license") or {}).get("spdx_id")
+        license_val = spdx if (spdx and spdx != "NOASSERTION") else (pom_licenses[0] if pom_licenses else None)
+
+        result["github"] = {
+            "stars": repo_meta.get("stargazers_count", 0),
+            "forks": repo_meta.get("forks_count", 0),
+            "openIssues": repo_meta.get("open_issues_count", 0),
+            "archived": bool(repo_meta.get("archived")),
+            "ownerType": (repo_meta.get("owner") or {}).get("type", "unknown"),
+            "ownerPublicRepos": (owner_info or {}).get("public_repos"),
+            "ownerAccountCreatedAt": (owner_info or {}).get("created_at"),
+            "lastCommit": repo_meta.get("pushed_at"),
+            "lastRelease": release_summary["last"],
+            "releaseCount": release_summary["count"],
+            "releaseCadenceDays": release_summary["cadenceDays"],
+            "license": license_val,
+            "createdAt": repo_meta.get("created_at"),
+            "issues": issue_stats,
+        }
+
+        gh = result["github"]
+        if gh["archived"]:
+            result["signals"].append("repository archived")
+        commit_months = _months_since(gh["lastCommit"])
+        if commit_months is not None and commit_months >= 12:
+            result["signals"].append(f"no commits in {commit_months} months")
+        release_months = _months_since(gh["lastRelease"])
+        if release_months is not None and release_months >= 18:
+            result["signals"].append(f"no release in {release_months} months")
+        if not license_val:
+            result["signals"].append("no license declared")
+        if issue_stats:
+            cr = issue_stats.get("closeRatio")
+            open_count = issue_stats.get("open") or 0
+            if cr is not None and cr < 0.5 and open_count >= 50:
+                result["signals"].append("high open-issue backlog, low close ratio")
+            mtc = issue_stats.get("medianDaysToClose")
+            if mtc is not None and mtc >= 180:
+                result["signals"].append(f"slow issue response (median {mtc} days to close)")
+
+        results.append(result)
+    return {"results": results}
+
+
+def handle_search_artifacts(args: Dict) -> Any:
+    query = args["query"]
+    limit = args.get("limit", 10)
+    results = search_maven_central(query, limit)
+    return {"results": results}
+
+
+def handle_audit_project_dependencies(args: Dict) -> Any:
+    project_path = args.get("projectPath") or os.getcwd()
+    include_vulns = args.get("includeVulnerabilities", True)
+    if include_vulns is None:
+        include_vulns = True
+    production_only = args.get("productionOnly", True)
+    if production_only is None:
+        production_only = True
+
+    scan = scan_project(project_path)
+
+    def is_included_in_production(dep: Dict) -> bool:
+        source = dep["source"]
+        kind = source.get("kind", "")
+        usages = dep.get("usages", [])
+        if kind in ("catalog-library", "catalog-plugin"):
+            if not usages:
+                return True  # unused catalog entries always included
+            return any(not _is_test_configuration(u.get("configuration", "")) for u in usages)
+        if not usages:
+            return False
+        return not _is_test_configuration(usages[0].get("configuration", ""))
+
+    filtered = scan["dependencies"] if not production_only else [
+        d for d in scan["dependencies"] if is_included_in_production(d)
+    ]
+
+    deps_with_version = [d for d in filtered if d.get("version")]
+    deps_without_version = [d for d in filtered if not d.get("version")]
+
+    audit_deps: List[Dict] = []
+
+    # Memoize metadata fetches per GA
+    metadata_cache: Dict[str, Any] = {}
+
+    for dep in deps_with_version:
+        ga_key = f"{dep['groupId']}:{dep['artifactId']}"
+        try:
+            if ga_key not in metadata_cache:
+                metadata_cache[ga_key] = fetch_metadata(dep["groupId"], dep["artifactId"])
+            metadata = metadata_cache[ga_key]
+            latest = find_latest_version_for_current(metadata["versions"], dep["version"])
+            upgrade_type = get_upgrade_type(dep["version"], latest) if latest else "none"
+            audit_deps.append({
+                "groupId": dep["groupId"],
+                "artifactId": dep["artifactId"],
+                "currentVersion": dep["version"],
+                "latestVersion": latest,
+                "upgradeType": upgrade_type,
+                "source": dep["source"],
+                "usages": dep.get("usages", []),
+                "module": (dep.get("usages") or [{}])[0].get("module"),
+                "configuration": (dep.get("usages") or [{}])[0].get("configuration"),
+            })
+        except Exception:
+            audit_deps.append({
+                "groupId": dep["groupId"],
+                "artifactId": dep["artifactId"],
+                "currentVersion": dep["version"],
+                "source": dep["source"],
+                "usages": dep.get("usages", []),
+                "module": (dep.get("usages") or [{}])[0].get("module"),
+                "configuration": (dep.get("usages") or [{}])[0].get("configuration"),
+            })
+
+    for dep in deps_without_version:
+        audit_deps.append({
+            "groupId": dep["groupId"],
+            "artifactId": dep["artifactId"],
+            "source": dep["source"],
+            "usages": dep.get("usages", []),
+            "module": (dep.get("usages") or [{}])[0].get("module"),
+            "configuration": (dep.get("usages") or [{}])[0].get("configuration"),
+        })
+
+    # Vulnerability check — deduplicate per GAV
+    if include_vulns and deps_with_version:
+        gav_map: Dict[str, List[Dict]] = {}
+        for a in audit_deps:
+            if not a.get("currentVersion"):
+                continue
+            key = f"{a['groupId']}:{a['artifactId']}:{a['currentVersion']}"
+            gav_map.setdefault(key, []).append(a)
+
+        unique_gavs = []
+        unique_keys = []
+        for key, entries in gav_map.items():
+            first = entries[0]
+            unique_gavs.append({
+                "groupId": first["groupId"],
+                "artifactId": first["artifactId"],
+                "version": first["currentVersion"],
+            })
+            unique_keys.append(key)
+
+        vuln_results = query_osv_batch(unique_gavs)
+        for i, key in enumerate(unique_keys):
+            targets = gav_map.get(key, [])
+            mapped_vulns = [
+                {"id": v["id"], "severity": v.get("severity"), "fixedVersion": v.get("fixedVersion")}
+                for v in vuln_results[i].get("vulnerabilities", [])
+            ]
+            for target in targets:
+                target["vulnerabilities"] = mapped_vulns
+
+    summary = {
+        "total": len(audit_deps),
+        "upgradeable": sum(1 for d in audit_deps if d.get("upgradeType") and d["upgradeType"] != "none"),
+        "vulnerable": sum(1 for d in audit_deps if d.get("vulnerabilities")),
+        "major": sum(1 for d in audit_deps if d.get("upgradeType") == "major"),
+        "minor": sum(1 for d in audit_deps if d.get("upgradeType") == "minor"),
+        "patch": sum(1 for d in audit_deps if d.get("upgradeType") == "patch"),
+    }
+
+    return {"buildSystem": scan["buildSystem"], "dependencies": audit_deps, "summary": summary}
+
+
+# ---------------------------------------------------------------------------
+# Tool definitions (for tools/list and initialize)
+# ---------------------------------------------------------------------------
+
+TOOLS = [
+    {
+        "name": "get_latest_version",
+        "description": "Get the latest version of a Maven artifact from Maven Central, Google Maven, or Gradle Plugin Portal.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "groupId": {"type": "string", "description": "Maven group ID"},
+                "artifactId": {"type": "string", "description": "Maven artifact ID"},
+                "stabilityFilter": {
+                    "type": "string",
+                    "enum": ["PREFER_STABLE", "STABLE_ONLY", "ALL"],
+                    "description": "Version stability filter. Default: PREFER_STABLE",
+                },
+            },
+            "required": ["groupId", "artifactId"],
+        },
+    },
+    {
+        "name": "check_version_exists",
+        "description": "Check if a specific version of a Maven artifact exists in any known repository.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "groupId": {"type": "string"},
+                "artifactId": {"type": "string"},
+                "version": {"type": "string"},
+            },
+            "required": ["groupId", "artifactId", "version"],
+        },
+    },
+    {
+        "name": "check_multiple_dependencies",
+        "description": "Batch lookup of latest versions for multiple Maven dependencies.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "dependencies": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "groupId": {"type": "string"},
+                            "artifactId": {"type": "string"},
+                        },
+                        "required": ["groupId", "artifactId"],
+                    },
+                }
+            },
+            "required": ["dependencies"],
+        },
+    },
+    {
+        "name": "compare_dependency_versions",
+        "description": "Compare current dependency versions against the latest available and determine upgrade types (major/minor/patch).",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "dependencies": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "groupId": {"type": "string"},
+                            "artifactId": {"type": "string"},
+                            "currentVersion": {"type": "string"},
+                        },
+                        "required": ["groupId", "artifactId", "currentVersion"],
+                    },
+                }
+            },
+            "required": ["dependencies"],
+        },
+    },
+    {
+        "name": "get_dependency_changes",
+        "description": "Get changelog/release notes for a dependency between two versions by fetching GitHub releases.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "groupId": {"type": "string"},
+                "artifactId": {"type": "string"},
+                "fromVersion": {"type": "string", "description": "Starting version (exclusive)"},
+                "toVersion": {"type": "string", "description": "Target version (inclusive)"},
+            },
+            "required": ["groupId", "artifactId", "fromVersion", "toVersion"],
+        },
+    },
+    {
+        "name": "scan_project_dependencies",
+        "description": "Scan a local project directory to extract declared dependencies from build files (Gradle, Maven).",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "projectPath": {"type": "string", "description": "Path to the project root. Defaults to current working directory."},
+            },
+        },
+    },
+    {
+        "name": "get_dependency_vulnerabilities",
+        "description": "Check dependencies for known vulnerabilities using the OSV.dev database.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "dependencies": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "groupId": {"type": "string"},
+                            "artifactId": {"type": "string"},
+                            "version": {"type": "string"},
+                        },
+                        "required": ["groupId", "artifactId", "version"],
+                    },
+                }
+            },
+            "required": ["dependencies"],
+        },
+    },
+    {
+        "name": "get_dependency_health",
+        "description": "Get health signals for Maven dependencies: version info, GitHub activity, issue stats, license, and maintenance signals.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "dependencies": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "groupId": {"type": "string"},
+                            "artifactId": {"type": "string"},
+                            "version": {"type": "string"},
+                        },
+                        "required": ["groupId", "artifactId"],
+                    },
+                }
+            },
+            "required": ["dependencies"],
+        },
+    },
+    {
+        "name": "search_artifacts",
+        "description": "Search Maven Central for artifacts by keyword.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "query": {"type": "string", "description": "Search query"},
+                "limit": {"type": "integer", "description": "Maximum number of results (default 10)"},
+            },
+            "required": ["query"],
+        },
+    },
+    {
+        "name": "audit_project_dependencies",
+        "description": "Orchestrates a full dependency audit: scans project build files, checks for available updates, and optionally queries OSV.dev for vulnerabilities.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "projectPath": {"type": "string"},
+                "includeVulnerabilities": {"type": "boolean", "description": "Include OSV vulnerability check (default true)"},
+                "productionOnly": {"type": "boolean", "description": "Exclude test-scope dependencies (default true)"},
+            },
+        },
+    },
+]
+
+TOOL_HANDLERS = {
+    "get_latest_version": handle_get_latest_version,
+    "check_version_exists": handle_check_version_exists,
+    "check_multiple_dependencies": handle_check_multiple_dependencies,
+    "compare_dependency_versions": handle_compare_dependency_versions,
+    "get_dependency_changes": handle_get_dependency_changes,
+    "scan_project_dependencies": handle_scan_project_dependencies,
+    "get_dependency_vulnerabilities": handle_get_dependency_vulnerabilities,
+    "get_dependency_health": handle_get_dependency_health,
+    "search_artifacts": handle_search_artifacts,
+    "audit_project_dependencies": handle_audit_project_dependencies,
+}
+
+
+# ---------------------------------------------------------------------------
+# MCP JSON-RPC 2.0 dispatcher
+# ---------------------------------------------------------------------------
+
+def _write_response(response: Dict) -> None:
+    sys.stdout.write(json.dumps(response) + "\n")
+    sys.stdout.flush()
+
+
+def _handle_initialize(msg_id: Any, params: Dict) -> None:
+    _write_response({
+        "jsonrpc": "2.0",
+        "id": msg_id,
+        "result": {
+            "protocolVersion": "2024-11-05",
+            "capabilities": {"tools": {}},
+            "serverInfo": {"name": SERVER_NAME, "version": SERVER_VERSION},
+        },
+    })
+
+
+def _handle_tools_list(msg_id: Any, params: Dict) -> None:
+    _write_response({
+        "jsonrpc": "2.0",
+        "id": msg_id,
+        "result": {"tools": TOOLS},
+    })
+
+
+def _handle_tools_call(msg_id: Any, params: Dict) -> None:
+    tool_name = params.get("name", "")
+    arguments = params.get("arguments", {})
+    handler = TOOL_HANDLERS.get(tool_name)
+    if not handler:
+        _write_response({
+            "jsonrpc": "2.0",
+            "id": msg_id,
+            "error": {"code": -32601, "message": f"Unknown tool: {tool_name}"},
+        })
+        return
+    try:
+        result = handler(arguments)
+        _write_response({
+            "jsonrpc": "2.0",
+            "id": msg_id,
+            "result": {
+                "content": [{"type": "text", "text": json.dumps(result)}],
+            },
+        })
+    except Exception as e:
+        _write_response({
+            "jsonrpc": "2.0",
+            "id": msg_id,
+            "error": {"code": -32603, "message": str(e)},
+        })
+
+
+def _handle_ping(msg_id: Any, params: Dict) -> None:
+    _write_response({"jsonrpc": "2.0", "id": msg_id, "result": {}})
+
+
+def dispatch(msg: Dict) -> None:
+    method = msg.get("method", "")
+    msg_id = msg.get("id")  # None for notifications
+    params = msg.get("params") or {}
+
+    # Notifications — no response
+    if msg_id is None:
+        return
+
+    if method == "initialize":
+        _handle_initialize(msg_id, params)
+    elif method == "tools/list":
+        _handle_tools_list(msg_id, params)
+    elif method == "tools/call":
+        _handle_tools_call(msg_id, params)
+    elif method == "ping":
+        _handle_ping(msg_id, params)
+    else:
+        _write_response({
+            "jsonrpc": "2.0",
+            "id": msg_id,
+            "error": {"code": -32601, "message": f"Method not found: {method}"},
+        })
+
+
+def main() -> None:
+    for line in sys.stdin:
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            msg = json.loads(line)
+        except json.JSONDecodeError as e:
+            _write_response({
+                "jsonrpc": "2.0",
+                "id": None,
+                "error": {"code": -32700, "message": f"Parse error: {e}"},
+            })
+            continue
+        try:
+            dispatch(msg)
+        except Exception as e:
+            msg_id = msg.get("id")
+            if msg_id is not None:
+                _write_response({
+                    "jsonrpc": "2.0",
+                    "id": msg_id,
+                    "error": {"code": -32603, "message": f"Internal error: {e}"},
+                })
+
+
+if __name__ == "__main__":
+    main()
