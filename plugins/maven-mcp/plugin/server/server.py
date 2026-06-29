@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Maven MCP server — MCP stdio (JSON-RPC 2.0) over stdin/stdout.
-No external dependencies; Python 3.6+ standard library only.
+No external dependencies; Python 3.9+ standard library only.
 """
 
 import json

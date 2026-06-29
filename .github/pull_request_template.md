@@ -12,8 +12,6 @@
 
 ## Checklist
 
-- [ ] Build passes (`npm run build`)
-- [ ] Tests pass (`npm test`)
-- [ ] Lint passes (`npm run lint`)
-- [ ] Version bumped if releasing (both `package.json` and `plugin.json`)
-- [ ] `marketplace.json` updated if plugin version changed
+- [ ] Tests pass (`python3 -m unittest discover -s plugins/maven-mcp/tests`)
+- [ ] `bash scripts/validate.sh` is green
+- [ ] Version bumped if releasing — all 3 locations in sync (`plugin.json`, `marketplace.json`, `server.py` `SERVER_VERSION`/`USER_AGENT`)

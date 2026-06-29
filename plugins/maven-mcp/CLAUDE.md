@@ -10,104 +10,54 @@ Rules that are not open for discussion. Violating these is an error, not a judgm
 
 ## Project
 
-MCP server for Maven dependency intelligence. Provides tools to query artifact versions from Maven repositories (Maven Central, Google Maven, custom repos).
+MCP server for Maven dependency intelligence. Provides tools to query artifact versions from Maven repositories (Maven Central, Google Maven, Gradle Plugin Portal).
 
-**Plugin runtime:** `plugin/server/server.py` — a bundled Python 3 server (stdlib only, zero pip dependencies). Registered via `plugin/.claude-plugin/plugin.json` as `command: python3`. Works in Claude cloud and local environments without Node.js or npm.
+**Implementation:** `plugin/server/server.py` — a single-file Python 3 server (stdlib only, zero pip dependencies). It speaks MCP over stdio (JSON-RPC 2.0 on stdin/stdout) and is registered via `plugin/.claude-plugin/plugin.json` as `command: python3`. Works in Claude cloud and local environments without Node.js or npm.
 
-**TypeScript source** (`src/`): reference implementation and test suite. Used for development (lint, test, build) but not distributed or required at runtime.
-
-**Stack (TypeScript dev):** TypeScript, Node.js, `@modelcontextprotocol/sdk`, `zod/v4`, `vitest`
+**Stack:** Python 3.9+ standard library only (`urllib`, `json`, `re`, `typing`). No build step, no install step.
 
 ## Commands
 
-All commands run from `plugins/maven-mcp/` directory.
+All commands run from the repository root.
 
 ```bash
-npm run build          # TypeScript compilation (tsc)
-npm run test           # Run all tests (vitest run)
-npx vitest run src/tools/__tests__/get-latest-version.test.ts  # Single test file
-npm run lint           # ESLint
-npm run dev            # Watch mode (tsc --watch)
+python3 -m unittest discover -s plugins/maven-mcp/tests       # Run all tests
+python3 -m unittest discover -s plugins/maven-mcp/tests -v    # Verbose
+python3 -m compileall plugins/maven-mcp/plugin/server         # Zero-dep syntax gate
+```
+
+Run a single test module:
+
+```bash
+python3 -m unittest discover -s plugins/maven-mcp/tests -p test_handlers.py
 ```
 
 ## Architecture
 
-```
-src/
-  index.ts              # Entry point: MCP server setup, tool registration, repository wiring
-  maven/
-    repository.ts       # MavenRepository interface + HttpMavenRepository (works with any Maven repo)
-    resolver.ts         # resolveFirst (sequential) / resolveAll (parallel + merge) strategies
-    types.ts            # MavenMetadata
-  discovery/
-    discover.ts         # Orchestrator: scans project build files, returns RepositoryConfig[]
-    gradle-parser.ts    # Regex-based parser for build.gradle[.kts] / settings.gradle[.kts]
-    maven-parser.ts     # Regex-based parser for pom.xml <repositories>
-    types.ts            # RepositoryConfig, DiscoveryResult
-  project/
-    find-project-root.ts  # Walks up from cwd to find build file markers
-  dependencies/
-    scan.ts             # Orchestrator: detects build system, delegates to parsers, returns ScanResult { buildSystem, dependencies }
-    gradle-deps-parser.ts # Parses build.gradle[.kts] for dependency declarations
-    maven-deps-parser.ts  # Parses pom.xml for dependency declarations
-    toml-parser.ts      # Parses gradle/libs.versions.toml version catalogs
-  search/
-    maven-search.ts     # Maven Central Solr Search API client (keyword search)
-  vulnerabilities/
-    osv-client.ts       # OSV.dev batch API client for CVE/vulnerability checking
-  tools/                # MCP tool handlers (one file per tool)
-  github/
-    pom-scm.ts          # POM SCM parser → GitHub owner/repo extraction
-    guess-repo.ts        # Fallback: guess GitHub repo from groupId
-    github-client.ts     # GitHub REST API client (releases, changelog, repo check)
-    changelog-parser.ts  # Parse CHANGELOG.md sections by version
-    tag-matcher.ts       # Match GitHub release tags to Maven versions
-    discover-repo.ts     # Orchestrator: POM → guess → validate
-  agp/
-    url.ts               # AGP version → developer.android.com URL mapping
-    release-notes-parser.ts  # Parse AGP release notes HTML (data-text headings)
-  firebase/
-    url.ts               # Firebase artifactId → slug mapping, release notes URL
-    release-notes-parser.ts  # Parse Firebase release notes HTML (slug-filtered headings)
-  html/
-    to-text.ts           # Shared htmlToText utility (strip tags, unescape entities)
-  cache/
-    file-cache.ts        # Persistent JSON file cache (~/.cache/maven-central-mcp/)
-  version/
-    classify.ts         # classifyVersion() + findLatestVersion() + findLatestVersionForCurrent() — stability detection
-    compare.ts          # getUpgradeType() — major/minor/patch comparison
-    range.ts            # filterVersionRange() — extract versions between two bounds
-    types.ts            # StabilityType, StabilityFilter, UpgradeType
-```
+`server.py` is one file organised into logical sections (no package tree):
 
-**Key data flow:** Tool call -> `getRepositories()` (lazy, cached) -> `findProjectRoot()` -> `discoverRepositories()` -> parser extracts repos from build files -> `HttpMavenRepository[]` built with Maven Central as fallback -> resolver strategy (`resolveAll`/`resolveFirst`) fetches `maven-metadata.xml` from repos -> tool handler processes versions.
+- **Constants & routing** — `MAVEN_CENTRAL_URL`, `GOOGLE_MAVEN_URL`, `GRADLE_PLUGIN_PORTAL_URL`, `GOOGLE_MAVEN_GROUPS`. `_repos_for(group_id, artifact_id)` returns the candidate repos for an artifact by **static group-prefix routing** (most-specific first): Gradle Plugin Portal for plugin markers, Google Maven for the AndroidX/Google group prefixes, Maven Central always as fallback.
+- **HTTP** — `http_get` / `http_post_json` over `urllib.request.urlopen`; both return `(status, bytes)` and map `urllib.error.HTTPError → (code, b"")`. Single attempt — no retry/backoff.
+- **Versioning** — `classify_version` (stability detection), `compare_versions`, `find_latest_version` / `find_latest_version_for_current` (selection), plus `_parse_segments` / `_extract_prerelease_numbers`.
+- **Metadata & POM** — `fetch_metadata`, `check_version_in_repos`, `fetch_pom`, `_parse_metadata_xml` (regex).
+- **Project scanning** (local, no network) — `_detect_build_system` + parsers: `_parse_gradle_deps`, `_parse_gradle_plugins_block`, `_parse_buildscript_classpath`, `_parse_settings_modules`, `_parse_settings_catalogs`, `_parse_maven_deps`, `_parse_maven_modules`, `_parse_toml_catalog`; orchestrated by `scan_project`.
+- **GitHub & changelog** — `gh_repo_exists` / `gh_fetch_repo` / `gh_fetch_releases` / `gh_fetch_user` / `gh_fetch_issue_stats`, `discover_github_repo` (POM SCM → groupId guess), and `_get_dependency_changes_impl` + `_filter_version_range` (GitHub releases only).
+- **Vulnerabilities** — OSV.dev batch query (`api.osv.dev/v1/querybatch`).
+- **Tool handlers** — `handle_*`, one per MCP tool, plus the stdio JSON-RPC dispatch loop.
 
-**Repository resolution strategies per tool:**
-- `get_latest_version`, `check_multiple_dependencies`, `compare_dependency_versions` -> `resolveAll` (parallel, merged versions)
-- `check_version_exists` -> sequential iteration, checks each repo for the specific version
-- `get_dependency_changes` -> `resolveAll` (versions) + POM fetch → GitHub API → releases/changelog
-- `scan_project_dependencies` -> local only (no network), delegates to `dependencies/scan.ts`
-- `search_artifacts` -> Maven Central Solr Search API (no repo resolution)
-- `get_dependency_vulnerabilities` -> OSV batch API (`api.osv.dev/v1/querybatch`)
-- `get_dependency_health` -> `resolveAll` (versions/stability/lastUpdated) + POM fetch (SCM URL, license) → GitHub repo discovery → GitHub REST (`fetchRepo`) + releases (cadence) + Search API (`fetchIssueStats`: open/closed counts, close ratio, median time-to-close) + owner lookup (`fetchUser`: publisher public-repo count and account age). Returns raw signals only — verdict is the caller's job. Degrades to `github: null` + `healthError` when no public GitHub repo / rate-limited; the owner lookup is non-fatal and yields `null` publisher fields on failure
-- `audit_project_dependencies` -> `scanDependencies` + `resolveAll` (memoized per GA) + `queryOsvBatch` (deduplicated per GAV)
+**Tools:** `get_latest_version`, `check_version_exists`, `check_multiple_dependencies`, `compare_dependency_versions`, `get_dependency_changes`, `scan_project_dependencies`, `get_dependency_vulnerabilities`, `get_dependency_health`, `search_artifacts`, `audit_project_dependencies`.
 
-**Deduplication responsibility:** Parsers return raw results; `discoverRepositories()` in `discover.ts` handles URL deduplication.
-
-**Well-known repo constants** are defined once in `repository.ts` (`MAVEN_CENTRAL`, `GOOGLE_MAVEN`, `GRADLE_PLUGIN_PORTAL`) and referenced from `gradle-parser.ts`.
+**Repository resolution:** `fetch_metadata` returns the metadata of the **first** repo in `_repos_for` that responds successfully — first-hit, no cross-repo merge. Routing is static group-prefix only; the server does **not** parse build files for custom/private repositories (`maven { url = ... }`), so version answers for projects relying on custom repos can be incomplete.
 
 ## Environment
 
-- `GITHUB_TOKEN` — optional, enables higher GitHub API rate limits (5000 req/h vs 60) for `get_dependency_changes` and `get_dependency_health` tools (the health tool also uses the rate-limited Search API for issue stats)
-- Persistent cache: `~/.cache/maven-central-mcp/` — SCM mappings (permanent), releases/changelog (24h TTL)
+- `GITHUB_TOKEN` — optional, enables higher GitHub API rate limits (5000 req/h vs 60) for `get_dependency_changes` and `get_dependency_health` (the health tool also uses the rate-limited Search API for issue stats).
+- No persistent cache. Memoization is in-memory per call only (e.g. the `metadata_cache` dict inside `audit_project_dependencies` dedupes lookups within a single audit run); nothing is written to disk.
 
 ## Conventions
 
-- ESM (`"type": "module"` in package.json), all imports use `.js` extension
-- Tests colocated in `__tests__/` directories next to source
-- No XML parser dependency — all XML parsing is regex-based
-- Tool handlers that resolve versions accept `MavenRepository[]` as first argument; tools that don't need repo resolution (`scan_project_dependencies`, `search_artifacts`, `get_dependency_vulnerabilities`) accept only input
-- `findLatestVersion()` and `findLatestVersionForCurrent()` in `version/classify.ts` are the version selection functions; `findLatestVersion` is used by `get_latest_version` and `check_multiple_dependencies`, while `findLatestVersionForCurrent` is used by `compare_dependency_versions` and `audit_project_dependencies`
-- `get_dependency_changes` fetches POM from Maven repos to discover GitHub SCM URL; falls back to guessing from `groupId` pattern (`io.github.*`/`com.github.*`)
-- `audit_project_dependencies` is an orchestrator: scan → version compare → vulnerability check; memoizes `resolveAll` per GA and deduplicates OSV queries per GAV
-- GitHub API: unauthenticated = 60 req/h; set `GITHUB_TOKEN` env for 5000 req/h
+- No XML parser dependency — all XML parsing is regex-based.
+- Network seam is `urllib.request.urlopen`; tests mock it with `unittest.mock.patch("urllib.request.urlopen", ...)`.
+- Tests live dev-only at `plugins/maven-mcp/tests/` (outside `plugin/`, so they are not shipped). They import `server` via a `__file__`-resolved `sys.path` shim in `tests/_helpers.py`; filesystem-touching parsers are exercised against real files written into a `TemporaryDirectory`.
+- Version constants (`SERVER_VERSION`, `USER_AGENT`) in `server.py` are part of the 3 version locations that must stay in sync on a release; `scripts/validate.sh --check-tag` enforces this.
+- `import server` is side-effect-free (the `if __name__ == "__main__": main()` guard at the tail).

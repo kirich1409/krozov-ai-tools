@@ -7,7 +7,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 Rules that are not open for discussion. Violating these is an error, not a judgment call.
 
 - **Never run `npm publish` locally.** Publishing is exclusively via GitHub Actions — prevents partial releases and version skew.
-- **All 3 version locations must stay in sync.** A version bump touches `plugin.json`, `marketplace.json`, and the bundled server `server.py` (`SERVER_VERSION` + `USER_AGENT`) simultaneously — see Publishing for the list. (`package.json` is dev-only and intentionally excluded — see the Publishing note.)
+- **All 3 version locations must stay in sync.** A version bump touches `plugin.json`, `marketplace.json`, and the bundled server `server.py` (`SERVER_VERSION` + `USER_AGENT`) simultaneously — see Publishing for the list.
 - **Critical or Major violations of PLUGIN-STANDARDS.md block the release.** Fix first, release later.
 - **All extension content is written in English.** Skills (`SKILL.md`, references, evals), agents (`agents/*.md`), hooks, MCP servers, plugin manifests (`plugin.json`, `marketplace.json`), and any prompt/instruction text shipped inside `plugins/` must be in English. User-facing chat in any language is fine; the shipped extension content itself targets an international audience and must not contain non-English prose. Code identifiers and external API field names keep their original form regardless of language. **Excluded:** repository documentation under `docs/` and top-level `README.md` — these are maintainer-facing and may be in any language. Do not "fix" them to English.
 
@@ -23,7 +23,7 @@ Monorepo for Claude Code plugins by krozov. Contains one plugin:
 
 ```
 plugins/
-  maven-mcp/                    # TypeScript, npm package @krozov/maven-central-mcp
+  maven-mcp/                    # Python MCP server (stdlib only, zero pip deps)
 ```
 
 See the plugin's own `CLAUDE.md` for plugin-specific instructions.
@@ -53,9 +53,7 @@ To release a new version:
    - `plugins/maven-mcp/plugin/server/server.py` (`SERVER_VERSION` and `USER_AGENT`)
 2. Merge to `main`.
 3. Push a git tag matching the version: `git tag v0.9.0 && git push origin v0.9.0`.
-4. GitHub Actions (`.github/workflows/release.yml`) triggers on `v*` tags: verifies all versions match, runs lint/tests/build, **then creates one per-plugin tag `{plugin-name}--v{version}` for each plugin in `marketplace.json`**. These per-plugin tags are what Claude Code uses to resolve `dependencies` semver ranges.
-
-Note: `plugins/maven-mcp/package.json` is the TypeScript source package used for development (tests, lint, build) but is **not published to npm** and its version does not need to match the release tag.
+4. GitHub Actions (`.github/workflows/release.yml`) triggers on `v*` tags: verifies all versions match the tag (`validate.sh --check-tag`), runs the Python test suite, **then creates one per-plugin tag `{plugin-name}--v{version}` for each plugin in `marketplace.json`**. These per-plugin tags are what Claude Code uses to resolve `dependencies` semver ranges.
 
 ## Worktrees
 

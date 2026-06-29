@@ -13,13 +13,12 @@ on:
 #
 # Advanced setup runs for every PR regardless of changed paths, which is the
 # reason for switching. Default setup auto-skips PRs that touch no tracked
-# language files (JSON/YAML/MD-only changes), but the repo ruleset requires a
-# CodeQL analysis on every PR — resulting in permanently-blocked merges for
-# release-bump PRs. Advanced setup always uploads an analysis, so the
-# code_scanning ruleset is always satisfied.
+# language files (JSON/YAML/MD-only changes), so coverage was inconsistent;
+# advanced setup always uploads an analysis. CodeQL is NOT a required status
+# check in the branch ruleset, so a skipped or empty run never blocks a merge.
 #
-# Languages mirror what default setup had detected: actions, javascript-
-# typescript (covers both JS and TS), python.
+# Languages: actions, python. (The retired TypeScript reference is gone, so
+# javascript-typescript no longer has any code to scan.)
 jobs:
   analyze:
     name: Analyze (${{ matrix.language }})
@@ -35,8 +34,6 @@ jobs:
       matrix:
         include:
           - language: actions
-            build-mode: none
-          - language: javascript-typescript
             build-mode: none
           - language: python
             build-mode: none
