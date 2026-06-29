@@ -107,7 +107,12 @@ def http_error(
         with mock.patch("urllib.request.urlopen", side_effect=mock_urlopen([err])):
             status, body = server.http_get(url)  # -> (404, b"")
     """
-    return urllib.error.HTTPError(url, code, msg, hdrs or {}, io.BytesIO(body))
+    err = urllib.error.HTTPError(url, code, msg, hdrs or {}, io.BytesIO(body))
+    # server.py maps HTTPError -> (e.code, b"") without ever reading the body, so
+    # the wrapped BytesIO is never consumed. Close it now to avoid a
+    # ResourceWarning when the unread stream is later garbage-collected.
+    err.close()
+    return err
 
 
 @contextlib.contextmanager
