@@ -11,7 +11,8 @@ description: >-
 
 # Dependency Health
 
-Assess the maintenance health of one or more Maven dependencies before adopting them.
+Assess the maintenance health of one or more Maven dependencies by querying Maven Central
+and GitHub directly via HTTP.
 
 ## Arguments
 
@@ -21,51 +22,128 @@ The user provides one or more `groupId:artifactId` coordinates, optionally with 
 
 ## Steps
 
-1. Parse each coordinate into `groupId`, `artifactId`, and optional `version`.
+For each dependency, execute steps 1–5 in parallel where possible.
 
-2. Call the `get_dependency_health` MCP tool (from maven-mcp server) with:
-   ```json
-   {
-     "dependencies": [
-       { "groupId": "...", "artifactId": "...", "version": "..." }
-     ]
-   }
-   ```
-   `version` is optional — omit it to assess the latest available version.
+### 1. Fetch Maven metadata
 
-3. For each result in `results[]`, present the signals in this order:
+Build the group path: replace `.` with `/` in the groupId.
 
-   **Identity & version**
-   - `groupId:artifactId` — `latestVersion` (`stability`)
-   - `versionCount` versions published; last Maven publish: `lastPublishedToMaven`
+Fetch from Maven Central:
+```
+https://repo1.maven.org/maven2/{group_path}/{artifactId}/maven-metadata.xml
+```
 
-   **Repository**
-   - GitHub URL from `repository.url`, or `scm.url` for non-GitHub forges.
-   - If `github` is null and `healthError` is set, note the error briefly and skip the GitHub section.
+For Android/Google artifacts (`androidx.*`, `com.google.android.*`, `com.android.*`,
+`com.google.firebase.*`), also try:
+```
+https://dl.google.com/dl/android/maven2/{group_path}/{artifactId}/maven-metadata.xml
+```
 
-   **Activity** (from `github`)
-   - Stars / forks / archived status
-   - Last commit: `lastCommit` — compute "N months ago" relative to today
-   - Last release: `lastRelease`; release cadence: `releaseCadenceDays` days
-   - License: `license`
+Extract:
+- All `<version>` entries → total version count
+- `<latest>` and `<release>` tags → determine current stable and latest versions
+- `<lastUpdated>` → last publish date (format: `YYYYMMDDHHMMSS`)
 
-   **Issues** (from `github.issues` — may be null if rate-limited)
-   - Open / closed, close ratio, median days to close
-   - If `issues` is null, note that issue stats were unavailable (rate limit or network).
+Classify the latest version for stability (STABLE / RC / BETA / ALPHA) using the same
+rules as the `/latest-version` skill.
 
-   **Signals**
-   - List every entry in `signals[]` as bullet points. These are the pre-computed red flags
-     (archived repo, no stable release, slow issue response, etc.).
+### 2. Fetch POM to find GitHub repo and license
 
-4. Do NOT interpret signals or issue an adopt/reject verdict in this skill. The raw signals
-   are the output. If the user wants an adopt/reject recommendation, suggest calling the
-   `dependency-evaluator` agent with the signals as input.
+Fetch the POM for the latest version:
+```
+https://repo1.maven.org/maven2/{group_path}/{artifactId}/{version}/{artifactId}-{version}.pom
+```
 
-## Error handling
+Extract:
+- `<scm><url>` or `<scm><connection>` → GitHub owner/repo
+- `<licenses><license><name>` → license name
 
-- `healthError` set with `github: null` — no public GitHub repo or rate-limited;
-  present the Maven data that was retrieved and note what is missing.
-- Tool unavailable — stop and tell the user:
+If no SCM URL in POM, guess from groupId:
+- `io.github.{owner}.*` → `github.com/{owner}/{artifactId}`
+- `com.github.{owner}.*` → `github.com/{owner}/{artifactId}`
 
-  > The `get_dependency_health` tool is not available in the current session.
-  > Check that the maven-mcp MCP server is running and registered, then retry.
+### 3. Fetch GitHub repository info
+
+If a GitHub repo was identified:
+
+```
+GET https://api.github.com/repos/{owner}/{repo}
+```
+
+If `GITHUB_TOKEN` is set in the environment, add header `Authorization: Bearer {token}`.
+
+Extract: `stargazers_count`, `forks_count`, `archived`, `pushed_at` (last commit date),
+`license.name` (use this if POM license was missing), `open_issues_count`.
+
+### 4. Fetch recent releases
+
+```
+GET https://api.github.com/repos/{owner}/{repo}/releases?per_page=20
+```
+
+From the releases list:
+- `published_at` of the most recent release → last release date
+- Compute release cadence: median days between the last 5 releases
+
+### 5. Assess issue health (optional — skip if rate-limited)
+
+GitHub's REST API does not expose closed issue counts directly. Use the Search API:
+
+```
+GET https://api.github.com/search/issues?q=repo:{owner}/{repo}+type:issue+state:closed&per_page=1
+```
+
+This returns `total_count` for closed issues. Combine with `open_issues_count` from step 3
+to compute a close ratio. **Note:** This endpoint is heavily rate-limited (30 req/min with
+token, 10 without). If it returns 403/429, skip this step and note issue stats as unavailable.
+
+### 6. Present results
+
+For each dependency, show signals in this order:
+
+**Identity & version**
+```
+## groupId:artifactId
+
+Latest stable: {version} ({stability})
+Versions published: {count}
+Last Maven publish: {date}
+```
+
+**Repository** (if found)
+```
+GitHub: https://github.com/{owner}/{repo}
+License: {license}
+Stars: {stars} | Forks: {forks} | Archived: yes/no
+Last commit: {date} ({N months ago})
+Last release: {date}
+Release cadence: ~{N} days between releases
+```
+
+**Issues** (if available)
+```
+Open issues: {N} | Closed: {M} | Close ratio: {X}%
+```
+
+**Signals** — list any red flags as bullet points:
+- Archived repository — no further development
+- No stable release available
+- Last commit more than 12 months ago
+- Last release more than 18 months ago
+- Release cadence slower than 365 days
+- Close ratio below 50% (more issues open than ever closed)
+- Only 1 version published (may indicate abandoned project)
+
+**No GitHub repo found:**
+- State what Maven data was retrieved
+- Note that GitHub signals are unavailable
+- Provide Maven Central URL: `https://search.maven.org/artifact/{groupId}/{artifactId}`
+
+## Important constraints
+
+- Do NOT issue an adopt/reject verdict — present raw signals only.
+- If the user wants a recommendation, suggest they weigh the signals themselves or use an
+  agent with evaluation criteria.
+- Degrade gracefully: if GitHub is unavailable or rate-limited, present Maven-only data
+  and note what is missing.
+- `GITHUB_TOKEN` in the environment raises the rate limit from 60 to 5000 req/h.

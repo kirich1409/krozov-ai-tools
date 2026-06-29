@@ -13,39 +13,182 @@ Scan the current project — version catalogs, all submodules, plugin DSL blocks
 buildscript classpath — and report which dependencies have newer versions available, then
 apply the updates the user confirms.
 
-## Preflight
+## Step 1 — Discover build files
 
-Before doing anything else, confirm the `audit_project_dependencies` MCP tool is available.
-If it is not, stop and tell the user:
+Use Glob to find all build files:
 
-> The maven-mcp plugin is required for this skill. Install it with
-> `claude plugin add maven-mcp`, then retry.
+```
+**/libs.versions.toml
+**/build.gradle.kts
+**/build.gradle
+**/pom.xml
+**/settings.gradle.kts
+**/settings.gradle
+```
 
-Do not attempt to fall back to manual file parsing — this skill requires the MCP server.
+Exclude files under `.gradle/`, `build/`, `.idea/`, `node_modules/`, and any path
+containing `/build/`.
 
-## One-shot scan
+Read each found file with the Read tool.
 
-Call the tool once with both flags set:
+## Step 2 — Extract declared dependencies
 
-```json
+Parse each file to collect a list of dependency records. Each record has:
+- `groupId`, `artifactId`, `version` (resolved, not a variable reference)
+- `source.kind` — one of: `catalog-library`, `catalog-plugin`, `module-direct`,
+  `plugins-dsl`, `buildscript-classpath`
+- `source.file` — path to the file containing the declaration
+- `source.tomlPath` — for catalog entries, path to the .toml file
+- `source.alias` — for catalog entries, the alias key
+- `source.settingsBlock` — `true` for `pluginManagement { plugins {} }` entries
+- `usages` — list of `{ module, configuration }` for where the dependency is used
+
+### Version catalogs (`libs.versions.toml`) — `catalog-library` and `catalog-plugin`
+
+In the `[versions]` section, collect `key = "value"` pairs as a version map.
+
+In the `[libraries]` section:
+```toml
+alias = "group:artifact:version"
+alias = { group = "...", name = "...", version = "..." }
+alias = { group = "...", name = "...", version.ref = "key" }
+```
+Resolve `version.ref` using the version map.
+
+In the `[plugins]` section:
+```toml
+alias = { id = "...", version = "..." }
+alias = { id = "...", version.ref = "key" }
+```
+Convert plugin ID to Maven coordinates: `groupId = id`, `artifactId = "{id}.gradle.plugin"`.
+Set `source.kind = "catalog-plugin"`.
+
+To find which Gradle modules use a catalog alias, scan `build.gradle[.kts]` files for
+`libs.{alias-with-dots}` references. Record the module name (derived from the file path
+relative to the project root).
+
+### Gradle build files — `module-direct`
+
+Match dependency declarations with inline string versions:
+```
+implementation("group:artifact:version")
+api("group:artifact:version")
+implementation(group = "...", name = "...", version = "...")
+```
+
+**Include** (production scopes): `implementation`, `api`, `compileOnly`, `runtimeOnly`,
+`compile`, `runtime`, `provided`, `releaseImplementation`, `debugImplementation`,
+`ksp`, `kapt`, `annotationProcessor`.
+
+**Exclude** (test scopes): `testImplementation`, `testApi`, `androidTestImplementation`,
+`kaptTest`, `kaptAndroidTest`, `testCompileOnly`, `testRuntimeOnly`.
+
+Skip entries that reference catalog variables (no inline version string).
+
+Set `source.kind = "module-direct"`.
+
+### Plugin DSL blocks — `plugins-dsl`
+
+Match `plugins { }` blocks:
+```
+id("plugin.id") version "1.0.0"
+kotlin("jvm") version "2.0.0"
+```
+
+Also match `pluginManagement { plugins { } }` in `settings.gradle[.kts]` — set
+`source.settingsBlock = true`.
+
+Set `source.kind = "plugins-dsl"`.
+Convert plugin ID to Maven coordinates as described above.
+
+### Buildscript classpath — `buildscript-classpath`
+
+Match inside `buildscript { dependencies { ... } }` blocks:
+```
+classpath("group:artifact:version")
+classpath("group:artifact:version") { ... }
+```
+
+Set `source.kind = "buildscript-classpath"`.
+
+### Maven POM files — `module-direct`
+
+Match `<dependency>` blocks with `<version>` present and scope `compile` (default),
+`runtime`, or `provided`. Exclude `test` and `system` scope.
+
+## Step 3 — Deduplicate
+
+If the same `groupId:artifactId` appears both as a `catalog-library` entry and as a
+`module-direct` entry (same or different version), flag it as a drift case. Keep both
+records.
+
+## Step 4 — Check latest versions from Maven Central
+
+For each unique `groupId:artifactId`, fetch the Maven metadata. Build the group path by
+replacing `.` with `/` in the groupId.
+
+**Maven Central:**
+```
+https://repo1.maven.org/maven2/{group_path}/{artifactId}/maven-metadata.xml
+```
+
+**Google Maven** (for `androidx.*`, `com.google.android.*`, `com.android.*`,
+`com.google.firebase.*`, `com.google.gms.*`, `com.google.mlkit.*`):
+```
+https://dl.google.com/dl/android/maven2/{group_path}/{artifactId}/maven-metadata.xml
+```
+
+**Gradle Plugin Portal** (for plugin marker artifacts — `artifactId` ends in
+`.gradle.plugin`):
+```
+https://plugins.gradle.org/m2/{group_path}/{artifactId}/maven-metadata.xml
+```
+
+Extract all `<version>` entries from the XML.
+
+**Version classification** (same rules as `/latest-version` skill):
+- STABLE: no pre-release suffix
+- RC: contains `-rc`, `-RC`
+- BETA: contains `-beta`, `-b`
+- ALPHA: contains `-alpha`, `-dev`, `-SNAPSHOT`, `-milestone`, `-M`, `-preview`, `-eap`
+
+**Latest stable:** highest version classified as STABLE.
+If no stable version, use the highest RC, then BETA, then ALPHA.
+
+**Upgrade type** (comparing `currentVersion` to `latestVersion`):
+Split both versions into `[major, minor, patch]`. First differing segment:
+- Different `major` → `MAJOR`
+- Different `minor` → `MINOR`
+- Different `patch` or rest → `PATCH`
+
+Batch fetches: run up to 10 fetches in parallel. Process in batches of 10 to avoid
+overwhelming the network.
+
+## Step 5 — Check vulnerabilities (optional, enabled by default)
+
+Send the collected dependencies to OSV.dev:
+
+```
+POST https://api.osv.dev/v1/querybatch
+Content-Type: application/json
+
 {
-  "includeVulnerabilities": true,
-  "productionOnly": true
+  "queries": [
+    {
+      "package": {"name": "{groupId}:{artifactId}", "ecosystem": "Maven"},
+      "version": "{currentVersion}"
+    }
+  ]
 }
 ```
 
-`productionOnly: true` is the default. It excludes test-scoped usages but still includes
-unused catalog entries — the catalog is the single source of truth for declared versions
-and those entries still need to be kept current.
+For each result with non-empty `vulns`, derive severity from CVSS score and fixed version
+as described in the `/check-deps-vulnerabilities` skill.
 
-Keep the single tool call. Do not read build files manually before or after — the MCP
-server handles all file discovery and parsing.
+## Step 6 — Build the report
 
-## Grouping the result
-
-Group `dependencies[]` by `source.kind`. Only include entries where
-`latestVersion !== currentVersion` OR `vulnerabilities.length > 0`. If a group has nothing
-to show, omit that section entirely. If every group is empty, output:
+Only include entries where `latestVersion !== currentVersion` OR `vulnerabilities` is
+non-empty. If nothing to show in a group, omit that section. If all sections are empty:
 
 > All dependencies up to date.
 
@@ -57,16 +200,15 @@ Then skip to the Vulnerabilities section.
 
 Columns: alias | current → latest | upgrade type | catalog file | used by
 
-- `alias` — `source.alias`
-- `current → latest` — `currentVersion → latestVersion`
-- `upgrade type` — `upgradeType` (MAJOR / MINOR / PATCH)
-- `catalog file` — `source.tomlPath`
-- `used by` — count of `usages[]` entries; write `N modules` or `unused`
+- `alias` — catalog alias key
+- `current → latest` — e.g., `2.3.12 → 3.1.3`
+- `upgrade type` — MAJOR / MINOR / PATCH
+- `catalog file` — source.tomlPath
+- `used by` — count of usages (e.g. `4 modules`) or `unused`
 
-When the project has more than one catalog (`source.catalogName` differs across entries),
-prefix the alias with the catalog name: `libs.ktor-client-core` vs `bundles.okhttp`.
+When there are multiple catalogs, prefix alias with catalog name: `libs.alias`.
 
-Example row:
+Example:
 ```
 | ktor-client-core | 2.3.12 → 3.1.3 | MAJOR | gradle/libs.versions.toml | 4 modules |
 ```
@@ -77,37 +219,30 @@ Example row:
 
 Columns: alias | plugin ID | current → latest | upgrade type | catalog file | used by
 
-- `alias` — `source.alias`
-- `plugin ID` — `groupId` (plugin marker convention: `groupId` is the plugin ID)
-- remaining fields same as catalog libraries
-
 ---
 
 ### Module direct (`source.kind === "module-direct"`)
 
 Columns: module | file | artifact | current → latest | configuration
 
-- `module` — `usages[0].module` if set; otherwise `(root)`
-- `file` — `source.file`
+- `module` — relative path of the module (or `(root)`)
+- `file` — source file path
 - `artifact` — `groupId:artifactId`
-- `configuration` — `usages[0].configuration`
+- `configuration` — e.g. `implementation`
 
-Drift flag: if another entry in the result has the same `groupId:artifactId` with
-`source.kind === "catalog-library"`, append a note:
+Drift flag: if the same artifact is also a catalog entry, append:
 > ⚠ drift — same artifact declared in catalog and hardcoded here
 
 ---
 
 ### Plugin DSL (`source.kind === "plugins-dsl"`)
 
-Split into two sub-tables based on `source.settingsBlock`:
+Split by `source.settingsBlock`:
 
-**Root / module `plugins {}` block** (`settingsBlock` is `undefined` or `false`):
-
+**Root / module `plugins {}` block** (`settingsBlock` is false/undefined):
 Columns: plugin ID | current → latest | upgrade type | file
 
 **Settings `pluginManagement { plugins {} }` block** (`settingsBlock === true`):
-
 Same columns.
 
 ---
@@ -121,94 +256,66 @@ Columns: artifact | current → latest | file
 
 ---
 
-## Vulnerabilities
+## Step 7 — Vulnerabilities section
 
-After all upgrade tables, add a separate **Vulnerabilities** section listing every entry
-where `vulnerabilities` is non-empty, regardless of whether an upgrade is available.
+After all upgrade tables, add a **Vulnerabilities** section for every entry where
+vulnerabilities are non-empty (regardless of whether an upgrade is available).
 
 Columns: artifact | version | severity | advisory | fixed in | source | where to fix
 
-- `artifact` — `groupId:artifactId`
-- `version` — `currentVersion`
-- `severity` — `vulnerabilities[i].severity` (CRITICAL / HIGH / MEDIUM / LOW / unknown)
-- `advisory` — `vulnerabilities[i].id` (link it if the client renders Markdown)
-- `fixed in` — `vulnerabilities[i].fixedVersion`; if absent write `(no fixed version)`
-- `source` — `source.kind`
-- `where to fix` — `source.tomlPath` for catalog entries; `source.file` for all others
+Sort: CRITICAL → HIGH → MEDIUM → LOW → unknown, then lexicographic by artifact.
 
-Sort rows: CRITICAL → HIGH → MEDIUM → LOW → unknown, then lexicographic by
-`groupId:artifactId`.
+If no vulnerabilities: omit this section entirely.
 
-If no vulnerabilities exist, omit this section entirely.
+## Step 8 — Confirmation step
 
-## Confirmation step
-
-Present the full report to the user and **ask before making any edits**. Default
-proposal: update catalog entries first (they are the single source of truth and the
-safest edit).
+Present the full report and **ask before making any edits**. Default proposal: update
+catalog entries first (single source of truth, safest edit).
 
 Ask separately for each non-catalog group (Module direct, Plugin DSL, Buildscript
-classpath) — they require targeted edits in different files and carry more risk.
+classpath) — they require targeted edits in different files.
 
-Flag every entry with `upgradeType === "major"` explicitly — major version bumps may
-contain breaking changes and warrant individual confirmation.
+Flag every MAJOR upgrade explicitly — major version bumps may contain breaking changes and
+warrant individual confirmation.
 
-## Edit pass
+## Step 9 — Edit pass
 
 Apply only the groups the user confirms.
 
-**Catalog libraries / plugins** — `Edit` the `.toml` file at `source.tomlPath`.
-Update the `version` value or the referenced `[versions]` entry if a `version.ref` is
-used. Touch only the version value — do not reformat or reorder unrelated entries.
+**Catalog libraries / plugins** — Edit the `.toml` file. Update `[versions]` value or the
+inline version in `[libraries]`/`[plugins]`. If the entry uses `version.ref`, update the
+referenced `[versions]` key. Touch only the version value.
 
-**Module direct** — `Edit` the file at `source.file` inside the module directory
-indicated by `usages[0].module`. Update the inline version string only.
+**Module direct** — Edit the build file. Update only the inline version string.
 
-**Plugin DSL root / module** — `Edit` the root or module `build.gradle[.kts]` file
-(`source.file`). Update the version in the `plugins {}` block.
+**Plugin DSL root / module** — Edit the build file, update version in `plugins {}` block.
 
-**Plugin DSL settings** — `Edit` `settings.gradle[.kts]` (`source.file`). Update the
-version in the `pluginManagement { plugins {} }` block.
+**Plugin DSL settings** — Edit `settings.gradle[.kts]`, update version in
+`pluginManagement { plugins {} }` block.
 
-**Buildscript classpath** — `Edit` the root `build.gradle[.kts]` (`source.file`).
-Update the version in the `buildscript { dependencies { classpath … } }` block.
+**Buildscript classpath** — Edit the root build file, update version in
+`buildscript { dependencies { classpath … } }` block.
 
-## Build verification
+## Step 10 — Build verification
 
-After every edit pass, verify the project still builds.
+After every edit pass:
 
 - **Gradle:** `./gradlew build` — or `./gradlew :module:dependencies` for a fast
   dependency-resolve check when a full build is slow.
 - **Maven:** `mvn dependency:tree`.
 
-Do not invent flags. If the `/check` skill is available in the current environment,
-prefer it — it applies the project's own verification sequence.
+Surface any build failure immediately. Identify which updated dependency caused it.
+Attempt to fix incompatibilities. If non-trivial, revert that entry and note it as
+"manual upgrade required". Re-run the build to confirm it passes.
 
-Surface any build failure immediately. Read the error output, identify which updated
-dependency caused it, attempt to fix the incompatibility (API changes, import updates,
-deprecation replacements). If the fix is non-trivial, revert that specific entry to its
-previous version and note it as "manual upgrade required". Re-run the build to confirm it
-passes.
-
-**Never report "versions updated" without a passing build.** The update is not complete
-until the project resolves and compiles successfully.
+**Never report "versions updated" without a passing build.**
 
 ## Constraints and non-goals
 
-- **Major version bumps** are flagged in the report and require explicit per-entry
-  confirmation — do not batch-apply them silently.
-- **Multi-catalog `from("g:a:v")` form** (catalog declared as a Maven dependency) is not
-  supported; such entries are not scanned.
+- **Major version bumps** require explicit per-entry confirmation.
+- **Multi-catalog `from("g:a:v")` form** is not supported.
 - **`buildSrc/` and convention plugins** are not scanned.
-- **Transitive dependencies** are not enumerated — only direct declarations in build
-  files. Run `./gradlew dependencies` or `mvn dependency:tree` to inspect transitive
-  trees when needed.
-- This skill does not auto-select unstable/pre-release versions. The MCP server returns
-  the latest stable version by default.
-- **Vulnerabilities for plugin entries are typically not detected.** OSV currently indexes
-  implementation artifacts (e.g. `org.jetbrains.kotlin:kotlin-gradle-plugin`), not plugin
-  marker artifacts (e.g. the `.gradle.plugin` marker). Entries with `source.kind ===
-  "plugins-dsl"` or `"buildscript-classpath"` typically return no advisories today — OSV
-  still runs and will surface hits if OSV adds plugin-marker coverage later. For now treat
-  plugin CVEs as a known gap and check the implementation artifact's advisories manually if
-  concerned. v2 will resolve markers to implementation GAVs via POM.
+- **Transitive dependencies** are not enumerated — only direct declarations.
+- This skill does not auto-select unstable/pre-release versions.
+- **Vulnerabilities for plugin entries** may not be detected (OSV coverage gap for
+  `.gradle.plugin` marker artifacts).
