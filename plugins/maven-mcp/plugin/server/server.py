@@ -8,6 +8,7 @@ import functools
 import json
 import os
 import re
+import socket
 import sys
 import urllib.request
 import urllib.parse
@@ -2051,6 +2052,188 @@ def handle_audit_project_dependencies(args: Dict) -> Any:
 # Tool definitions (for tools/list and initialize)
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# verify_coordinates — existence tri-state + did-you-mean suggestions
+# ---------------------------------------------------------------------------
+
+# A candidate whose raw similarity to the requested coordinate reaches this
+# threshold makes an ABSENT coordinate read as a slopsquat-shaped hallucination
+# (one-edit-from-a-real-name). Named so it stays calibratable; the boundary is
+# pinned by tests, so it must not be inlined.
+HALLUCINATION_THRESHOLD = 0.8
+
+# Breadth of the Solr candidate pool fetched per absent coordinate. Larger than
+# the default suggestLimit so the hallucination flag (computed over the FULL
+# pre-truncation set) can still fire on a high-similarity candidate that the
+# low-popularity penalty later pushes out of the emitted top-N.
+_SUGGEST_SEARCH_ROWS = 20
+
+# Order-only de-weighting of very-low-versionCount candidates. Subtracted from
+# the similarity score in the SORT KEY only (never folded into the emitted raw
+# `score` or the flag) so a brand-new single-version near-miss — the
+# attacker-registered slopsquat shape — cannot outrank a high-popularity real
+# coordinate that sits at slightly lower raw similarity.
+_LOW_POPULARITY_PENALTY = 0.5
+
+
+def _suggestion_rank(suggestion: Dict[str, Any]) -> float:
+    """Sort key for did-you-mean candidates: raw similarity minus a penalty that
+    decays with versionCount (1/(versionCount+1)). Order only — the emitted
+    `score` stays the raw `_similarity`."""
+    version_count = suggestion.get("versionCount", 0) or 0
+    return suggestion["score"] - _LOW_POPULARITY_PENALTY / (version_count + 1)
+
+
+def _verify_one(
+    group_id: str,
+    artifact_id: str,
+    version: Optional[str],
+    suggest_limit: int,
+    ctx: "ResolutionContext",
+) -> Dict[str, Any]:
+    """Verify a single coordinate. Runs its OWN per-repo existence probe (not
+    fetch_metadata's raise, which conflates absent vs unreachable and drops the
+    answering repo). Classifies existence as a tri-state and, only when ABSENT,
+    queries Maven Central for popularity-aware did-you-mean candidates."""
+    union_versions = set()
+    first_answering_repo: Optional[str] = None
+    any_200 = False
+    saw_404 = False
+    # Any non-200/non-404 HTTP status (401/403/429/5xx) OR a raised transport
+    # error: the repo MIGHT hold the artifact, so absence cannot be asserted.
+    saw_unverifiable = False
+    for entry in _repos_for(group_id, artifact_id, ctx):
+        url = _metadata_url(entry["url"], group_id, artifact_id)
+        try:
+            status, body = http_get(url)
+        except (urllib.error.URLError, socket.timeout):
+            # Transport failure (offline / DNS / read timeout) — verification
+            # unavailable for THIS repo; contributes "unknown", never "absent".
+            saw_unverifiable = True
+            continue
+        if status == 200:
+            any_200 = True
+            if first_answering_repo is None:
+                first_answering_repo = entry["name"]
+            parsed = _parse_metadata_xml(
+                body.decode("utf-8", errors="replace"), group_id, artifact_id
+            )
+            # UNION versions across EVERY 200-answering repo (matches the #311
+            # cross-repo merge) — a first-hit short-circuit would lose versions a
+            # private repo holds.
+            union_versions.update(parsed["versions"])
+        elif status == 404:
+            saw_404 = True
+        else:
+            saw_unverifiable = True
+
+    if any_200:
+        existence_status = "exists"
+    elif saw_404 and not saw_unverifiable:
+        # ABSENT only when EVERY probed repo returned a definitive 404.
+        existence_status = "absent"
+    else:
+        existence_status = "unknown"
+
+    versions = sorted(union_versions, key=functools.cmp_to_key(compare_versions))
+    latest = find_latest_version(versions, "PREFER_STABLE")
+
+    result: Dict[str, Any] = {
+        "groupId": group_id,
+        "artifactId": artifact_id,
+        "existenceStatus": existence_status,
+        "gaExists": existence_status == "exists",
+        "likelyHallucination": False,
+    }
+    if version is not None:
+        result["version"] = version
+        # Membership in the UNION (not first-hit): a version present only in the
+        # second answering repo still counts.
+        result["gavExists"] = version in union_versions
+    # Guard against a 200 with an empty <versions> list: latest is None, so
+    # classify_version is never called on None and stability is omitted.
+    if latest:
+        result["stability"] = classify_version(latest)
+    if first_answering_repo is not None:
+        result["repository"] = first_answering_repo
+
+    if existence_status == "absent":
+        req_ga = (group_id + ":" + artifact_id).lower()
+        req_a = artifact_id.lower()
+        # Escape Solr metacharacters before the token reaches the query so a
+        # crafted artifactId can't be parsed as Solr syntax to broaden the match
+        # set (a suggestion-steering vector).
+        candidates = search_maven_central(_solr_escape(artifact_id), _SUGGEST_SEARCH_ROWS)
+        scored = []
+        flag = False
+        for cand in candidates:
+            cand_g = cand.get("groupId", "")
+            cand_a = cand.get("artifactId", "")
+            cand_ga = (cand_g + ":" + cand_a).lower()
+            # Raw similarity: surface a candidate whose artifactId matches even if
+            # the group differs (max == min edit distance over the two forms).
+            score = max(_similarity(req_ga, cand_ga), _similarity(req_a, cand_a.lower()))
+            if score >= HALLUCINATION_THRESHOLD:
+                flag = True
+            scored.append({
+                "groupId": cand_g,
+                "artifactId": cand_a,
+                "score": score,
+                "versionCount": cand.get("versionCount", 0) or 0,
+            })
+        # Flag is computed over the FULL pre-truncation/pre-penalty set above, so
+        # de-weighting a high-similarity low-popularity near-miss out of the
+        # emitted top-N never silently suppresses it.
+        result["likelyHallucination"] = flag
+        scored.sort(key=_suggestion_rank, reverse=True)
+        result["suggestions"] = scored[:suggest_limit]
+
+    return result
+
+
+def handle_verify_coordinates(args: Dict) -> Any:
+    """Batch-verify Maven coordinates: tri-state existence (exists / absent /
+    unknown) plus did-you-mean suggestions for absent ones. Output never asserts
+    "safe" — a published typosquat reports exists and is not flagged (#322)."""
+    dependencies = args.get("dependencies") or []
+    # Caps are ENFORCED here, before any network I/O — an MCP inputSchema's
+    # maxItems/maximum is advisory client metadata the server never validates, so
+    # the bound on outbound fan-out (each dep -> up-to-N-repo probe + a search)
+    # lives in code. Truncate an over-long batch; clamp suggestLimit.
+    if len(dependencies) > 100:
+        dependencies = dependencies[:100]
+    try:
+        suggest_limit = int(args.get("suggestLimit", 3))
+    except (TypeError, ValueError):
+        suggest_limit = 3
+    suggest_limit = max(0, min(suggest_limit, 10))
+
+    ctx = build_resolution_context(args)
+    results = []
+    for dep in dependencies:
+        group_id = dep.get("groupId", "")
+        artifact_id = dep.get("artifactId", "")
+        version = dep.get("version")
+        try:
+            results.append(_verify_one(group_id, artifact_id, version, suggest_limit, ctx))
+        except Exception as e:
+            # Per-item isolation for an UNEXPECTED failure (distinct from a probe
+            # transport error, which _verify_one already folds into "unknown"):
+            # this one coordinate degrades to an error entry; siblings resolve.
+            item: Dict[str, Any] = {
+                "groupId": group_id,
+                "artifactId": artifact_id,
+                "existenceStatus": "unknown",
+                "gaExists": False,
+                "likelyHallucination": False,
+                "error": str(e),
+            }
+            if version is not None:
+                item["version"] = version
+            results.append(item)
+    return {"results": results}
+
+
 TOOLS = [
     {
         "name": "get_latest_version",
@@ -2223,6 +2406,31 @@ TOOLS = [
             },
         },
     },
+    {
+        "name": "verify_coordinates",
+        "description": "Verify whether Maven coordinates exist (tri-state: exists / absent / unknown) and, for absent ones, suggest the closest real coordinates. Detects hallucinated / slopsquat-shaped names an LLM may invent. Existence is NOT a safety guarantee: a published typosquat reports exists and is not flagged. Suggestions are candidates to verify, not endorsements.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "dependencies": {
+                    "type": "array",
+                    "maxItems": 100,
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "groupId": {"type": "string"},
+                            "artifactId": {"type": "string"},
+                            "version": {"type": "string", "description": "Optional. When given, gavExists reports whether this exact version exists."},
+                        },
+                        "required": ["groupId", "artifactId"],
+                    },
+                },
+                "suggestLimit": {"type": "integer", "default": 3, "maximum": 10, "description": "Maximum did-you-mean suggestions per absent coordinate. Default 3, capped at 10."},
+                "projectPath": {"type": "string", "description": "Project root used to resolve declared repositories. Defaults to the current working directory."},
+            },
+            "required": ["dependencies"],
+        },
+    },
 ]
 
 TOOL_HANDLERS = {
@@ -2236,6 +2444,7 @@ TOOL_HANDLERS = {
     "get_dependency_health": handle_get_dependency_health,
     "search_artifacts": handle_search_artifacts,
     "audit_project_dependencies": handle_audit_project_dependencies,
+    "verify_coordinates": handle_verify_coordinates,
 }
 
 
