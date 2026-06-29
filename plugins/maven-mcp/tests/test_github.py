@@ -21,7 +21,7 @@ here — only the github-releases path is exercised.
 import json
 import re
 import unittest
-from unittest import mock
+import unittest.mock
 
 from _helpers import server, mock_urlopen, http_error
 
@@ -57,7 +57,7 @@ def _captured_request(mock_obj, index=0):
 class GhRepoExistsTest(unittest.TestCase):
     def test_true_when_repo_exists(self):
         # repoExists "returns true when repo exists" + asserts URL.
-        with mock.patch(
+        with unittest.mock.patch(
             "urllib.request.urlopen", side_effect=mock_urlopen([(200, b"{}")])
         ) as m:
             self.assertTrue(server.gh_repo_exists("owner", "repo"))
@@ -68,12 +68,12 @@ class GhRepoExistsTest(unittest.TestCase):
     def test_false_when_repo_missing(self):
         # repoExists "returns false when repo does not exist" (404).
         err = http_error("https://api.github.com/repos/owner/repo", 404, "Not Found")
-        with mock.patch("urllib.request.urlopen", side_effect=mock_urlopen([err])):
+        with unittest.mock.patch("urllib.request.urlopen", side_effect=mock_urlopen([err])):
             self.assertFalse(server.gh_repo_exists("owner", "repo"))
 
     def test_false_on_network_error(self):
         # repoExists "returns false on fetch error".
-        with mock.patch(
+        with unittest.mock.patch(
             "urllib.request.urlopen",
             side_effect=mock_urlopen([server.urllib.error.URLError("boom")]),
         ):
@@ -86,7 +86,7 @@ class GhRepoExistsTest(unittest.TestCase):
 class GhFetchRepoTest(unittest.TestCase):
     def test_returns_repo_json(self):
         payload = {"full_name": "owner/repo", "stargazers_count": 42}
-        with mock.patch(
+        with unittest.mock.patch(
             "urllib.request.urlopen",
             side_effect=mock_urlopen([(200, json.dumps(payload).encode())]),
         ) as m:
@@ -98,7 +98,7 @@ class GhFetchRepoTest(unittest.TestCase):
 
     def test_returns_none_on_404(self):
         err = http_error("https://api.github.com/repos/owner/repo", 404)
-        with mock.patch("urllib.request.urlopen", side_effect=mock_urlopen([err])):
+        with unittest.mock.patch("urllib.request.urlopen", side_effect=mock_urlopen([err])):
             self.assertIsNone(server.gh_fetch_repo("owner", "repo"))
 
 
@@ -112,7 +112,7 @@ class GhFetchReleasesTest(unittest.TestCase):
             {"tag_name": "v1.0.0", "body": "First", "html_url": "u1"},
             {"tag_name": "v2.0.0", "body": "Second", "html_url": "u2"},
         ]
-        with mock.patch(
+        with unittest.mock.patch(
             "urllib.request.urlopen",
             side_effect=mock_urlopen([(200, json.dumps(releases).encode())]),
         ) as m:
@@ -130,12 +130,12 @@ class GhFetchReleasesTest(unittest.TestCase):
     def test_returns_empty_list_on_404(self):
         # fetchReleases "returns empty array on non-ok response".
         err = http_error("https://api.github.com/x", 404)
-        with mock.patch("urllib.request.urlopen", side_effect=mock_urlopen([err])):
+        with unittest.mock.patch("urllib.request.urlopen", side_effect=mock_urlopen([err])):
             self.assertEqual(server.gh_fetch_releases("owner", "repo"), [])
 
     def test_returns_empty_list_on_network_error(self):
         # fetchReleases "returns empty array on fetch error".
-        with mock.patch(
+        with unittest.mock.patch(
             "urllib.request.urlopen",
             side_effect=mock_urlopen([server.urllib.error.URLError("net")]),
         ):
@@ -148,7 +148,7 @@ class GhFetchReleasesTest(unittest.TestCase):
 class GhFetchUserTest(unittest.TestCase):
     def test_returns_user_json(self):
         payload = {"login": "square", "public_repos": 120}
-        with mock.patch(
+        with unittest.mock.patch(
             "urllib.request.urlopen",
             side_effect=mock_urlopen([(200, json.dumps(payload).encode())]),
         ) as m:
@@ -160,7 +160,7 @@ class GhFetchUserTest(unittest.TestCase):
 
     def test_returns_none_on_404(self):
         err = http_error("https://api.github.com/users/nobody", 404)
-        with mock.patch("urllib.request.urlopen", side_effect=mock_urlopen([err])):
+        with unittest.mock.patch("urllib.request.urlopen", side_effect=mock_urlopen([err])):
             self.assertIsNone(server.gh_fetch_user("nobody"))
 
 
@@ -189,7 +189,7 @@ class GhFetchIssueStatsTest(unittest.TestCase):
                 }
             ).encode(),
         )
-        with mock.patch(
+        with unittest.mock.patch(
             "urllib.request.urlopen",
             side_effect=mock_urlopen([open_resp, closed_resp, median_resp]),
         ) as m:
@@ -204,7 +204,7 @@ class GhFetchIssueStatsTest(unittest.TestCase):
     def test_returns_none_when_both_counts_unavailable(self):
         # Both search calls non-200 -> early return None before the median call.
         err = http_error("https://api.github.com/search/issues", 403, "rate limited")
-        with mock.patch(
+        with unittest.mock.patch(
             "urllib.request.urlopen", side_effect=mock_urlopen([err, err])
         ) as m:
             self.assertIsNone(server.gh_fetch_issue_stats("owner", "repo"))
@@ -218,8 +218,8 @@ class GhFetchIssueStatsTest(unittest.TestCase):
 class GitHubAuthHeaderTest(unittest.TestCase):
     def test_authorization_header_sent_when_token_set(self):
         # "sends Authorization header when token is provided".
-        with mock.patch.dict("os.environ", {"GITHUB_TOKEN": "secret-token"}):
-            with mock.patch(
+        with unittest.mock.patch.dict("os.environ", {"GITHUB_TOKEN": "secret-token"}):
+            with unittest.mock.patch(
                 "urllib.request.urlopen", side_effect=mock_urlopen([(200, b"{}")])
             ) as m:
                 server.gh_fetch_repo("owner", "repo")
@@ -229,8 +229,8 @@ class GitHubAuthHeaderTest(unittest.TestCase):
 
     def test_no_authorization_header_without_token(self):
         # "does not send Authorization header when no token" (env cleared).
-        with mock.patch.dict("os.environ", {}, clear=True):
-            with mock.patch(
+        with unittest.mock.patch.dict("os.environ", {}, clear=True):
+            with unittest.mock.patch(
                 "urllib.request.urlopen", side_effect=mock_urlopen([(200, b"{}")])
             ) as m:
                 server.gh_fetch_repo("owner", "repo")
@@ -243,7 +243,7 @@ class GitHubAuthHeaderTest(unittest.TestCase):
 class DiscoverGithubRepoTest(unittest.TestCase):
     def test_returns_repo_from_pom_scm(self):
         # "returns GitHub repo from POM SCM". One urlopen (POM, Maven Central only).
-        with mock.patch(
+        with unittest.mock.patch(
             "urllib.request.urlopen",
             side_effect=mock_urlopen([(200, POM_WITH_SCM_OKHTTP.encode())]),
         ) as m:
@@ -260,7 +260,7 @@ class DiscoverGithubRepoTest(unittest.TestCase):
             (200, POM_WITHOUT_SCM.encode()),  # POM has no github SCM
             (200, b"{}"),  # gh_repo_exists for the guessed repo -> 200
         ]
-        with mock.patch(
+        with unittest.mock.patch(
             "urllib.request.urlopen", side_effect=mock_urlopen(responses)
         ) as m:
             result = server.discover_github_repo("io.github.javalin", "javalin", "5.0.0")
@@ -271,7 +271,7 @@ class DiscoverGithubRepoTest(unittest.TestCase):
         # "returns null when guess repo does not exist on GitHub".
         err = http_error("https://api.github.com/repos/someuser/nonexistent-lib", 404)
         responses = [(200, POM_WITHOUT_SCM.encode()), err]
-        with mock.patch("urllib.request.urlopen", side_effect=mock_urlopen(responses)):
+        with unittest.mock.patch("urllib.request.urlopen", side_effect=mock_urlopen(responses)):
             result = server.discover_github_repo(
                 "io.github.someuser", "nonexistent-lib", "1.0.0"
             )
@@ -280,7 +280,7 @@ class DiscoverGithubRepoTest(unittest.TestCase):
     def test_returns_none_when_no_pom_and_not_guessable(self):
         # "returns null when no POM found and groupId is not guessable".
         err = http_error("https://repo1.maven.org/maven2/x.pom", 404)
-        with mock.patch(
+        with unittest.mock.patch(
             "urllib.request.urlopen", side_effect=mock_urlopen([err])
         ) as m:
             result = server.discover_github_repo(
@@ -339,7 +339,7 @@ class DependencyChangesImplTest(unittest.TestCase):
             (200, POM_WITH_SCM_KTOR.encode()),  # discover_github_repo (POM SCM)
             (200, json.dumps(releases).encode()),  # gh_fetch_releases
         ]
-        with mock.patch("urllib.request.urlopen", side_effect=mock_urlopen(responses)):
+        with unittest.mock.patch("urllib.request.urlopen", side_effect=mock_urlopen(responses)):
             result = server._get_dependency_changes_impl(
                 "io.ktor", "ktor-core", "1.0.0", "2.0.0"
             )
@@ -364,7 +364,7 @@ class DependencyChangesImplTest(unittest.TestCase):
             (200, POM_WITH_SCM_KTOR.encode()),
             (200, json.dumps(releases).encode()),
         ]
-        with mock.patch("urllib.request.urlopen", side_effect=mock_urlopen(responses)):
+        with unittest.mock.patch("urllib.request.urlopen", side_effect=mock_urlopen(responses)):
             result = server._get_dependency_changes_impl(
                 "io.ktor", "ktor-core", "1.0.0", "1.5.0"
             )
@@ -377,7 +377,7 @@ class DependencyChangesImplTest(unittest.TestCase):
             (200, _metadata_xml(["1.0.0", "2.0.0"])),  # fetch_metadata
             (200, POM_WITHOUT_SCM.encode()),  # POM has no github SCM
         ]
-        with mock.patch("urllib.request.urlopen", side_effect=mock_urlopen(responses)):
+        with unittest.mock.patch("urllib.request.urlopen", side_effect=mock_urlopen(responses)):
             result = server._get_dependency_changes_impl(
                 "com.example", "lib", "1.0.0", "2.0.0"
             )
@@ -393,7 +393,7 @@ class DependencyChangesImplTest(unittest.TestCase):
             (200, POM_WITH_SCM_KTOR.encode()),
             (200, b"[]"),  # gh_fetch_releases -> []
         ]
-        with mock.patch("urllib.request.urlopen", side_effect=mock_urlopen(responses)):
+        with unittest.mock.patch("urllib.request.urlopen", side_effect=mock_urlopen(responses)):
             result = server._get_dependency_changes_impl(
                 "io.ktor", "ktor-core", "1.0.0", "2.0.0"
             )
@@ -404,7 +404,7 @@ class DependencyChangesImplTest(unittest.TestCase):
     def test_empty_range_branch(self):
         # Filter yields nothing -> "No versions found" error, no network past metadata.
         responses = [(200, _metadata_xml(["1.0.0"]))]
-        with mock.patch(
+        with unittest.mock.patch(
             "urllib.request.urlopen", side_effect=mock_urlopen(responses)
         ) as m:
             result = server._get_dependency_changes_impl(
@@ -416,7 +416,7 @@ class DependencyChangesImplTest(unittest.TestCase):
     def test_metadata_unavailable_branch(self):
         # fetch_metadata raising (all repos 404) surfaces as an "error" field.
         err = http_error("https://repo1.maven.org/maven2/x/maven-metadata.xml", 404)
-        with mock.patch("urllib.request.urlopen", side_effect=mock_urlopen([err])):
+        with unittest.mock.patch("urllib.request.urlopen", side_effect=mock_urlopen([err])):
             result = server._get_dependency_changes_impl(
                 "io.ktor", "ktor-core", "1.0.0", "2.0.0"
             )

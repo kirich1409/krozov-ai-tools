@@ -17,7 +17,7 @@ Two extra requirements live here:
 import datetime
 import json
 import unittest
-from unittest import mock
+import unittest.mock
 
 from _helpers import server, mock_urlopen, http_error, temp_project
 
@@ -41,7 +41,7 @@ def _json(obj):
 
 
 def _patch_urlopen(responses):
-    return mock.patch("urllib.request.urlopen", side_effect=mock_urlopen(responses))
+    return unittest.mock.patch("urllib.request.urlopen", side_effect=mock_urlopen(responses))
 
 
 # --- handle_get_latest_version ----------------------------------------------

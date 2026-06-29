@@ -28,6 +28,11 @@ if _SERVER_DIR not in sys.path:
 
 import server  # noqa: E402  (must follow the sys.path shim above)
 
+# Public test API re-exported for ``from _helpers import ...``. Listing
+# ``server`` makes the shimmed import above an intentional re-export rather
+# than an unused import.
+__all__ = ["server", "mock_urlopen", "http_error", "temp_project"]
+
 # A single response spec: (status, body) tuple, or an Exception to raise.
 ResponseSpec = Union["_MockResponse", BaseException, Any]
 

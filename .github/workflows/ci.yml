@@ -6,6 +6,11 @@ on:
   pull_request:
     branches: [main]
 
+# Least-privilege default for all jobs: they only read the repo (checkout +
+# build/test). No job writes contents, comments, or other resources.
+permissions:
+  contents: read
+
 jobs:
   validate-marketplace:
     runs-on: ubuntu-latest

@@ -1,7 +1,7 @@
 """Smoke tests: the harness imports `server` and the HTTP mocking works."""
 
 import unittest
-from unittest import mock
+import unittest.mock
 
 from _helpers import server, mock_urlopen, http_error
 
@@ -12,7 +12,7 @@ class SmokeTest(unittest.TestCase):
         self.assertEqual(server.classify_version("1.2.3"), "stable")
 
     def test_http_get_returns_mocked_status_and_bytes(self):
-        with mock.patch(
+        with unittest.mock.patch(
             "urllib.request.urlopen",
             side_effect=mock_urlopen([(200, b"hello")]),
         ):
@@ -22,7 +22,7 @@ class SmokeTest(unittest.TestCase):
 
     def test_http_error_maps_to_code_and_empty_bytes(self):
         err = http_error("https://example.test/x", 404, "Not Found")
-        with mock.patch(
+        with unittest.mock.patch(
             "urllib.request.urlopen",
             side_effect=mock_urlopen([err]),
         ):

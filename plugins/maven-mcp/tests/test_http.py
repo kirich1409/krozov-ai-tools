@@ -17,7 +17,7 @@ Python counterpart by design.
 
 import json
 import unittest
-from unittest import mock
+import unittest.mock
 
 from _helpers import server, mock_urlopen, http_error
 
@@ -47,7 +47,7 @@ class MakeHeadersTest(unittest.TestCase):
 
 class GithubHeadersTest(unittest.TestCase):
     def test_includes_user_agent_and_accept_without_token(self):
-        with mock.patch.dict("os.environ", {}, clear=False):
+        with unittest.mock.patch.dict("os.environ", {}, clear=False):
             server.os.environ.pop("GITHUB_TOKEN", None)
             headers = server._github_headers()
         self.assertEqual(headers["User-Agent"], server.USER_AGENT)
@@ -55,7 +55,7 @@ class GithubHeadersTest(unittest.TestCase):
         self.assertNotIn("Authorization", headers)
 
     def test_injects_bearer_authorization_when_token_set(self):
-        with mock.patch.dict("os.environ", {"GITHUB_TOKEN": "tok123"}):
+        with unittest.mock.patch.dict("os.environ", {"GITHUB_TOKEN": "tok123"}):
             headers = server._github_headers()
         self.assertEqual(headers["Authorization"], "Bearer tok123")
         self.assertEqual(headers["User-Agent"], server.USER_AGENT)
@@ -63,7 +63,7 @@ class GithubHeadersTest(unittest.TestCase):
 
 class HttpGetTest(unittest.TestCase):
     def test_returns_status_and_bytes(self):
-        with mock.patch(
+        with unittest.mock.patch(
             "urllib.request.urlopen",
             side_effect=mock_urlopen([(200, b"<xml/>")]),
         ):
@@ -73,7 +73,7 @@ class HttpGetTest(unittest.TestCase):
 
     def test_maps_httperror_to_code_and_empty_bytes(self):
         err = http_error("https://example.test/x", 500)
-        with mock.patch(
+        with unittest.mock.patch(
             "urllib.request.urlopen",
             side_effect=mock_urlopen([err]),
         ):
@@ -82,7 +82,7 @@ class HttpGetTest(unittest.TestCase):
         self.assertEqual(body, b"")
 
     def test_attaches_default_user_agent(self):
-        with mock.patch(
+        with unittest.mock.patch(
             "urllib.request.urlopen",
             side_effect=mock_urlopen([(200, b"ok")]),
         ) as urlopen:
@@ -91,7 +91,7 @@ class HttpGetTest(unittest.TestCase):
         self.assertEqual(_headers_ci(req)["user-agent"], server.USER_AGENT)
 
     def test_passes_through_caller_headers(self):
-        with mock.patch(
+        with unittest.mock.patch(
             "urllib.request.urlopen",
             side_effect=mock_urlopen([(200, b"ok")]),
         ) as urlopen:
@@ -107,7 +107,7 @@ class HttpGetTest(unittest.TestCase):
 class HttpPostJsonTest(unittest.TestCase):
     def test_encodes_json_body_and_sets_content_type(self):
         payload = {"queries": [{"package": {"name": "g:a"}}]}
-        with mock.patch(
+        with unittest.mock.patch(
             "urllib.request.urlopen",
             side_effect=mock_urlopen([(200, b"{}")]),
         ) as urlopen:
@@ -120,7 +120,7 @@ class HttpPostJsonTest(unittest.TestCase):
         self.assertEqual(headers["user-agent"], server.USER_AGENT)
 
     def test_returns_status_and_bytes(self):
-        with mock.patch(
+        with unittest.mock.patch(
             "urllib.request.urlopen",
             side_effect=mock_urlopen([(200, b'{"ok":true}')]),
         ):
@@ -130,7 +130,7 @@ class HttpPostJsonTest(unittest.TestCase):
 
     def test_maps_httperror_to_code_and_empty_bytes(self):
         err = http_error("https://example.test/osv", 500)
-        with mock.patch(
+        with unittest.mock.patch(
             "urllib.request.urlopen",
             side_effect=mock_urlopen([err]),
         ):

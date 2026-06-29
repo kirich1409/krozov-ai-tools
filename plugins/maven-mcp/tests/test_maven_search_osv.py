@@ -22,7 +22,7 @@ call_args_list, since the server builds a urllib.request.Request per call.
 import json
 import unittest
 import urllib.error
-from unittest import mock
+import unittest.mock
 
 from _helpers import server, mock_urlopen, http_error
 
@@ -158,7 +158,7 @@ class TestParseMetadataXml(unittest.TestCase):
 class TestFetchMetadata(unittest.TestCase):
     def test_returns_first_successful_repo_metadata(self):
         # Mirrors resolver.test.ts "returns metadata from first repo that has it".
-        with mock.patch(
+        with unittest.mock.patch(
             "urllib.request.urlopen",
             side_effect=mock_urlopen([(200, _metadata_xml(["1.0.0", "2.0.0"]))]),
         ):
@@ -176,7 +176,7 @@ class TestFetchMetadata(unittest.TestCase):
             (200, _metadata_xml(["1.0.0", "2.0.0"])),  # Google Maven (#1)
             (200, _metadata_xml(["3.0.0"])),           # Maven Central (#2) -- never reached
         ]
-        with mock.patch(
+        with unittest.mock.patch(
             "urllib.request.urlopen", side_effect=mock_urlopen(responses)
         ) as m:
             result = server.fetch_metadata("androidx.core", "core-ktx")
@@ -192,7 +192,7 @@ class TestFetchMetadata(unittest.TestCase):
             http_error(server.GOOGLE_MAVEN_URL, 404, "Not Found"),
             (200, _metadata_xml(["9.9.9"])),
         ]
-        with mock.patch(
+        with unittest.mock.patch(
             "urllib.request.urlopen", side_effect=mock_urlopen(responses)
         ) as m:
             result = server.fetch_metadata("androidx.core", "core-ktx")
@@ -206,7 +206,7 @@ class TestFetchMetadata(unittest.TestCase):
             urllib.error.URLError("dns down"),
             (200, _metadata_xml(["4.5.6"])),
         ]
-        with mock.patch(
+        with unittest.mock.patch(
             "urllib.request.urlopen", side_effect=mock_urlopen(responses)
         ):
             result = server.fetch_metadata("androidx.core", "core-ktx")
@@ -214,7 +214,7 @@ class TestFetchMetadata(unittest.TestCase):
 
     def test_raises_when_all_repos_fail(self):
         # Mirrors resolver.test.ts "throws when all repos fail".
-        with mock.patch(
+        with unittest.mock.patch(
             "urllib.request.urlopen",
             side_effect=mock_urlopen([http_error("u", 500, "boom")]),
         ):
@@ -227,7 +227,7 @@ class TestFetchMetadata(unittest.TestCase):
 # ---------------------------------------------------------------------------
 class TestCheckVersionInRepos(unittest.TestCase):
     def test_returns_repo_name_when_version_present(self):
-        with mock.patch(
+        with unittest.mock.patch(
             "urllib.request.urlopen",
             side_effect=mock_urlopen([(200, _metadata_xml(["1.0.0", "2.0.0"]))]),
         ):
@@ -235,7 +235,7 @@ class TestCheckVersionInRepos(unittest.TestCase):
         self.assertEqual(name, "Maven Central")
 
     def test_returns_none_when_version_absent(self):
-        with mock.patch(
+        with unittest.mock.patch(
             "urllib.request.urlopen",
             side_effect=mock_urlopen([(200, _metadata_xml(["1.0.0"]))]),
         ):
@@ -249,7 +249,7 @@ class TestCheckVersionInRepos(unittest.TestCase):
             (200, _metadata_xml(["1.0.0"])),          # Google Maven, no 2.0.0
             (200, _metadata_xml(["1.0.0", "2.0.0"])),  # Maven Central, has 2.0.0
         ]
-        with mock.patch(
+        with unittest.mock.patch(
             "urllib.request.urlopen", side_effect=mock_urlopen(responses)
         ) as m:
             name = server.check_version_in_repos("androidx.core", "core-ktx", "2.0.0")
@@ -262,7 +262,7 @@ class TestCheckVersionInRepos(unittest.TestCase):
 # ---------------------------------------------------------------------------
 class TestFetchPom(unittest.TestCase):
     def test_returns_pom_text_on_200(self):
-        with mock.patch(
+        with unittest.mock.patch(
             "urllib.request.urlopen",
             side_effect=mock_urlopen([(200, b"<project><scm/></project>")]),
         ) as m:
@@ -272,7 +272,7 @@ class TestFetchPom(unittest.TestCase):
         self.assertTrue(m.call_args_list[0].args[0].full_url.endswith("ktor-core-3.1.1.pom"))
 
     def test_returns_none_when_no_repo_has_pom(self):
-        with mock.patch(
+        with unittest.mock.patch(
             "urllib.request.urlopen",
             side_effect=mock_urlopen([http_error("u", 404, "Not Found")]),
         ):
@@ -297,7 +297,7 @@ class TestSearchMavenCentral(unittest.TestCase):
                 ],
             }
         }).encode()
-        with mock.patch(
+        with unittest.mock.patch(
             "urllib.request.urlopen", side_effect=mock_urlopen([(200, body)])
         ):
             result = server.search_maven_central("ktor")
@@ -311,7 +311,7 @@ class TestSearchMavenCentral(unittest.TestCase):
         # Mirrors maven-search.test.ts "respects limit parameter"; also asserts
         # the query is URL-encoded (a Python-side detail: urllib.parse.quote).
         body = json.dumps({"response": {"numFound": 0, "docs": []}}).encode()
-        with mock.patch(
+        with unittest.mock.patch(
             "urllib.request.urlopen", side_effect=mock_urlopen([(200, body)])
         ) as m:
             server.search_maven_central("g:io ktor", 5)
@@ -321,7 +321,7 @@ class TestSearchMavenCentral(unittest.TestCase):
 
     def test_returns_empty_on_http_error(self):
         # Mirrors maven-search.test.ts "returns empty array on error" (500).
-        with mock.patch(
+        with unittest.mock.patch(
             "urllib.request.urlopen",
             side_effect=mock_urlopen([http_error("u", 500, "boom")]),
         ):
@@ -329,7 +329,7 @@ class TestSearchMavenCentral(unittest.TestCase):
 
     def test_returns_empty_when_request_raises(self):
         # Mirrors maven-search.test.ts "returns empty array when fetch rejects".
-        with mock.patch(
+        with unittest.mock.patch(
             "urllib.request.urlopen",
             side_effect=mock_urlopen([urllib.error.URLError("network error")]),
         ):
@@ -360,7 +360,7 @@ class TestQueryOsvBatch(unittest.TestCase):
                 {"vulns": []},
             ]
         }).encode()
-        with mock.patch(
+        with unittest.mock.patch(
             "urllib.request.urlopen", side_effect=mock_urlopen([(200, body)])
         ):
             results = server.query_osv_batch([
@@ -380,7 +380,7 @@ class TestQueryOsvBatch(unittest.TestCase):
         # Mirrors osv-client.test.ts "sends correct request format". Asserts the
         # POST URL, JSON body shape, and Content-Type header (http_post_json).
         body = json.dumps({"results": [{"vulns": []}]}).encode()
-        with mock.patch(
+        with unittest.mock.patch(
             "urllib.request.urlopen", side_effect=mock_urlopen([(200, body)])
         ) as m:
             server.query_osv_batch([
@@ -397,13 +397,13 @@ class TestQueryOsvBatch(unittest.TestCase):
 
     def test_empty_deps_short_circuits_without_request(self):
         # No deps -> [] and no network call at all (server.py:691).
-        with mock.patch("urllib.request.urlopen") as m:
+        with unittest.mock.patch("urllib.request.urlopen") as m:
             self.assertEqual(server.query_osv_batch([]), [])
         m.assert_not_called()
 
     def test_empty_vulnerabilities_on_api_error(self):
         # Mirrors osv-client.test.ts "returns empty vulnerabilities on API error".
-        with mock.patch(
+        with unittest.mock.patch(
             "urllib.request.urlopen",
             side_effect=mock_urlopen([http_error("u", 500, "boom")]),
         ):
@@ -420,7 +420,7 @@ class TestQueryOsvBatch(unittest.TestCase):
             "database_specific": {"severity": "MODERATE"},
             "affected": [], "references": [],
         }]}]}).encode()
-        with mock.patch(
+        with unittest.mock.patch(
             "urllib.request.urlopen", side_effect=mock_urlopen([(200, body)])
         ):
             results = server.query_osv_batch([
@@ -437,7 +437,7 @@ class TestQueryOsvBatch(unittest.TestCase):
             "database_specific": {"severity": "BOGUS"},
             "affected": [], "references": [],
         }]}]}).encode()
-        with mock.patch(
+        with unittest.mock.patch(
             "urllib.request.urlopen", side_effect=mock_urlopen([(200, body)])
         ):
             results = server.query_osv_batch([
@@ -456,7 +456,7 @@ class TestQueryOsvBatch(unittest.TestCase):
             "severity": [{"type": "CVSS_V3", "score": "9.8"}],
             "affected": [], "references": [],
         }]}]}).encode()
-        with mock.patch(
+        with unittest.mock.patch(
             "urllib.request.urlopen", side_effect=mock_urlopen([(200, body)])
         ):
             results = server.query_osv_batch([
@@ -473,7 +473,7 @@ class TestQueryOsvBatch(unittest.TestCase):
              "database_specific": {"severity": "CRITICAL"},
              "withdrawn": "2024-01-01T00:00:00Z", "affected": [], "references": []},
         ]}]}).encode()
-        with mock.patch(
+        with unittest.mock.patch(
             "urllib.request.urlopen", side_effect=mock_urlopen([(200, body)])
         ):
             results = server.query_osv_batch([
@@ -488,7 +488,7 @@ class TestQueryOsvBatch(unittest.TestCase):
             "id": "OSV-NO-ADVISORY", "summary": "no advisory ref",
             "database_specific": {"severity": "LOW"}, "affected": [], "references": [],
         }]}]}).encode()
-        with mock.patch(
+        with unittest.mock.patch(
             "urllib.request.urlopen", side_effect=mock_urlopen([(200, body)])
         ):
             results = server.query_osv_batch([
