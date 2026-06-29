@@ -4,6 +4,7 @@ Maven MCP server — MCP stdio (JSON-RPC 2.0) over stdin/stdout.
 No external dependencies; Python 3.9+ standard library only.
 """
 
+import functools
 import json
 import os
 import re
@@ -125,15 +126,90 @@ def _pom_url(base: str, group_id: str, artifact_id: str, version: str) -> str:
     return f"{base.rstrip('/')}/{gp}/{artifact_id}/{version}/{artifact_id}-{version}.pom"
 
 
-def _repos_for(group_id: str, artifact_id: str) -> List[Tuple[str, str]]:
-    """Return (name, url) list to try for this artifact, most-specific first."""
-    repos = []
+class ResolutionContext:
+    """Repository-resolution context built ONCE at the handler boundary and
+    threaded down to every resolver. ``scoped_repos`` is the
+    ``discover_repositories`` result and doubles as the per-invocation memo (no
+    separate cache map); ``public_fallback`` is read from
+    MAVEN_MCP_PUBLIC_FALLBACK at construction, never sniffed in leaf functions."""
+
+    def __init__(
+        self,
+        project_path: str,
+        scoped_repos: Dict[str, List[Dict[str, str]]],
+        public_fallback: bool,
+    ) -> None:
+        self.project_path = project_path
+        self.scoped_repos = scoped_repos
+        self.public_fallback = public_fallback
+
+
+def _public_fallback_enabled() -> bool:
+    """MAVEN_MCP_PUBLIC_FALLBACK toggle. Default OFF (closed-mode #294 wants it
+    off); when ON, public repos are appended even for projects that declare
+    their own repositories (escape hatch for implicit/inherited-repo builds)."""
+    return os.environ.get("MAVEN_MCP_PUBLIC_FALLBACK", "").strip().lower() in (
+        "1", "true", "on", "yes",
+    )
+
+
+def build_resolution_context(args: Dict) -> "ResolutionContext":
+    """Build a ResolutionContext from a tool-call args dict at the handler
+    boundary. project_path defaults to the current working directory; the toggle
+    is read here once, not in the leaf resolvers."""
+    project_path = args.get("projectPath") or os.getcwd()
+    return ResolutionContext(
+        project_path, discover_repositories(project_path), _public_fallback_enabled()
+    )
+
+
+def _public_repos(group_id: str, artifact_id: str) -> List[Tuple[str, str]]:
+    """Static well-known routing (most-specific first): Gradle Plugin Portal for
+    plugin markers, Google Maven for the AndroidX/Google group prefixes, Maven
+    Central always last. Used as the public fallback when the project declares no
+    HTTP-queryable repository for the coordinate's scope."""
+    repos: List[Tuple[str, str]] = []
     if artifact_id.endswith(".gradle.plugin"):
         repos.append(("Gradle Plugin Portal", GRADLE_PLUGIN_PORTAL_URL))
     if any(group_id.startswith(p) for p in GOOGLE_MAVEN_GROUPS):
         repos.append(("Google Maven", GOOGLE_MAVEN_URL))
     repos.append(("Maven Central", MAVEN_CENTRAL_URL))
     return repos
+
+
+def _repos_for(
+    group_id: str, artifact_id: str, ctx: "ResolutionContext"
+) -> List[Dict[str, Any]]:
+    """Project-first repository resolution. ``ctx`` is REQUIRED — a public-only
+    default would silently resurrect #310. Returns rich entries
+    ``{name, url, scope, is_public_fallback}``, most-specific first.
+
+    Coordinate kind: a ``.gradle.plugin`` marker artifact resolves in the plugin
+    scope, everything else in the dependency scope. If that scope declares >=1
+    HTTP-queryable repository (mavenLocal's ``file://`` marker does NOT count) the
+    declared repos are returned EXACTLY, with no implicit public append — the
+    #299/#310 core. Otherwise the static public routing is the fallback. When
+    ``ctx.public_fallback`` is ON the public repos are appended even for a
+    declared scope (deduped by URL)."""
+    scope = "plugin" if artifact_id.endswith(".gradle.plugin") else "dependency"
+    declared = ctx.scoped_repos.get(scope, [])
+    queryable = [r for r in declared if not r["url"].startswith("file://")]
+
+    public_entries = [
+        {"name": name, "url": url, "scope": scope, "is_public_fallback": True}
+        for name, url in _public_repos(group_id, artifact_id)
+    ]
+
+    if queryable:
+        entries = [
+            {"name": r["name"], "url": r["url"], "scope": scope, "is_public_fallback": False}
+            for r in queryable
+        ]
+        if ctx.public_fallback:
+            entries.extend(public_entries)
+            return _dedup_repos(entries)
+        return entries
+    return public_entries
 
 
 def _parse_metadata_xml(xml: str, group_id: str, artifact_id: str) -> Dict[str, Any]:
@@ -151,43 +227,72 @@ def _parse_metadata_xml(xml: str, group_id: str, artifact_id: str) -> Dict[str, 
     }
 
 
-def fetch_metadata(group_id: str, artifact_id: str) -> Dict[str, Any]:
-    """Try repos in order and return first successful metadata parse."""
-    repos = _repos_for(group_id, artifact_id)
+def fetch_metadata(group_id: str, artifact_id: str, ctx: "ResolutionContext") -> Dict[str, Any]:
+    """Query every repo in ``ctx`` and MERGE results across those answering 200:
+    version sets are unioned, deduped and sorted ascending so a private repo's
+    extra versions are not lost to a first-hit short-circuit (#311); ``lastUpdated``
+    carries the most-recent value across answering repos. If NO repo answers (all
+    404/error) a ``ValueError`` is raised with the same message as the legacy
+    first-hit code, so unwrapped callers keep working. The single-repo result is
+    identical to the legacy path (union/sort of one ascending set = itself).
+    Intentionally diverges from the retired TS ``resolveAll``: no proxy-dedup."""
+    repos = _repos_for(group_id, artifact_id, ctx)
+    merged_versions: List[str] = []
+    last_updated: Optional[str] = None
+    answered = False
     last_err = None
-    for name, base in repos:
-        url = _metadata_url(base, group_id, artifact_id)
+    for entry in repos:
+        url = _metadata_url(entry["url"], group_id, artifact_id)
         try:
             status, body = http_get(url)
             if status == 200:
-                return _parse_metadata_xml(body.decode("utf-8", errors="replace"), group_id, artifact_id)
-            last_err = f"HTTP {status} from {name}"
+                # "answered" is gated on HTTP 200 itself, not on a non-empty
+                # version list — a 200 with empty <versions> still counts as a
+                # reachable repo, matching the legacy first-hit contract.
+                answered = True
+                parsed = _parse_metadata_xml(body.decode("utf-8", errors="replace"), group_id, artifact_id)
+                merged_versions.extend(parsed["versions"])
+                lu = parsed.get("lastUpdated")
+                if lu and (last_updated is None or lu > last_updated):
+                    last_updated = lu
+            else:
+                last_err = f"HTTP {status} from {entry['name']}"
         except Exception as e:
             last_err = str(e)
-    raise ValueError(f"Could not fetch metadata for {group_id}:{artifact_id}: {last_err}")
+    if not answered:
+        raise ValueError(f"Could not fetch metadata for {group_id}:{artifact_id}: {last_err}")
+    versions = sorted(set(merged_versions), key=functools.cmp_to_key(compare_versions))
+    return {
+        "groupId": group_id,
+        "artifactId": artifact_id,
+        "versions": versions,
+        "latest": find_latest_version(versions, "PREFER_STABLE"),
+        "release": find_latest_version(versions, "STABLE_ONLY"),
+        "lastUpdated": last_updated,
+    }
 
 
-def check_version_in_repos(group_id: str, artifact_id: str, version: str) -> Optional[str]:
+def check_version_in_repos(group_id: str, artifact_id: str, version: str, ctx: "ResolutionContext") -> Optional[str]:
     """Returns repo name if version exists, else None."""
-    repos = _repos_for(group_id, artifact_id)
-    for name, base in repos:
-        url = _metadata_url(base, group_id, artifact_id)
+    repos = _repos_for(group_id, artifact_id, ctx)
+    for entry in repos:
+        url = _metadata_url(entry["url"], group_id, artifact_id)
         try:
             status, body = http_get(url)
             if status == 200:
                 xml = body.decode("utf-8", errors="replace")
                 versions = re.findall(r"<version>([^<]+)</version>", xml)
                 if version in versions:
-                    return name
+                    return entry["name"]
         except Exception:
             continue
     return None
 
 
-def fetch_pom(group_id: str, artifact_id: str, version: str) -> Optional[str]:
-    repos = _repos_for(group_id, artifact_id)
-    for _name, base in repos:
-        url = _pom_url(base, group_id, artifact_id, version)
+def fetch_pom(group_id: str, artifact_id: str, version: str, ctx: "ResolutionContext") -> Optional[str]:
+    repos = _repos_for(group_id, artifact_id, ctx)
+    for entry in repos:
+        url = _pom_url(entry["url"], group_id, artifact_id, version)
         try:
             status, body = http_get(url)
             if status == 200:
@@ -560,9 +665,9 @@ def _summarize_releases(releases: List[Dict]) -> Dict:
     return {"last": last, "cadenceDays": round(median_sec / 86400), "count": count}
 
 
-def discover_github_repo(group_id: str, artifact_id: str, version: str) -> Optional[Dict[str, str]]:
+def discover_github_repo(group_id: str, artifact_id: str, version: str, ctx: "ResolutionContext") -> Optional[Dict[str, str]]:
     """Try POM SCM, then guess from groupId. Returns {owner, repo} or None."""
-    pom = fetch_pom(group_id, artifact_id, version)
+    pom = fetch_pom(group_id, artifact_id, version, ctx)
     if pom:
         r = extract_github_repo_from_pom(pom)
         if r:
@@ -588,7 +693,7 @@ def _filter_version_range(versions: List[str], from_v: str, to_v: str) -> List[s
     return result
 
 
-def _get_dependency_changes_impl(group_id: str, artifact_id: str, from_version: str, to_version: str) -> Dict:
+def _get_dependency_changes_impl(group_id: str, artifact_id: str, from_version: str, to_version: str, ctx: "ResolutionContext") -> Dict:
     base = {
         "groupId": group_id,
         "artifactId": artifact_id,
@@ -597,7 +702,7 @@ def _get_dependency_changes_impl(group_id: str, artifact_id: str, from_version: 
         "changes": [],
     }
     try:
-        metadata = fetch_metadata(group_id, artifact_id)
+        metadata = fetch_metadata(group_id, artifact_id, ctx)
     except Exception as e:
         return {**base, "error": str(e)}
 
@@ -605,7 +710,7 @@ def _get_dependency_changes_impl(group_id: str, artifact_id: str, from_version: 
     if not versions_in_range:
         return {**base, "error": f"No versions found between {from_version} and {to_version}"}
 
-    gh_repo = discover_github_repo(group_id, artifact_id, to_version)
+    gh_repo = discover_github_repo(group_id, artifact_id, to_version, ctx)
     if not gh_repo:
         return {**base, "repositoryNotFound": True}
 
@@ -1499,7 +1604,8 @@ def handle_get_latest_version(args: Dict) -> Any:
     group_id = args["groupId"]
     artifact_id = args["artifactId"]
     filter_mode = args.get("stabilityFilter", "PREFER_STABLE")
-    metadata = fetch_metadata(group_id, artifact_id)
+    ctx = build_resolution_context(args)
+    metadata = fetch_metadata(group_id, artifact_id, ctx)
     selected = find_latest_version(metadata["versions"], filter_mode)
     if not selected:
         raise ValueError(f"No stable version found for {group_id}:{artifact_id}")
@@ -1516,7 +1622,8 @@ def handle_check_version_exists(args: Dict) -> Any:
     group_id = args["groupId"]
     artifact_id = args["artifactId"]
     version = args["version"]
-    repo_name = check_version_in_repos(group_id, artifact_id, version)
+    ctx = build_resolution_context(args)
+    repo_name = check_version_in_repos(group_id, artifact_id, version, ctx)
     if repo_name:
         return {
             "groupId": group_id,
@@ -1535,10 +1642,11 @@ def handle_check_version_exists(args: Dict) -> Any:
 
 
 def handle_check_multiple_dependencies(args: Dict) -> Any:
+    ctx = build_resolution_context(args)
     results = []
     for dep in args["dependencies"]:
         try:
-            metadata = fetch_metadata(dep["groupId"], dep["artifactId"])
+            metadata = fetch_metadata(dep["groupId"], dep["artifactId"], ctx)
             latest = find_latest_version(metadata["versions"], "PREFER_STABLE")
             if not latest:
                 raise ValueError("No version found")
@@ -1560,10 +1668,11 @@ def handle_check_multiple_dependencies(args: Dict) -> Any:
 
 
 def handle_compare_dependency_versions(args: Dict) -> Any:
+    ctx = build_resolution_context(args)
     results = []
     for dep in args["dependencies"]:
         try:
-            metadata = fetch_metadata(dep["groupId"], dep["artifactId"])
+            metadata = fetch_metadata(dep["groupId"], dep["artifactId"], ctx)
             latest = find_latest_version_for_current(metadata["versions"], dep["currentVersion"])
             if not latest:
                 raise ValueError("No matching version found")
@@ -1599,11 +1708,13 @@ def handle_compare_dependency_versions(args: Dict) -> Any:
 
 
 def handle_get_dependency_changes(args: Dict) -> Any:
+    ctx = build_resolution_context(args)
     return _get_dependency_changes_impl(
         args["groupId"],
         args["artifactId"],
         args["fromVersion"],
         args["toVersion"],
+        ctx,
     )
 
 
@@ -1624,6 +1735,7 @@ def handle_get_dependency_vulnerabilities(args: Dict) -> Any:
 
 
 def handle_get_dependency_health(args: Dict) -> Any:
+    ctx = build_resolution_context(args)
     results = []
     for dep in args["dependencies"]:
         group_id = dep["groupId"]
@@ -1639,7 +1751,7 @@ def handle_get_dependency_health(args: Dict) -> Any:
             "signals": [],
         }
         try:
-            metadata = fetch_metadata(group_id, artifact_id)
+            metadata = fetch_metadata(group_id, artifact_id, ctx)
         except Exception as e:
             result["healthError"] = str(e)
             results.append(result)
@@ -1659,7 +1771,7 @@ def handle_get_dependency_health(args: Dict) -> Any:
         gh_repo = None
         pom_licenses: List[str] = []
         if target_version:
-            pom = fetch_pom(group_id, artifact_id, target_version)
+            pom = fetch_pom(group_id, artifact_id, target_version, ctx)
             if pom:
                 gh_repo = extract_github_repo_from_pom(pom)
                 pom_licenses = extract_licenses_from_pom(pom)
@@ -1768,6 +1880,7 @@ def handle_audit_project_dependencies(args: Dict) -> Any:
     if production_only is None:
         production_only = True
 
+    ctx = build_resolution_context(args)
     scan = scan_project(project_path)
 
     def is_included_in_production(dep: Dict) -> bool:
@@ -1798,7 +1911,7 @@ def handle_audit_project_dependencies(args: Dict) -> Any:
         ga_key = f"{dep['groupId']}:{dep['artifactId']}"
         try:
             if ga_key not in metadata_cache:
-                metadata_cache[ga_key] = fetch_metadata(dep["groupId"], dep["artifactId"])
+                metadata_cache[ga_key] = fetch_metadata(dep["groupId"], dep["artifactId"], ctx)
             metadata = metadata_cache[ga_key]
             latest = find_latest_version_for_current(metadata["versions"], dep["version"])
             upgrade_type = get_upgrade_type(dep["version"], latest) if latest else "none"
@@ -1894,6 +2007,7 @@ TOOLS = [
                     "enum": ["PREFER_STABLE", "STABLE_ONLY", "ALL"],
                     "description": "Version stability filter. Default: PREFER_STABLE",
                 },
+                "projectPath": {"type": "string", "description": "Project root used to resolve declared repositories. Defaults to the current working directory."},
             },
             "required": ["groupId", "artifactId"],
         },
@@ -1907,6 +2021,7 @@ TOOLS = [
                 "groupId": {"type": "string"},
                 "artifactId": {"type": "string"},
                 "version": {"type": "string"},
+                "projectPath": {"type": "string", "description": "Project root used to resolve declared repositories. Defaults to the current working directory."},
             },
             "required": ["groupId", "artifactId", "version"],
         },
@@ -1927,7 +2042,8 @@ TOOLS = [
                         },
                         "required": ["groupId", "artifactId"],
                     },
-                }
+                },
+                "projectPath": {"type": "string", "description": "Project root used to resolve declared repositories. Defaults to the current working directory."},
             },
             "required": ["dependencies"],
         },
@@ -1949,7 +2065,8 @@ TOOLS = [
                         },
                         "required": ["groupId", "artifactId", "currentVersion"],
                     },
-                }
+                },
+                "projectPath": {"type": "string", "description": "Project root used to resolve declared repositories. Defaults to the current working directory."},
             },
             "required": ["dependencies"],
         },
@@ -1964,6 +2081,7 @@ TOOLS = [
                 "artifactId": {"type": "string"},
                 "fromVersion": {"type": "string", "description": "Starting version (exclusive)"},
                 "toVersion": {"type": "string", "description": "Target version (inclusive)"},
+                "projectPath": {"type": "string", "description": "Project root used to resolve declared repositories. Defaults to the current working directory."},
             },
             "required": ["groupId", "artifactId", "fromVersion", "toVersion"],
         },
@@ -2017,7 +2135,8 @@ TOOLS = [
                         },
                         "required": ["groupId", "artifactId"],
                     },
-                }
+                },
+                "projectPath": {"type": "string", "description": "Project root used to resolve declared repositories. Defaults to the current working directory."},
             },
             "required": ["dependencies"],
         },

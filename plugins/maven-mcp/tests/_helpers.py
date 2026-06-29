@@ -31,7 +31,16 @@ import server  # noqa: E402  (must follow the sys.path shim above)
 # Public test API re-exported for ``from _helpers import ...``. Listing
 # ``server`` makes the shimmed import above an intentional re-export rather
 # than an unused import.
-__all__ = ["server", "mock_urlopen", "http_error", "temp_project"]
+__all__ = ["server", "mock_urlopen", "http_error", "temp_project", "empty_ctx"]
+
+
+def empty_ctx(public_fallback: bool = False) -> "server.ResolutionContext":
+    """A ResolutionContext with no project-declared repositories, so resolution
+    falls back to the static public routing — the legacy behavior the pre-#310
+    suite asserted. Hermetic (no filesystem read)."""
+    return server.ResolutionContext(
+        "/__no_project__", {"dependency": [], "plugin": []}, public_fallback
+    )
 
 # A single response spec: (status, body) tuple, or an Exception to raise.
 ResponseSpec = Union["_MockResponse", BaseException, Any]

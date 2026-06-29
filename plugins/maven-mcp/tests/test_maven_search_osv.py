@@ -3,13 +3,14 @@
 Mirrors the retired TypeScript suite:
   - src/maven/__tests__/repository.test.ts  -> TestReposFor / TestParseMetadataXml
   - src/maven/__tests__/resolver.test.ts    -> TestFetchMetadata
-        NOTE: Python semantics DIFFER from resolver.test.ts. The TS layer had two
-        strategies, `resolveFirst` (sequential, stop at first hit) and `resolveAll`
-        (parallel fetch + cross-repo version-set MERGE). server.py kept only the
-        first-hit behavior: `fetch_metadata` returns the FIRST successful repo's
-        metadata and never merges across repos. The resolver.test.ts merge cases
-        therefore have NO Python equivalent (divergence #6); only the first-hit
-        contract is portable and is asserted here.
+        Resolution is now project-first: `_repos_for(group, artifact, ctx)` returns
+        the project-declared repos for the coordinate's scope, or — when none are
+        declared (the empty_ctx() used here) — the static public routing. With no
+        declared repos these tests assert that public fallback. `fetch_metadata`
+        MERGES version sets across every answering repo (#311), so the resolveAll
+        cross-repo merge IS now the Python behavior (see
+        test_merges_versions_across_repos). It still diverges from TS resolveAll in
+        one way: no proxy-target dedup.
   - src/search/__tests__/maven-search.test.ts     -> TestSearchMavenCentral
   - src/vulnerabilities/__tests__/osv-client.test.ts -> TestQueryOsvBatch
 
@@ -24,7 +25,7 @@ import unittest
 import urllib.error
 import unittest.mock
 
-from _helpers import server, mock_urlopen, http_error
+from _helpers import server, mock_urlopen, http_error, empty_ctx
 
 
 def _metadata_xml(versions, latest=None, release=None, last_updated=None):
@@ -45,52 +46,65 @@ def _metadata_xml(versions, latest=None, release=None, last_updated=None):
 # ---------------------------------------------------------------------------
 # _repos_for routing + URL builders + XML parse
 # Mirrors src/maven/__tests__/repository.test.ts (URL construction, parse,
-# well-known repo constants). server.py's repo selection is the static
-# group-prefix router `_repos_for` (server.py:128), not a configurable repo
-# object; the AndroidX/Google prefix constant lives at server.py:29-32.
+# well-known repo constants). With an empty_ctx() (no project-declared repos)
+# `_repos_for(group, artifact, ctx)` returns the static public routing as rich
+# entries {name, url, scope, is_public_fallback}; the AndroidX/Google prefix
+# constant lives at server.py:29-32.
 # ---------------------------------------------------------------------------
 class TestReposFor(unittest.TestCase):
     def test_plain_artifact_uses_central_only(self):
         # A non-Google, non-plugin artifact resolves to Maven Central only.
-        repos = server._repos_for("io.ktor", "ktor-server-core")
-        self.assertEqual(repos, [("Maven Central", server.MAVEN_CENTRAL_URL)])
+        repos = server._repos_for("io.ktor", "ktor-server-core", empty_ctx())
+        self.assertEqual(
+            repos,
+            [{"name": "Maven Central", "url": server.MAVEN_CENTRAL_URL,
+              "scope": "dependency", "is_public_fallback": True}],
+        )
 
     def test_androidx_routes_google_first_then_central(self):
         # AndroidX prefix routing (server.py:30): Google Maven is tried first,
         # Maven Central second -> most-specific-first.
-        repos = server._repos_for("androidx.core", "core-ktx")
+        repos = server._repos_for("androidx.core", "core-ktx", empty_ctx())
         self.assertEqual(
-            repos,
+            [(r["name"], r["url"]) for r in repos],
             [
                 ("Google Maven", server.GOOGLE_MAVEN_URL),
                 ("Maven Central", server.MAVEN_CENTRAL_URL),
             ],
         )
+        self.assertTrue(all(r["is_public_fallback"] for r in repos))
+        self.assertTrue(all(r["scope"] == "dependency" for r in repos))
 
     def test_google_firebase_group_routes_to_google(self):
         # Another entry of the GOOGLE_MAVEN_GROUPS prefix constant (server.py:30);
         # the prefix carries a trailing dot, so the group must be a sub-group.
-        repos = server._repos_for("com.google.firebase.crashlytics", "firebase-crashlytics")
-        self.assertEqual(repos[0], ("Google Maven", server.GOOGLE_MAVEN_URL))
-        self.assertEqual(repos[-1], ("Maven Central", server.MAVEN_CENTRAL_URL))
+        repos = server._repos_for(
+            "com.google.firebase.crashlytics", "firebase-crashlytics", empty_ctx()
+        )
+        self.assertEqual(repos[0]["name"], "Google Maven")
+        self.assertEqual(repos[0]["url"], server.GOOGLE_MAVEN_URL)
+        self.assertEqual(repos[-1]["name"], "Maven Central")
 
     def test_gradle_plugin_marker_routes_to_plugin_portal_first(self):
         repos = server._repos_for(
-            "org.jetbrains.kotlin.jvm", "org.jetbrains.kotlin.jvm.gradle.plugin"
+            "org.jetbrains.kotlin.jvm", "org.jetbrains.kotlin.jvm.gradle.plugin",
+            empty_ctx(),
         )
         self.assertEqual(
-            repos,
+            [(r["name"], r["url"]) for r in repos],
             [
                 ("Gradle Plugin Portal", server.GRADLE_PLUGIN_PORTAL_URL),
                 ("Maven Central", server.MAVEN_CENTRAL_URL),
             ],
         )
+        # A .gradle.plugin marker resolves in the plugin scope.
+        self.assertTrue(all(r["scope"] == "plugin" for r in repos))
 
     def test_most_specific_first_ordering_plugin_then_google_then_central(self):
         # Plugin marker AND a Google group: portal, then Google, then Central.
-        repos = server._repos_for("androidx.tooling", "x.gradle.plugin")
+        repos = server._repos_for("androidx.tooling", "x.gradle.plugin", empty_ctx())
         self.assertEqual(
-            [name for name, _ in repos],
+            [r["name"] for r in repos],
             ["Gradle Plugin Portal", "Google Maven", "Maven Central"],
         )
 
@@ -150,44 +164,44 @@ class TestParseMetadataXml(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
-# fetch_metadata (server.py:154)
-# Mirrors src/maven/__tests__/resolver.test.ts, but only the first-hit contract
-# is portable. The resolveAll MERGE cases have NO Python equivalent -> see the
-# divergence #6 test below.
+# fetch_metadata (server.py)
+# fetch_metadata now MERGES version sets across every repo answering 200 (#311);
+# the single-repo path is unchanged. The empty_ctx() routes via the public
+# fallback, so io.ktor -> Maven Central only and androidx.* -> Google + Central.
 # ---------------------------------------------------------------------------
 class TestFetchMetadata(unittest.TestCase):
-    def test_returns_first_successful_repo_metadata(self):
-        # Mirrors resolver.test.ts "returns metadata from first repo that has it".
+    def test_returns_single_repo_metadata_unchanged(self):
+        # Single-repo result is identical to the legacy first-hit path: io.ktor
+        # routes to Maven Central only, so the merge of one set = that set.
         with unittest.mock.patch(
             "urllib.request.urlopen",
             side_effect=mock_urlopen([(200, _metadata_xml(["1.0.0", "2.0.0"]))]),
         ):
-            result = server.fetch_metadata("io.ktor", "ktor-core")
+            result = server.fetch_metadata("io.ktor", "ktor-core", empty_ctx())
         self.assertEqual(result["versions"], ["1.0.0", "2.0.0"])
 
-    def test_first_hit_not_resolveall_merge(self):
-        # DIVERGENCE #6: fetch_metadata returns the FIRST successful repo's set,
-        # it does NOT merge version sets across repos like the retired TS
-        # resolveAll. androidx.* routes Google Maven (#1) then Maven Central (#2).
-        # Google returns [1.0.0, 2.0.0]; Central would return [3.0.0]. First-hit
-        # means only Google's set is returned (no 3.0.0) AND Central is never
-        # queried -- urlopen is called exactly once.
+    def test_merges_versions_across_repos(self):
+        # #311 fix: fetch_metadata MERGES version sets across repos rather than
+        # stopping at the first hit. androidx.* routes Google Maven (#1) then
+        # Maven Central (#2). Google returns [1.0.0, 2.0.0]; Central returns
+        # [3.0.0]. Both are queried and the union (sorted) is returned.
         responses = [
             (200, _metadata_xml(["1.0.0", "2.0.0"])),  # Google Maven (#1)
-            (200, _metadata_xml(["3.0.0"])),           # Maven Central (#2) -- never reached
+            (200, _metadata_xml(["3.0.0"])),           # Maven Central (#2)
         ]
         with unittest.mock.patch(
             "urllib.request.urlopen", side_effect=mock_urlopen(responses)
         ) as m:
-            result = server.fetch_metadata("androidx.core", "core-ktx")
-        self.assertEqual(result["versions"], ["1.0.0", "2.0.0"])
-        self.assertNotIn("3.0.0", result["versions"])  # NOT merged with Central
-        self.assertEqual(m.call_count, 1)  # Central (#2) never queried
-        first_url = m.call_args_list[0].args[0].full_url
-        self.assertTrue(first_url.startswith(server.GOOGLE_MAVEN_URL))
+            result = server.fetch_metadata("androidx.core", "core-ktx", empty_ctx())
+        self.assertEqual(result["versions"], ["1.0.0", "2.0.0", "3.0.0"])  # merged
+        self.assertIn("3.0.0", result["versions"])  # Central's version IS merged
+        self.assertEqual(m.call_count, 2)  # both repos queried
+        queried = [c.args[0].full_url for c in m.call_args_list]
+        self.assertTrue(any(u.startswith(server.GOOGLE_MAVEN_URL) for u in queried))
+        self.assertTrue(any(u.startswith(server.MAVEN_CENTRAL_URL) for u in queried))
 
-    def test_skips_non_200_repo_and_continues_to_next(self):
-        # Google Maven 404 -> falls through to Maven Central, which returns 200.
+    def test_skips_non_200_repo_and_merges_the_rest(self):
+        # Google Maven 404 -> only Maven Central's 200 contributes to the merge.
         responses = [
             http_error(server.GOOGLE_MAVEN_URL, 404, "Not Found"),
             (200, _metadata_xml(["9.9.9"])),
@@ -195,11 +209,11 @@ class TestFetchMetadata(unittest.TestCase):
         with unittest.mock.patch(
             "urllib.request.urlopen", side_effect=mock_urlopen(responses)
         ) as m:
-            result = server.fetch_metadata("androidx.core", "core-ktx")
+            result = server.fetch_metadata("androidx.core", "core-ktx", empty_ctx())
         self.assertEqual(result["versions"], ["9.9.9"])
         self.assertEqual(m.call_count, 2)
 
-    def test_network_error_on_first_repo_is_caught_and_continues(self):
+    def test_network_error_on_one_repo_is_caught_and_others_merge(self):
         # http_get does NOT catch URLError (only HTTPError) -> it propagates and
         # fetch_metadata's broad `except Exception` swallows it, then continues.
         responses = [
@@ -209,7 +223,7 @@ class TestFetchMetadata(unittest.TestCase):
         with unittest.mock.patch(
             "urllib.request.urlopen", side_effect=mock_urlopen(responses)
         ):
-            result = server.fetch_metadata("androidx.core", "core-ktx")
+            result = server.fetch_metadata("androidx.core", "core-ktx", empty_ctx())
         self.assertEqual(result["versions"], ["4.5.6"])
 
     def test_raises_when_all_repos_fail(self):
@@ -219,7 +233,7 @@ class TestFetchMetadata(unittest.TestCase):
             side_effect=mock_urlopen([http_error("u", 500, "boom")]),
         ):
             with self.assertRaises(ValueError):
-                server.fetch_metadata("io.ktor", "ktor-core")
+                server.fetch_metadata("io.ktor", "ktor-core", empty_ctx())
 
 
 # ---------------------------------------------------------------------------
@@ -231,7 +245,7 @@ class TestCheckVersionInRepos(unittest.TestCase):
             "urllib.request.urlopen",
             side_effect=mock_urlopen([(200, _metadata_xml(["1.0.0", "2.0.0"]))]),
         ):
-            name = server.check_version_in_repos("io.ktor", "ktor-core", "2.0.0")
+            name = server.check_version_in_repos("io.ktor", "ktor-core", "2.0.0", empty_ctx())
         self.assertEqual(name, "Maven Central")
 
     def test_returns_none_when_version_absent(self):
@@ -239,7 +253,7 @@ class TestCheckVersionInRepos(unittest.TestCase):
             "urllib.request.urlopen",
             side_effect=mock_urlopen([(200, _metadata_xml(["1.0.0"]))]),
         ):
-            name = server.check_version_in_repos("io.ktor", "ktor-core", "9.9.9")
+            name = server.check_version_in_repos("io.ktor", "ktor-core", "9.9.9", empty_ctx())
         self.assertIsNone(name)
 
     def test_checks_google_then_central_when_only_central_has_version(self):
@@ -252,7 +266,7 @@ class TestCheckVersionInRepos(unittest.TestCase):
         with unittest.mock.patch(
             "urllib.request.urlopen", side_effect=mock_urlopen(responses)
         ) as m:
-            name = server.check_version_in_repos("androidx.core", "core-ktx", "2.0.0")
+            name = server.check_version_in_repos("androidx.core", "core-ktx", "2.0.0", empty_ctx())
         self.assertEqual(name, "Maven Central")
         self.assertEqual(m.call_count, 2)
 
@@ -266,7 +280,7 @@ class TestFetchPom(unittest.TestCase):
             "urllib.request.urlopen",
             side_effect=mock_urlopen([(200, b"<project><scm/></project>")]),
         ) as m:
-            pom = server.fetch_pom("io.ktor", "ktor-core", "3.1.1")
+            pom = server.fetch_pom("io.ktor", "ktor-core", "3.1.1", empty_ctx())
         self.assertEqual(pom, "<project><scm/></project>")
         # POM URL shape includes the version directory and the -version.pom file.
         self.assertTrue(m.call_args_list[0].args[0].full_url.endswith("ktor-core-3.1.1.pom"))
@@ -276,7 +290,7 @@ class TestFetchPom(unittest.TestCase):
             "urllib.request.urlopen",
             side_effect=mock_urlopen([http_error("u", 404, "Not Found")]),
         ):
-            self.assertIsNone(server.fetch_pom("io.ktor", "ktor-core", "3.1.1"))
+            self.assertIsNone(server.fetch_pom("io.ktor", "ktor-core", "3.1.1", empty_ctx()))
 
 
 # ---------------------------------------------------------------------------
