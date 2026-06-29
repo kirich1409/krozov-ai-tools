@@ -10,9 +10,13 @@ Rules that are not open for discussion. Violating these is an error, not a judgm
 
 ## Project
 
-MCP server for Maven dependency intelligence. Provides tools to query artifact versions from Maven repositories (Maven Central, Google Maven, custom repos). Distributed as npm package, runs via `npx @krozov/maven-central-mcp`.
+MCP server for Maven dependency intelligence. Provides tools to query artifact versions from Maven repositories (Maven Central, Google Maven, custom repos).
 
-**Stack:** TypeScript, Node.js, `@modelcontextprotocol/sdk`, `zod/v4`, `vitest`
+**Plugin runtime:** `plugin/server/server.py` — a bundled Python 3 server (stdlib only, zero pip dependencies). Registered via `plugin/.claude-plugin/plugin.json` as `command: python3`. Works in Claude cloud and local environments without Node.js or npm.
+
+**TypeScript source** (`src/`): reference implementation and test suite. Used for development (lint, test, build) but not distributed or required at runtime.
+
+**Stack (TypeScript dev):** TypeScript, Node.js, `@modelcontextprotocol/sdk`, `zod/v4`, `vitest`
 
 ## Commands
 

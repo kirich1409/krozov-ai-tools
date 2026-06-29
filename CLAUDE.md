@@ -44,18 +44,17 @@ Always work on changes in a separate branch using a worktree (`.worktrees/`). Cr
 
 ## Publishing
 
-**Never run `npm publish` locally.** Publishing happens exclusively via GitHub Actions.
-
 All plugins use **unified versioning** — every release bumps all plugins to the same version.
 
 To release a new version:
-1. Bump `version` in all of these files to the new version:
-   - `plugins/maven-mcp/package.json`
+1. Bump `version` in both of these files to the new version:
    - `plugins/maven-mcp/plugin/.claude-plugin/plugin.json`
    - `.claude-plugin/marketplace.json`
 2. Merge to `main`.
 3. Push a git tag matching the version: `git tag v0.9.0 && git push origin v0.9.0`.
-4. GitHub Actions (`.github/workflows/release.yml`) triggers on `v*` tags: verifies all versions match, runs lint/tests/build, publishes to npm, **then creates one per-plugin tag `{plugin-name}--v{version}` for each plugin in `marketplace.json`**. These per-plugin tags are what Claude Code uses to resolve `dependencies` semver ranges.
+4. GitHub Actions (`.github/workflows/release.yml`) triggers on `v*` tags: verifies all versions match, runs lint/tests/build, **then creates one per-plugin tag `{plugin-name}--v{version}` for each plugin in `marketplace.json`**. These per-plugin tags are what Claude Code uses to resolve `dependencies` semver ranges.
+
+Note: `plugins/maven-mcp/package.json` is the TypeScript source package used for development (tests, lint, build) but is **not published to npm** and its version does not need to match the release tag.
 
 ## Worktrees
 
