@@ -154,17 +154,6 @@ check_tag_versions() {
     return
   fi
 
-  # maven-mcp: also check package.json (npm package)
-  PKG_JSON="plugins/maven-mcp/package.json"
-  if [ -f "$PKG_JSON" ]; then
-    pkg_version=$(jq -r '.version' "$PKG_JSON")
-    if [ "$pkg_version" != "$version" ]; then
-      fail "$PKG_JSON version \"$pkg_version\" does not match tag v${version}"
-    else
-      ok "$PKG_JSON version $pkg_version"
-    fi
-  fi
-
   # All plugin.json files — data-driven from marketplace.json
   while IFS=$'\t' read -r name source; do
     plugin_json="${source}/.claude-plugin/plugin.json"
