@@ -45,7 +45,7 @@ python3 -m unittest discover -s plugins/maven-mcp/tests -p test_handlers.py
 - **Vulnerabilities** — OSV.dev batch query (`api.osv.dev/v1/querybatch`).
 - **Tool handlers** — `handle_*`, one per MCP tool, plus the stdio JSON-RPC dispatch loop.
 
-**Tools:** `get_latest_version`, `check_version_exists`, `check_multiple_dependencies`, `compare_dependency_versions`, `get_dependency_changes`, `scan_project_dependencies`, `get_dependency_vulnerabilities`, `get_dependency_health`, `search_artifacts`, `audit_project_dependencies`.
+**Tools:** `get_latest_version`, `check_version_exists`, `check_multiple_dependencies`, `compare_dependency_versions`, `get_dependency_changes`, `scan_project_dependencies`, `get_dependency_vulnerabilities`, `get_dependency_health`, `search_artifacts`, `audit_project_dependencies`, `verify_coordinates` (see *`verify_coordinates`* below).
 
 ## Repository resolution
 
@@ -71,6 +71,33 @@ Version answers resolve through the repositories the **project actually declares
 - **Variable-interpolated repo URLs are unsupported** — a `url = "…/${repoPath}"` is captured verbatim (the `${...}` is not expanded), so such a URL will not resolve.
 - **Resolved plugin impl-GAV scoping** — only the `.gradle.plugin` marker suffix classifies as plugin scope; a resolved plugin implementation GAV classifies as a library (deferred to #290; documented, not a defect).
 - **Deferred #299 pieces** (this layer addresses the core; the rest are follow-ups): provenance reporting (`resolvedFrom` / `viaPublicFallback`) — #317; `repositoriesMode` semantics — #318 (current behavior unions settings + project repos, so it **may over-report** when a build restricts project-level repos); parent-POM / Maven-profile inheritance — #319; content / group filtering — #320.
+
+## `verify_coordinates`
+
+A write-time **anti-slopsquatting** primitive: batch existence check plus a fuzzy did-you-mean for the #283 write-time guard hook. LLMs invent coordinates that do not exist (~19.6%, often recurring → predictable slopsquatting); Gradle/Maven never validate a coordinate at edit time. This tool answers "does this `groupId:artifactId` exist, and if not, what is the closest real name".
+
+**CRITICAL — what this tool does NOT do.** It detects **non-existent** coordinates and **one-edit-from-real** names (the slopsquat *shape*). It is **not** a malware/typosquat detector for coordinates that DO exist: a malicious package actually published to Maven Central reports `existenceStatus: "exists"` and is **never** flagged. The output therefore **never means "safe"** — `likelyHallucination: false` means "not a known-fake name", not "verified clean". Active typosquat-of-existing detection is a separate follow-up (#322) that the #283 hook layers on top.
+
+**Params:**
+
+- `dependencies: [{groupId, artifactId, version?}]` — required; capped at **100 items, ENFORCED in the handler** before any network I/O (an MCP `inputSchema` `maxItems` is advisory client metadata the server never validates, so the bound on outbound fan-out — each dep is an up-to-N-repo probe plus a search — lives in code; an over-long batch is truncated).
+- `suggestLimit` — default `3`, clamped to `[0, 10]`.
+- `projectPath` — optional; project-aware repository resolution (see *Repository resolution*).
+
+**Per-coordinate output:**
+
+- `existenceStatus` — tri-state: `"exists"` (any probed repo answered HTTP 200) / `"absent"` (EVERY probed repo returned a definitive 404) / `"unknown"` (verification unavailable — see below).
+- `gaExists: bool` — back-compat alias for `existenceStatus == "exists"`.
+- `gavExists?: bool` — only when `version` was given; membership of `version` in the UNION of versions across all 200-answering repos.
+- `stability?` — `classify_version(latest)`, omitted when no non-empty latest exists (a 200 with an empty `<versions>` list never calls `classify_version` on `None`).
+- `likelyHallucination: bool` — true only when `absent` AND some candidate's raw similarity ≥ `HALLUCINATION_THRESHOLD` (0.8), computed over the full pre-truncation candidate set. **Never** true on `unknown` or `exists`.
+- `suggestions?: [{groupId, artifactId, score, versionCount}]` — only on `absent`. `score` is the raw similarity; ranking down-weights very-low-`versionCount` candidates (sort order only — never folded into the emitted `score` or the flag) so an attacker's brand-new single-version near-miss cannot outrank a popular real coordinate. Framed as **candidates to verify, not endorsements**.
+- `repository?` — first answering repository name.
+- `error?` — per-item isolation: an unexpected failure on one coordinate degrades that entry to `unknown` + `error`; sibling coordinates still resolve.
+
+**`unknown` = degraded verification, NOT clean.** Any non-200/non-404 status (401/403 auth, 429 throttle, any 5xx), a raised transport failure (offline / DNS / read timeout), or a mix (e.g. 404 + 503) yields `unknown` — the protected/throttled repo might hold the artifact, so absence cannot be asserted. The tool **never** asserts hallucination on `unknown`. The #283 hook **must treat `unknown` as degraded, NOT as clean.** This is why the handler runs its OWN per-repo probe rather than reusing `fetch_metadata` (whose raise conflates absent vs unreachable and drops which repo answered).
+
+**Suggestion source = Maven Central Solr only** → a recall limit for androidx / Google-Maven / Gradle-plugin-marker coordinates (no suggestion backend for those scopes; documented, relates to #295). Existence checking still reuses the project-first resolution layer (declared repos are honored); only the did-you-mean fallback is Central-only.
 
 ## Environment
 
