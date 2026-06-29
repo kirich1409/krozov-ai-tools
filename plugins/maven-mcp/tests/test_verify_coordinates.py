@@ -12,8 +12,8 @@ candidate ``versionCount`` and the similarity-driving strings precisely.
 
 import json
 import unittest
+import unittest.mock
 import urllib.error
-from unittest import mock
 
 from _helpers import server, mock_urlopen, http_error, temp_project
 
@@ -43,7 +43,7 @@ def _solr(docs):
 
 
 def _patch_urlopen(sequence):
-    return mock.patch("urllib.request.urlopen", side_effect=mock_urlopen(sequence))
+    return unittest.mock.patch("urllib.request.urlopen", side_effect=mock_urlopen(sequence))
 
 
 class ExistenceTriStateTest(unittest.TestCase):
@@ -94,7 +94,7 @@ class ExistenceTriStateTest(unittest.TestCase):
     def test_all_404_absent(self):
         url = server._metadata_url(server.MAVEN_CENTRAL_URL, "com.x", "ghost")
         with temp_project({}) as root, \
-                mock.patch.object(server, "search_maven_central", return_value=[]), \
+                unittest.mock.patch.object(server, "search_maven_central", return_value=[]), \
                 _patch_urlopen([http_error(url, 404)]):
             out = server.handle_verify_coordinates({
                 "dependencies": [{"groupId": "com.x", "artifactId": "ghost"}],
@@ -189,7 +189,7 @@ class SuggestionsAndHallucinationTest(unittest.TestCase):
     def _flag_for_candidate(self, req_group, req_artifact, candidates, suggest_limit=3):
         url = server._metadata_url(server.MAVEN_CENTRAL_URL, req_group, req_artifact)
         with temp_project({}) as root, \
-                mock.patch.object(server, "search_maven_central", return_value=candidates), \
+                unittest.mock.patch.object(server, "search_maven_central", return_value=candidates), \
                 _patch_urlopen([http_error(url, 404)]):
             out = server.handle_verify_coordinates({
                 "dependencies": [{"groupId": req_group, "artifactId": req_artifact}],
@@ -240,7 +240,7 @@ class SuggestionsAndHallucinationTest(unittest.TestCase):
         token = "foo:bar*"
         url = server._metadata_url(server.MAVEN_CENTRAL_URL, "com.x", token)
         with temp_project({}) as root, \
-                mock.patch.object(server, "search_maven_central", return_value=[]) as msearch, \
+                unittest.mock.patch.object(server, "search_maven_central", return_value=[]) as msearch, \
                 _patch_urlopen([http_error(url, 404)]):
             server.handle_verify_coordinates({
                 "dependencies": [{"groupId": "com.x", "artifactId": token}],
@@ -262,7 +262,7 @@ class IsolationAndCapsTest(unittest.TestCase):
             return original_classify(version)
 
         with temp_project({}) as root, \
-                mock.patch.object(server, "classify_version", side_effect=boom), \
+                unittest.mock.patch.object(server, "classify_version", side_effect=boom), \
                 _patch_urlopen([_meta(["9.9.9"]), _meta(["1.0"])]):
             out = server.handle_verify_coordinates({
                 "dependencies": [
@@ -280,7 +280,7 @@ class IsolationAndCapsTest(unittest.TestCase):
         # 101 deps -> the HANDLER truncates to 100 before any I/O. _repos_for is
         # stubbed to [] so no urlopen happens and each survivor reads "unknown".
         deps = [{"groupId": "com.x", "artifactId": f"a{i}"} for i in range(101)]
-        with temp_project({}) as root, mock.patch.object(server, "_repos_for", return_value=[]):
+        with temp_project({}) as root, unittest.mock.patch.object(server, "_repos_for", return_value=[]):
             out = server.handle_verify_coordinates({
                 "dependencies": deps,
                 "projectPath": root,
@@ -292,7 +292,7 @@ class IsolationAndCapsTest(unittest.TestCase):
         candidates = [{"groupId": "g", "artifactId": f"cand{i}", "versionCount": 5} for i in range(12)]
         url = server._metadata_url(server.MAVEN_CENTRAL_URL, "com.x", "ghost")
         with temp_project({}) as root, \
-                mock.patch.object(server, "search_maven_central", return_value=candidates), \
+                unittest.mock.patch.object(server, "search_maven_central", return_value=candidates), \
                 _patch_urlopen([http_error(url, 404)]):
             out = server.handle_verify_coordinates({
                 "dependencies": [{"groupId": "com.x", "artifactId": "ghost"}],
