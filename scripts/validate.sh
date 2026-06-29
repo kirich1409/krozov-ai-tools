@@ -177,6 +177,39 @@ check_tag_versions() {
       ok "marketplace.json '$name' version $mkt_version"
     fi
   done < <(jq -r '.plugins[] | [.name, .version] | @tsv' "$MARKETPLACE")
+
+  # Bundled MCP server scripts — version constants must track the tag.
+  # The script path is derived from each plugin.json mcpServers entry
+  # (${CLAUDE_PLUGIN_ROOT} resolves to the plugin source dir). This is the
+  # runtime that actually ships, so a stale SERVER_VERSION/USER_AGENT here is
+  # silent version skew that the manifest checks above cannot catch.
+  while IFS=$'\t' read -r name source; do
+    plugin_json="${source}/.claude-plugin/plugin.json"
+    [ -f "$plugin_json" ] || continue
+    while IFS= read -r arg; do
+      [ -n "$arg" ] || continue
+      script=$(printf '%s' "$arg" | sed "s|\${CLAUDE_PLUGIN_ROOT}|${source}|g")
+      [ -f "$script" ] || continue
+      found=0
+      while IFS= read -r sver; do
+        found=1
+        if [ "$sver" != "$version" ]; then
+          fail "'$name' $script version constant \"$sver\" does not match tag v${version}"
+        else
+          ok "'$name' $script version constant $sver"
+        fi
+      done < <(grep -oE '(SERVER_VERSION|USER_AGENT)[[:space:]]*=[[:space:]]*"[^"]*"' "$script" \
+                 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+')
+      if [ "$found" -eq 0 ]; then
+        fail "'$name' $script has no SERVER_VERSION/USER_AGENT version constant to verify against tag v${version}"
+      fi
+    done < <(jq -r '
+      .mcpServers // {}
+      | to_entries[]
+      | select(.value.command | test("^python"))
+      | .value.args[]? | select(test("\\.py$"))
+    ' "$plugin_json")
+  done < <(jq -r '.plugins[] | [.name, .source] | @tsv' "$MARKETPLACE")
 }
 
 # ---------- L5: plugin.json component paths ----------
