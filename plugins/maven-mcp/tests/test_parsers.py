@@ -27,7 +27,6 @@ Python-vs-TS behavioral differences (documented inline and in test comments):
      TS module are skipped (divergence guardrail #5).
 """
 
-import os
 import unittest
 
 from _helpers import server, temp_project
