@@ -7,6 +7,8 @@ description: >-
   "dependency maintenance", "license of library", or when the dependency-evaluator
   agent needs raw maintenance signals for a library. Fetches latest version,
   stability, GitHub activity, issue dynamics, license, and archived status.
+  Do NOT use for: an adopt/avoid recommendation or new-dependency vetting (use
+  evaluate-dependency, which calls this skill for signals).
 ---
 
 # Dependency Health
