@@ -273,11 +273,17 @@ def find_latest_version(versions: List[str], filter_mode: str = "PREFER_STABLE")
 
 
 def find_latest_version_for_current(versions: List[str], current_version: str) -> Optional[str]:
-    """Latest version at least as stable as current (mirrors TS findLatestVersionForCurrent)."""
-    current_stability = classify_version(current_version)
-    max_rank = PRERELEASE_WEIGHT.get(current_stability, 5)
+    """Highest version newer-or-equal to current at acceptable stability, else None.
+
+    A candidate qualifies iff it is newer-than-or-equal to current AND ranks at
+    least as stable on snapshot < alpha < beta < milestone < rc < stable; an
+    up-to-date dependency thus returns current itself (upgradeType "none"),
+    never a less-stable SNAPSHOT/RC as an upgrade from a more stable current
+    (#312). None only when nothing at acceptable stability is >= current.
+    """
+    current_rank = PRERELEASE_WEIGHT.get(classify_version(current_version), 5)
     for v in reversed(versions):
-        if PRERELEASE_WEIGHT.get(classify_version(v), 5) <= max_rank:
+        if compare_versions(v, current_version) >= 0 and PRERELEASE_WEIGHT.get(classify_version(v), 5) >= current_rank:
             return v
     return None
 
