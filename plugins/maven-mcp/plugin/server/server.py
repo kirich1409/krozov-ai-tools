@@ -413,6 +413,64 @@ def get_upgrade_type(current: str, latest: str) -> str:
 
 
 # ---------------------------------------------------------------------------
+# String distance & Solr query escaping
+# ---------------------------------------------------------------------------
+
+def _levenshtein(a: str, b: str) -> int:
+    """Plain Levenshtein edit distance (insert/delete/substitute, each cost 1).
+
+    NOT Damerau: an adjacent transposition is two substitutions, so
+    ``_levenshtein("ab", "ba") == 2``. Iterative two-row DP, stdlib only.
+    """
+    if a == b:
+        return 0
+    if not a:
+        return len(b)
+    if not b:
+        return len(a)
+    prev = list(range(len(b) + 1))
+    for i, ca in enumerate(a, 1):
+        cur = [i]
+        for j, cb in enumerate(b, 1):
+            cost = 0 if ca == cb else 1
+            cur.append(min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + cost))
+        prev = cur
+    return prev[-1]
+
+
+def _similarity(a: str, b: str) -> float:
+    """Normalized edit-distance similarity in [0, 1].
+
+    ``1 - _levenshtein(a, b) / max(len(a), len(b), 1)``. Two empty strings score
+    1.0 (the ``max(..., 1)`` keeps the divisor non-zero so 0/1 = 0). Levenshtein
+    never exceeds the longer length, so the result needs no clamping.
+    """
+    return 1.0 - _levenshtein(a, b) / max(len(a), len(b), 1)
+
+
+# Lucene/Solr query metacharacters; ``&&`` / ``||`` operators are handled by
+# escaping each ``&`` / ``|``. Whitespace is escaped separately (below) so a
+# bareword operator like ``OR`` cannot survive as a whitespace-delimited token.
+_SOLR_SPECIAL = set('+-&|!(){}[]^"~*?:\\/')
+
+
+def _solr_escape(token: str) -> str:
+    """Backslash-escape Solr/Lucene query metacharacters and whitespace.
+
+    A token passed straight into a Solr query could otherwise be parsed as query
+    syntax (``*`` wildcard, ``:`` field separator, a bareword ``OR``). Each
+    special char and each whitespace char is prefixed with a backslash, so the
+    whole token is interpreted literally as a single term.
+    """
+    out = []
+    for ch in token:
+        if ch in _SOLR_SPECIAL or ch.isspace():
+            out.append("\\")
+        out.append(ch)
+    return "".join(out)
+
+
+# ---------------------------------------------------------------------------
 # GitHub utilities
 # ---------------------------------------------------------------------------
 
