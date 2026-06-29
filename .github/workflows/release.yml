@@ -17,21 +17,16 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: npm
-          cache-dependency-path: plugins/maven-mcp/package-lock.json
-
       - name: Verify all versions match tag
         working-directory: .
         run: bash scripts/validate.sh --check-tag "${GITHUB_REF_NAME#v}"
 
-      - run: npm ci
-      - run: npm run lint
-      - run: npm test
-      - run: npm run build
+      # working-directory: . overrides the job's defaults.run.working-directory
+      # (plugins/maven-mcp); without it the -s path would double-resolve to
+      # plugins/maven-mcp/plugins/maven-mcp/tests and fail.
+      - name: Run Python tests
+        working-directory: .
+        run: python3 -m unittest discover -s plugins/maven-mcp/tests
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
