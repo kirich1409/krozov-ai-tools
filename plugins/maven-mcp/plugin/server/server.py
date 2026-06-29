@@ -4,6 +4,7 @@ Maven MCP server — MCP stdio (JSON-RPC 2.0) over stdin/stdout.
 No external dependencies; Python 3.9+ standard library only.
 """
 
+import functools
 import json
 import os
 import re
@@ -125,15 +126,90 @@ def _pom_url(base: str, group_id: str, artifact_id: str, version: str) -> str:
     return f"{base.rstrip('/')}/{gp}/{artifact_id}/{version}/{artifact_id}-{version}.pom"
 
 
-def _repos_for(group_id: str, artifact_id: str) -> List[Tuple[str, str]]:
-    """Return (name, url) list to try for this artifact, most-specific first."""
-    repos = []
+class ResolutionContext:
+    """Repository-resolution context built ONCE at the handler boundary and
+    threaded down to every resolver. ``scoped_repos`` is the
+    ``discover_repositories`` result and doubles as the per-invocation memo (no
+    separate cache map); ``public_fallback`` is read from
+    MAVEN_MCP_PUBLIC_FALLBACK at construction, never sniffed in leaf functions."""
+
+    def __init__(
+        self,
+        project_path: str,
+        scoped_repos: Dict[str, List[Dict[str, str]]],
+        public_fallback: bool,
+    ) -> None:
+        self.project_path = project_path
+        self.scoped_repos = scoped_repos
+        self.public_fallback = public_fallback
+
+
+def _public_fallback_enabled() -> bool:
+    """MAVEN_MCP_PUBLIC_FALLBACK toggle. Default OFF (closed-mode #294 wants it
+    off); when ON, public repos are appended even for projects that declare
+    their own repositories (escape hatch for implicit/inherited-repo builds)."""
+    return os.environ.get("MAVEN_MCP_PUBLIC_FALLBACK", "").strip().lower() in (
+        "1", "true", "on", "yes",
+    )
+
+
+def build_resolution_context(args: Dict) -> "ResolutionContext":
+    """Build a ResolutionContext from a tool-call args dict at the handler
+    boundary. project_path defaults to the current working directory; the toggle
+    is read here once, not in the leaf resolvers."""
+    project_path = args.get("projectPath") or os.getcwd()
+    return ResolutionContext(
+        project_path, discover_repositories(project_path), _public_fallback_enabled()
+    )
+
+
+def _public_repos(group_id: str, artifact_id: str) -> List[Tuple[str, str]]:
+    """Static well-known routing (most-specific first): Gradle Plugin Portal for
+    plugin markers, Google Maven for the AndroidX/Google group prefixes, Maven
+    Central always last. Used as the public fallback when the project declares no
+    HTTP-queryable repository for the coordinate's scope."""
+    repos: List[Tuple[str, str]] = []
     if artifact_id.endswith(".gradle.plugin"):
         repos.append(("Gradle Plugin Portal", GRADLE_PLUGIN_PORTAL_URL))
     if any(group_id.startswith(p) for p in GOOGLE_MAVEN_GROUPS):
         repos.append(("Google Maven", GOOGLE_MAVEN_URL))
     repos.append(("Maven Central", MAVEN_CENTRAL_URL))
     return repos
+
+
+def _repos_for(
+    group_id: str, artifact_id: str, ctx: "ResolutionContext"
+) -> List[Dict[str, Any]]:
+    """Project-first repository resolution. ``ctx`` is REQUIRED — a public-only
+    default would silently resurrect #310. Returns rich entries
+    ``{name, url, scope, is_public_fallback}``, most-specific first.
+
+    Coordinate kind: a ``.gradle.plugin`` marker artifact resolves in the plugin
+    scope, everything else in the dependency scope. If that scope declares >=1
+    HTTP-queryable repository (mavenLocal's ``file://`` marker does NOT count) the
+    declared repos are returned EXACTLY, with no implicit public append — the
+    #299/#310 core. Otherwise the static public routing is the fallback. When
+    ``ctx.public_fallback`` is ON the public repos are appended even for a
+    declared scope (deduped by URL)."""
+    scope = "plugin" if artifact_id.endswith(".gradle.plugin") else "dependency"
+    declared = ctx.scoped_repos.get(scope, [])
+    queryable = [r for r in declared if not r["url"].startswith("file://")]
+
+    public_entries = [
+        {"name": name, "url": url, "scope": scope, "is_public_fallback": True}
+        for name, url in _public_repos(group_id, artifact_id)
+    ]
+
+    if queryable:
+        entries = [
+            {"name": r["name"], "url": r["url"], "scope": scope, "is_public_fallback": False}
+            for r in queryable
+        ]
+        if ctx.public_fallback:
+            entries.extend(public_entries)
+            return _dedup_repos(entries)
+        return entries
+    return public_entries
 
 
 def _parse_metadata_xml(xml: str, group_id: str, artifact_id: str) -> Dict[str, Any]:
@@ -151,43 +227,72 @@ def _parse_metadata_xml(xml: str, group_id: str, artifact_id: str) -> Dict[str, 
     }
 
 
-def fetch_metadata(group_id: str, artifact_id: str) -> Dict[str, Any]:
-    """Try repos in order and return first successful metadata parse."""
-    repos = _repos_for(group_id, artifact_id)
+def fetch_metadata(group_id: str, artifact_id: str, ctx: "ResolutionContext") -> Dict[str, Any]:
+    """Query every repo in ``ctx`` and MERGE results across those answering 200:
+    version sets are unioned, deduped and sorted ascending so a private repo's
+    extra versions are not lost to a first-hit short-circuit (#311); ``lastUpdated``
+    carries the most-recent value across answering repos. If NO repo answers (all
+    404/error) a ``ValueError`` is raised with the same message as the legacy
+    first-hit code, so unwrapped callers keep working. The single-repo result is
+    identical to the legacy path (union/sort of one ascending set = itself).
+    Intentionally diverges from the retired TS ``resolveAll``: no proxy-dedup."""
+    repos = _repos_for(group_id, artifact_id, ctx)
+    merged_versions: List[str] = []
+    last_updated: Optional[str] = None
+    answered = False
     last_err = None
-    for name, base in repos:
-        url = _metadata_url(base, group_id, artifact_id)
+    for entry in repos:
+        url = _metadata_url(entry["url"], group_id, artifact_id)
         try:
             status, body = http_get(url)
             if status == 200:
-                return _parse_metadata_xml(body.decode("utf-8", errors="replace"), group_id, artifact_id)
-            last_err = f"HTTP {status} from {name}"
+                # "answered" is gated on HTTP 200 itself, not on a non-empty
+                # version list — a 200 with empty <versions> still counts as a
+                # reachable repo, matching the legacy first-hit contract.
+                answered = True
+                parsed = _parse_metadata_xml(body.decode("utf-8", errors="replace"), group_id, artifact_id)
+                merged_versions.extend(parsed["versions"])
+                lu = parsed.get("lastUpdated")
+                if lu and (last_updated is None or lu > last_updated):
+                    last_updated = lu
+            else:
+                last_err = f"HTTP {status} from {entry['name']}"
         except Exception as e:
             last_err = str(e)
-    raise ValueError(f"Could not fetch metadata for {group_id}:{artifact_id}: {last_err}")
+    if not answered:
+        raise ValueError(f"Could not fetch metadata for {group_id}:{artifact_id}: {last_err}")
+    versions = sorted(set(merged_versions), key=functools.cmp_to_key(compare_versions))
+    return {
+        "groupId": group_id,
+        "artifactId": artifact_id,
+        "versions": versions,
+        "latest": find_latest_version(versions, "PREFER_STABLE"),
+        "release": find_latest_version(versions, "STABLE_ONLY"),
+        "lastUpdated": last_updated,
+    }
 
 
-def check_version_in_repos(group_id: str, artifact_id: str, version: str) -> Optional[str]:
+def check_version_in_repos(group_id: str, artifact_id: str, version: str, ctx: "ResolutionContext") -> Optional[str]:
     """Returns repo name if version exists, else None."""
-    repos = _repos_for(group_id, artifact_id)
-    for name, base in repos:
-        url = _metadata_url(base, group_id, artifact_id)
+    repos = _repos_for(group_id, artifact_id, ctx)
+    for entry in repos:
+        url = _metadata_url(entry["url"], group_id, artifact_id)
         try:
             status, body = http_get(url)
             if status == 200:
                 xml = body.decode("utf-8", errors="replace")
                 versions = re.findall(r"<version>([^<]+)</version>", xml)
                 if version in versions:
-                    return name
+                    return entry["name"]
         except Exception:
             continue
     return None
 
 
-def fetch_pom(group_id: str, artifact_id: str, version: str) -> Optional[str]:
-    repos = _repos_for(group_id, artifact_id)
-    for _name, base in repos:
-        url = _pom_url(base, group_id, artifact_id, version)
+def fetch_pom(group_id: str, artifact_id: str, version: str, ctx: "ResolutionContext") -> Optional[str]:
+    repos = _repos_for(group_id, artifact_id, ctx)
+    for entry in repos:
+        url = _pom_url(entry["url"], group_id, artifact_id, version)
         try:
             status, body = http_get(url)
             if status == 200:
@@ -560,9 +665,9 @@ def _summarize_releases(releases: List[Dict]) -> Dict:
     return {"last": last, "cadenceDays": round(median_sec / 86400), "count": count}
 
 
-def discover_github_repo(group_id: str, artifact_id: str, version: str) -> Optional[Dict[str, str]]:
+def discover_github_repo(group_id: str, artifact_id: str, version: str, ctx: "ResolutionContext") -> Optional[Dict[str, str]]:
     """Try POM SCM, then guess from groupId. Returns {owner, repo} or None."""
-    pom = fetch_pom(group_id, artifact_id, version)
+    pom = fetch_pom(group_id, artifact_id, version, ctx)
     if pom:
         r = extract_github_repo_from_pom(pom)
         if r:
@@ -588,7 +693,7 @@ def _filter_version_range(versions: List[str], from_v: str, to_v: str) -> List[s
     return result
 
 
-def _get_dependency_changes_impl(group_id: str, artifact_id: str, from_version: str, to_version: str) -> Dict:
+def _get_dependency_changes_impl(group_id: str, artifact_id: str, from_version: str, to_version: str, ctx: "ResolutionContext") -> Dict:
     base = {
         "groupId": group_id,
         "artifactId": artifact_id,
@@ -597,7 +702,7 @@ def _get_dependency_changes_impl(group_id: str, artifact_id: str, from_version: 
         "changes": [],
     }
     try:
-        metadata = fetch_metadata(group_id, artifact_id)
+        metadata = fetch_metadata(group_id, artifact_id, ctx)
     except Exception as e:
         return {**base, "error": str(e)}
 
@@ -605,7 +710,7 @@ def _get_dependency_changes_impl(group_id: str, artifact_id: str, from_version: 
     if not versions_in_range:
         return {**base, "error": f"No versions found between {from_version} and {to_version}"}
 
-    gh_repo = discover_github_repo(group_id, artifact_id, to_version)
+    gh_repo = discover_github_repo(group_id, artifact_id, to_version, ctx)
     if not gh_repo:
         return {**base, "repositoryNotFound": True}
 
@@ -975,6 +1080,269 @@ def _parse_maven_modules(content: str) -> List[str]:
     return modules
 
 
+# ---------------------------------------------------------------------------
+# Repository discovery (project-declared repos) — discovery layer only.
+# A hand-written brace scanner is required because regex cannot balance nested
+# `{ }` blocks; scoping correctness (plugin vs dependency repos) depends on it.
+# ---------------------------------------------------------------------------
+
+# Gradle shorthand repository accessors → (function name, friendly name, URL).
+_GRADLE_SHORTHANDS = (
+    ("mavenCentral", "Maven Central", MAVEN_CENTRAL_URL),
+    ("google", "Google Maven", GOOGLE_MAVEN_URL),
+    ("gradlePluginPortal", "Gradle Plugin Portal", GRADLE_PLUGIN_PORTAL_URL),
+)
+
+# Container blocks whose nested repositories belong to the PLUGIN scope.
+_GRADLE_PLUGIN_CONTAINERS = ("pluginManagement", "buildscript")
+# Container block whose nested repositories belong to the DEPENDENCY scope.
+_GRADLE_DEP_CONTAINER = "dependencyResolutionManagement"
+
+
+def _maven_local_url() -> str:
+    """file:// marker for mavenLocal(); never HTTP-queried, just recorded."""
+    return "file://" + os.path.expanduser(os.path.join("~", ".m2", "repository"))
+
+
+def _skip_string_literal(content: str, i: int) -> int:
+    """`content[i]` is an opening quote; return the index just past its match.
+    Handles backslash escapes; an unterminated string consumes to end."""
+    quote = content[i]
+    n = len(content)
+    i += 1
+    while i < n:
+        c = content[i]
+        if c == "\\":
+            i += 2
+            continue
+        if c == quote:
+            return i + 1
+        i += 1
+    return n
+
+
+def _scan_balanced(content: str, brace_idx: int) -> Tuple[str, int]:
+    """Given the index of an opening `{`, walk a brace-depth counter and return
+    (body_without_outer_braces, index_just_past_the_closing_brace). Braces inside
+    string literals (`"`/`'`) and `//` line comments are ignored. An unbalanced
+    block returns the remainder of the content."""
+    n = len(content)
+    body_start = brace_idx + 1
+    depth = 0
+    i = brace_idx
+    while i < n:
+        c = content[i]
+        if c == '"' or c == "'":
+            i = _skip_string_literal(content, i)
+            continue
+        if c == "/" and i + 1 < n and content[i + 1] == "/":
+            nl = content.find("\n", i)
+            i = n if nl == -1 else nl
+            continue
+        if c == "{":
+            depth += 1
+        elif c == "}":
+            depth -= 1
+            if depth == 0:
+                return content[body_start:i], i + 1
+        i += 1
+    return content[body_start:], n
+
+
+def _find_block(content: str, header: str, start: int = 0) -> Optional[Tuple[str, int, int]]:
+    """Locate the first `header { ... }` block at/after `start`. Returns
+    (body, header_start_index, index_past_closing_brace) or None.
+
+    The header token is matched on word boundaries (so `maven` does not match
+    `mavenCentral`, and `maven(...)` calls are skipped — only `maven {` counts).
+    Limitation: the header search itself is NOT string/comment-aware (only the
+    body brace-scan is), so a commented-out `// pluginManagement {` header could
+    still be picked up; real builds rarely comment out container headers."""
+    pattern = re.compile(r"\b" + re.escape(header) + r"\b")
+    pos = start
+    n = len(content)
+    while True:
+        m = pattern.search(content, pos)
+        if not m:
+            return None
+        i = m.end()
+        while i < n and content[i] in " \t\r\n":
+            i += 1
+        if i < n and content[i] == "{":
+            body, after = _scan_balanced(content, i)
+            return body, m.start(), after
+        pos = m.end()
+
+
+def _extract_block(content: str, header: str) -> Optional[str]:
+    """Return the balanced `{ ... }` body of the first `header` block, or None
+    if no such block exists. String/comment-aware (see `_scan_balanced`)."""
+    found = _find_block(content, header)
+    return found[0] if found else None
+
+
+def _excise_spans(content: str, spans: List[Tuple[int, int]]) -> str:
+    """Return `content` with the given [start, end) ranges removed (merging
+    overlaps). Used to drop already-consumed container blocks before searching
+    for the bare top-level `repositories {}`."""
+    if not spans:
+        return content
+    out = []
+    last = 0
+    for s, e in sorted(spans):
+        if s < last:
+            last = max(last, e)
+            continue
+        out.append(content[last:s])
+        last = e
+    out.append(content[last:])
+    return "".join(out)
+
+
+def _dedup_repos(entries: List[Dict[str, str]]) -> List[Dict[str, str]]:
+    """Dedup RepoEntry dicts by URL, preserving first-seen (declaration) order."""
+    seen = set()
+    out = []
+    for e in entries:
+        if e["url"] in seen:
+            continue
+        seen.add(e["url"])
+        out.append(e)
+    return out
+
+
+def _parse_gradle_repos(block_body: str) -> List[Dict[str, str]]:
+    """Parse a Gradle `repositories { ... }` body into RepoEntry dicts
+    ``{"name", "url"}`` (scope is filled in by the caller). Handles shorthand
+    accessors, explicit `maven("url")` / `maven(url = "url")` calls, and
+    `maven { ... }` blocks (whose URL is extracted from the balanced body via the
+    brace scanner — NOT a brace-naive regex, so `maven { credentials{…}; url=… }`
+    is handled). Deduped by URL, declaration order preserved."""
+    entries: List[Dict[str, str]] = []
+
+    for fn, name, url in _GRADLE_SHORTHANDS:
+        if re.search(r"\b" + fn + r"\s*\(\s*\)", block_body):
+            entries.append({"name": name, "url": url})
+    if re.search(r"\bmavenLocal\s*\(\s*\)", block_body):
+        entries.append({"name": "Maven Local", "url": _maven_local_url()})
+
+    # Explicit maven("url") and maven(url = "url") (optionally wrapped in uri()).
+    for m in re.finditer(
+        r"\bmaven\s*\(\s*(?:url\s*=\s*)?(?:uri\s*\(\s*)?[\"']([^\"']+)[\"']",
+        block_body,
+    ):
+        entries.append({"name": m.group(1), "url": m.group(1)})
+
+    # maven { ... } blocks — extract each balanced body, then find its URL.
+    pos = 0
+    while True:
+        found = _find_block(block_body, "maven", pos)
+        if not found:
+            break
+        body, _start, after = found
+        um = re.search(r"\burl\b\s*(?:=\s*)?(?:uri\s*\(\s*)?[\"']([^\"']+)[\"']", body)
+        if um:
+            entries.append({"name": um.group(1), "url": um.group(1)})
+        pos = after
+
+    return _dedup_repos(entries)
+
+
+def _parse_maven_repos(pom_xml: str) -> Tuple[List[Dict[str, str]], List[Dict[str, str]]]:
+    """Parse a Maven POM into (dependency repos, plugin repos). `<repositories>`
+    entries are dependency-scoped, `<pluginRepositories>` entries plugin-scoped.
+    Per repo: `<url>` is the URL, `<id>` the name (falling back to the URL)."""
+
+    def parse_container(container: str, entry: str) -> List[Dict[str, str]]:
+        out: List[Dict[str, str]] = []
+        cm = re.search(r"<" + container + r">([\s\S]*?)</" + container + r">", pom_xml)
+        if not cm:
+            return out
+        block = cm.group(1)
+        for em in re.finditer(r"<" + entry + r">([\s\S]*?)</" + entry + r">", block):
+            rb = em.group(1)
+            um = re.search(r"<url>([^<]+)</url>", rb)
+            if not um:
+                continue
+            url = um.group(1).strip()
+            idm = re.search(r"<id>([^<]+)</id>", rb)
+            name = idm.group(1).strip() if idm else url
+            out.append({"name": name, "url": url})
+        return out
+
+    deps = parse_container("repositories", "repository")
+    plugins = parse_container("pluginRepositories", "pluginRepository")
+    return deps, plugins
+
+
+def _read_build_file(path: str) -> str:
+    """Read a build file as UTF-8 text; returns "" if unreadable."""
+    try:
+        with open(path, "r", encoding="utf-8", errors="ignore") as fh:
+            return fh.read()
+    except OSError:
+        return ""
+
+
+def discover_repositories(project_root: str) -> Dict[str, List[Dict[str, str]]]:
+    """Discover project-declared repositories, scoped into plugin vs dependency.
+
+    Returns ``{"dependency": [RepoEntry], "plugin": [RepoEntry]}`` where each
+    RepoEntry tags itself with ``"scope"``. Gradle is preferred; the POM is read
+    only when NO Gradle build/settings file exists (gradle-first / pom-exclusive).
+    Only the project_root build files are read — submodules are out of scope."""
+    result: Dict[str, List[Dict[str, str]]] = {"dependency": [], "plugin": []}
+
+    gradle_files = GRADLE_BUILD_FILES + GRADLE_SETTINGS_FILES
+    gradle_present = any(
+        os.path.exists(os.path.join(project_root, f)) for f in gradle_files
+    )
+
+    if gradle_present:
+        plugin_entries: List[Dict[str, str]] = []
+        dep_entries: List[Dict[str, str]] = []
+        for fname in GRADLE_SETTINGS_FILES + GRADLE_BUILD_FILES:
+            path = os.path.join(project_root, fname)
+            if not os.path.exists(path):
+                continue
+            content = _read_build_file(path)
+            consumed: List[Tuple[int, int]] = []
+            for header in _GRADLE_PLUGIN_CONTAINERS + (_GRADLE_DEP_CONTAINER,):
+                found = _find_block(content, header)
+                if not found:
+                    continue
+                body, start, after = found
+                consumed.append((start, after))
+                repos_body = _extract_block(body, "repositories")
+                if repos_body is None:
+                    continue
+                parsed = _parse_gradle_repos(repos_body)
+                if header == _GRADLE_DEP_CONTAINER:
+                    dep_entries.extend(parsed)
+                else:
+                    plugin_entries.extend(parsed)
+            # Excise consumed container spans BEFORE the bare top-level
+            # repositories{} search, else a buildscript/pluginManagement-nested
+            # `repositories` would be mis-read as dependency scope.
+            stripped = _excise_spans(content, consumed)
+            bare = _extract_block(stripped, "repositories")
+            if bare is not None:
+                dep_entries.extend(_parse_gradle_repos(bare))
+        result["plugin"] = _dedup_repos(plugin_entries)
+        result["dependency"] = _dedup_repos(dep_entries)
+    else:
+        pom_path = os.path.join(project_root, "pom.xml")
+        if os.path.exists(pom_path):
+            deps, plugins = _parse_maven_repos(_read_build_file(pom_path))
+            result["dependency"] = _dedup_repos(deps)
+            result["plugin"] = _dedup_repos(plugins)
+
+    for scope, repos in result.items():
+        for entry in repos:
+            entry["scope"] = scope
+    return result
+
+
 def _detect_build_system(project_root: str) -> str:
     for f in GRADLE_BUILD_FILES + GRADLE_SETTINGS_FILES:
         if os.path.exists(os.path.join(project_root, f)):
@@ -1236,7 +1604,8 @@ def handle_get_latest_version(args: Dict) -> Any:
     group_id = args["groupId"]
     artifact_id = args["artifactId"]
     filter_mode = args.get("stabilityFilter", "PREFER_STABLE")
-    metadata = fetch_metadata(group_id, artifact_id)
+    ctx = build_resolution_context(args)
+    metadata = fetch_metadata(group_id, artifact_id, ctx)
     selected = find_latest_version(metadata["versions"], filter_mode)
     if not selected:
         raise ValueError(f"No stable version found for {group_id}:{artifact_id}")
@@ -1253,7 +1622,8 @@ def handle_check_version_exists(args: Dict) -> Any:
     group_id = args["groupId"]
     artifact_id = args["artifactId"]
     version = args["version"]
-    repo_name = check_version_in_repos(group_id, artifact_id, version)
+    ctx = build_resolution_context(args)
+    repo_name = check_version_in_repos(group_id, artifact_id, version, ctx)
     if repo_name:
         return {
             "groupId": group_id,
@@ -1272,10 +1642,11 @@ def handle_check_version_exists(args: Dict) -> Any:
 
 
 def handle_check_multiple_dependencies(args: Dict) -> Any:
+    ctx = build_resolution_context(args)
     results = []
     for dep in args["dependencies"]:
         try:
-            metadata = fetch_metadata(dep["groupId"], dep["artifactId"])
+            metadata = fetch_metadata(dep["groupId"], dep["artifactId"], ctx)
             latest = find_latest_version(metadata["versions"], "PREFER_STABLE")
             if not latest:
                 raise ValueError("No version found")
@@ -1297,10 +1668,11 @@ def handle_check_multiple_dependencies(args: Dict) -> Any:
 
 
 def handle_compare_dependency_versions(args: Dict) -> Any:
+    ctx = build_resolution_context(args)
     results = []
     for dep in args["dependencies"]:
         try:
-            metadata = fetch_metadata(dep["groupId"], dep["artifactId"])
+            metadata = fetch_metadata(dep["groupId"], dep["artifactId"], ctx)
             latest = find_latest_version_for_current(metadata["versions"], dep["currentVersion"])
             if not latest:
                 raise ValueError("No matching version found")
@@ -1336,11 +1708,13 @@ def handle_compare_dependency_versions(args: Dict) -> Any:
 
 
 def handle_get_dependency_changes(args: Dict) -> Any:
+    ctx = build_resolution_context(args)
     return _get_dependency_changes_impl(
         args["groupId"],
         args["artifactId"],
         args["fromVersion"],
         args["toVersion"],
+        ctx,
     )
 
 
@@ -1361,6 +1735,7 @@ def handle_get_dependency_vulnerabilities(args: Dict) -> Any:
 
 
 def handle_get_dependency_health(args: Dict) -> Any:
+    ctx = build_resolution_context(args)
     results = []
     for dep in args["dependencies"]:
         group_id = dep["groupId"]
@@ -1376,7 +1751,7 @@ def handle_get_dependency_health(args: Dict) -> Any:
             "signals": [],
         }
         try:
-            metadata = fetch_metadata(group_id, artifact_id)
+            metadata = fetch_metadata(group_id, artifact_id, ctx)
         except Exception as e:
             result["healthError"] = str(e)
             results.append(result)
@@ -1396,7 +1771,7 @@ def handle_get_dependency_health(args: Dict) -> Any:
         gh_repo = None
         pom_licenses: List[str] = []
         if target_version:
-            pom = fetch_pom(group_id, artifact_id, target_version)
+            pom = fetch_pom(group_id, artifact_id, target_version, ctx)
             if pom:
                 gh_repo = extract_github_repo_from_pom(pom)
                 pom_licenses = extract_licenses_from_pom(pom)
@@ -1505,6 +1880,7 @@ def handle_audit_project_dependencies(args: Dict) -> Any:
     if production_only is None:
         production_only = True
 
+    ctx = build_resolution_context(args)
     scan = scan_project(project_path)
 
     def is_included_in_production(dep: Dict) -> bool:
@@ -1535,7 +1911,7 @@ def handle_audit_project_dependencies(args: Dict) -> Any:
         ga_key = f"{dep['groupId']}:{dep['artifactId']}"
         try:
             if ga_key not in metadata_cache:
-                metadata_cache[ga_key] = fetch_metadata(dep["groupId"], dep["artifactId"])
+                metadata_cache[ga_key] = fetch_metadata(dep["groupId"], dep["artifactId"], ctx)
             metadata = metadata_cache[ga_key]
             latest = find_latest_version_for_current(metadata["versions"], dep["version"])
             upgrade_type = get_upgrade_type(dep["version"], latest) if latest else "none"
@@ -1631,6 +2007,7 @@ TOOLS = [
                     "enum": ["PREFER_STABLE", "STABLE_ONLY", "ALL"],
                     "description": "Version stability filter. Default: PREFER_STABLE",
                 },
+                "projectPath": {"type": "string", "description": "Project root used to resolve declared repositories. Defaults to the current working directory."},
             },
             "required": ["groupId", "artifactId"],
         },
@@ -1644,6 +2021,7 @@ TOOLS = [
                 "groupId": {"type": "string"},
                 "artifactId": {"type": "string"},
                 "version": {"type": "string"},
+                "projectPath": {"type": "string", "description": "Project root used to resolve declared repositories. Defaults to the current working directory."},
             },
             "required": ["groupId", "artifactId", "version"],
         },
@@ -1664,7 +2042,8 @@ TOOLS = [
                         },
                         "required": ["groupId", "artifactId"],
                     },
-                }
+                },
+                "projectPath": {"type": "string", "description": "Project root used to resolve declared repositories. Defaults to the current working directory."},
             },
             "required": ["dependencies"],
         },
@@ -1686,7 +2065,8 @@ TOOLS = [
                         },
                         "required": ["groupId", "artifactId", "currentVersion"],
                     },
-                }
+                },
+                "projectPath": {"type": "string", "description": "Project root used to resolve declared repositories. Defaults to the current working directory."},
             },
             "required": ["dependencies"],
         },
@@ -1701,6 +2081,7 @@ TOOLS = [
                 "artifactId": {"type": "string"},
                 "fromVersion": {"type": "string", "description": "Starting version (exclusive)"},
                 "toVersion": {"type": "string", "description": "Target version (inclusive)"},
+                "projectPath": {"type": "string", "description": "Project root used to resolve declared repositories. Defaults to the current working directory."},
             },
             "required": ["groupId", "artifactId", "fromVersion", "toVersion"],
         },
@@ -1754,7 +2135,8 @@ TOOLS = [
                         },
                         "required": ["groupId", "artifactId"],
                     },
-                }
+                },
+                "projectPath": {"type": "string", "description": "Project root used to resolve declared repositories. Defaults to the current working directory."},
             },
             "required": ["dependencies"],
         },

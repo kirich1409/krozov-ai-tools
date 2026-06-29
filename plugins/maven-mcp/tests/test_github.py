@@ -23,7 +23,7 @@ import re
 import unittest
 import unittest.mock
 
-from _helpers import server, mock_urlopen, http_error
+from _helpers import server, mock_urlopen, http_error, empty_ctx
 
 
 # POM fixtures mirror discover-repo.test.ts / github-provider.test.ts.
@@ -248,7 +248,7 @@ class DiscoverGithubRepoTest(unittest.TestCase):
             side_effect=mock_urlopen([(200, POM_WITH_SCM_OKHTTP.encode())]),
         ) as m:
             result = server.discover_github_repo(
-                "com.squareup.okhttp3", "okhttp", "4.12.0"
+                "com.squareup.okhttp3", "okhttp", "4.12.0", empty_ctx()
             )
         self.assertEqual(result, {"owner": "square", "repo": "okhttp"})
         self.assertEqual(len(m.call_args_list), 1)
@@ -263,7 +263,7 @@ class DiscoverGithubRepoTest(unittest.TestCase):
         with unittest.mock.patch(
             "urllib.request.urlopen", side_effect=mock_urlopen(responses)
         ) as m:
-            result = server.discover_github_repo("io.github.javalin", "javalin", "5.0.0")
+            result = server.discover_github_repo("io.github.javalin", "javalin", "5.0.0", empty_ctx())
         self.assertEqual(result, {"owner": "javalin", "repo": "javalin"})
         self.assertEqual(len(m.call_args_list), 2)
 
@@ -273,7 +273,7 @@ class DiscoverGithubRepoTest(unittest.TestCase):
         responses = [(200, POM_WITHOUT_SCM.encode()), err]
         with unittest.mock.patch("urllib.request.urlopen", side_effect=mock_urlopen(responses)):
             result = server.discover_github_repo(
-                "io.github.someuser", "nonexistent-lib", "1.0.0"
+                "io.github.someuser", "nonexistent-lib", "1.0.0", empty_ctx()
             )
         self.assertIsNone(result)
 
@@ -284,7 +284,7 @@ class DiscoverGithubRepoTest(unittest.TestCase):
             "urllib.request.urlopen", side_effect=mock_urlopen([err])
         ) as m:
             result = server.discover_github_repo(
-                "org.apache.commons", "commons-lang3", "3.14.0"
+                "org.apache.commons", "commons-lang3", "3.14.0", empty_ctx()
             )
         self.assertIsNone(result)
         # POM fetch only (1 call); no guess possible -> no gh_repo_exists call.
@@ -341,7 +341,7 @@ class DependencyChangesImplTest(unittest.TestCase):
         ]
         with unittest.mock.patch("urllib.request.urlopen", side_effect=mock_urlopen(responses)):
             result = server._get_dependency_changes_impl(
-                "io.ktor", "ktor-core", "1.0.0", "2.0.0"
+                "io.ktor", "ktor-core", "1.0.0", "2.0.0", empty_ctx()
             )
         self.assertNotIn("error", result)
         self.assertNotIn("repositoryNotFound", result)
@@ -366,7 +366,7 @@ class DependencyChangesImplTest(unittest.TestCase):
         ]
         with unittest.mock.patch("urllib.request.urlopen", side_effect=mock_urlopen(responses)):
             result = server._get_dependency_changes_impl(
-                "io.ktor", "ktor-core", "1.0.0", "1.5.0"
+                "io.ktor", "ktor-core", "1.0.0", "1.5.0", empty_ctx()
             )
         by_version = {c["version"]: c for c in result["changes"]}
         self.assertEqual(by_version["1.5.0"]["body"], "mid")
@@ -379,7 +379,7 @@ class DependencyChangesImplTest(unittest.TestCase):
         ]
         with unittest.mock.patch("urllib.request.urlopen", side_effect=mock_urlopen(responses)):
             result = server._get_dependency_changes_impl(
-                "com.example", "lib", "1.0.0", "2.0.0"
+                "com.example", "lib", "1.0.0", "2.0.0", empty_ctx()
             )
         self.assertTrue(result["repositoryNotFound"])
         self.assertNotIn("repositoryUrl", result)
@@ -395,7 +395,7 @@ class DependencyChangesImplTest(unittest.TestCase):
         ]
         with unittest.mock.patch("urllib.request.urlopen", side_effect=mock_urlopen(responses)):
             result = server._get_dependency_changes_impl(
-                "io.ktor", "ktor-core", "1.0.0", "2.0.0"
+                "io.ktor", "ktor-core", "1.0.0", "2.0.0", empty_ctx()
             )
         self.assertNotIn("error", result)
         self.assertEqual(result["repositoryUrl"], "https://github.com/ktorio/ktor")
@@ -408,7 +408,7 @@ class DependencyChangesImplTest(unittest.TestCase):
             "urllib.request.urlopen", side_effect=mock_urlopen(responses)
         ) as m:
             result = server._get_dependency_changes_impl(
-                "io.ktor", "ktor-core", "2.0.0", "3.0.0"
+                "io.ktor", "ktor-core", "2.0.0", "3.0.0", empty_ctx()
             )
         self.assertEqual(result["error"], "No versions found between 2.0.0 and 3.0.0")
         self.assertEqual(len(m.call_args_list), 1)  # only the metadata fetch
@@ -418,7 +418,7 @@ class DependencyChangesImplTest(unittest.TestCase):
         err = http_error("https://repo1.maven.org/maven2/x/maven-metadata.xml", 404)
         with unittest.mock.patch("urllib.request.urlopen", side_effect=mock_urlopen([err])):
             result = server._get_dependency_changes_impl(
-                "io.ktor", "ktor-core", "1.0.0", "2.0.0"
+                "io.ktor", "ktor-core", "1.0.0", "2.0.0", empty_ctx()
             )
         self.assertIn("error", result)
         self.assertEqual(result["changes"], [])
