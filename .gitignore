@@ -3,6 +3,10 @@ dist/
 .worktrees/
 *.tgz
 
+# Python
+__pycache__/
+*.pyc
+
 .DS_Store
 .claire/
 .remember/
