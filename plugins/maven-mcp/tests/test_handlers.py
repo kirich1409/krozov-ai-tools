@@ -128,22 +128,25 @@ class TestCompareDependencyVersions(unittest.TestCase):
     """mirrors src/tools/__tests__/compare-dependency-versions.test.ts"""
 
     def test_263_no_match_guard_exact_observables(self):
-        # #263 regression. dep[0] is alpha-current with only a STABLE candidate
-        # newer: find_latest_version_for_current returns None (no version is as
-        # unstable-or-more than alpha), so the `if not latest` guard (server.py
-        # :1299) raises "No matching version found". dep[1] resolves normally.
+        # #263 regression. dep[0]'s published versions are a single SNAPSHOT and
+        # current 1.0.0 is absent from the list: the only candidate is less
+        # stable than current, so find_latest_version_for_current returns None
+        # (a SNAPSHOT is never offered as an upgrade, #312), and — because
+        # current itself is not published — nothing newer-or-equal qualifies
+        # either (#312 correction). The `if not latest` guard (server.py :1299)
+        # therefore raises "No matching version found". dep[1] resolves normally.
         # Asserting the EXACT error string + upgradeAvailable/latestVersion makes
         # this fail if the guard is removed: without it, get_upgrade_type(current,
         # None) raises a TypeError whose message would replace the error text.
         responses = [
-            (200, _meta(["2.0.0"])),            # dep[0] no-match metadata
-            (200, _meta(["1.0.0", "1.1.0"])),   # dep[1] sibling metadata
+            (200, _meta(["2.0.0-SNAPSHOT"])),  # dep[0] only less-stable, current absent
+            (200, _meta(["1.0.0", "1.1.0"])),  # dep[1] sibling metadata
         ]
         with _patch_urlopen(responses):
             out = server.handle_compare_dependency_versions({
                 "dependencies": [
                     {"groupId": "com.example", "artifactId": "nomatch",
-                     "currentVersion": "1.0.0-alpha01"},
+                     "currentVersion": "1.0.0"},
                     {"groupId": "com.example", "artifactId": "sibling",
                      "currentVersion": "1.0.0"},
                 ],
@@ -159,6 +162,27 @@ class TestCompareDependencyVersions(unittest.TestCase):
         self.assertEqual(sibling["latestVersion"], "1.1.0")
         self.assertIs(sibling["upgradeAvailable"], True)
         self.assertEqual(sibling["upgradeType"], "minor")
+
+    def test_up_to_date_reports_no_upgrade_without_error(self):
+        # #312 correction: an already-up-to-date dependency (current == latest
+        # published stable) must NOT trip the `if not latest` guard. With the
+        # newer-OR-equal rule find_latest_version_for_current returns the
+        # current 2.0.0 itself, so the handler reports latestVersion 2.0.0,
+        # upgradeAvailable False (upgradeType "none") and emits NO error — where
+        # the prior strict-newer check returned None and raised a spurious
+        # "No matching version found".
+        with _patch_urlopen([(200, _meta(["1.0.0", "2.0.0"]))]):
+            out = server.handle_compare_dependency_versions({
+                "dependencies": [
+                    {"groupId": "com.example", "artifactId": "uptodate",
+                     "currentVersion": "2.0.0"},
+                ],
+            })
+        result = out["results"][0]
+        self.assertEqual(result["latestVersion"], "2.0.0")
+        self.assertIs(result["upgradeAvailable"], False)
+        self.assertEqual(result["upgradeType"], "none")
+        self.assertNotIn("error", result)
 
 
 # --- handle_get_dependency_changes ------------------------------------------

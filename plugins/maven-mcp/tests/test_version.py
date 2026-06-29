@@ -83,15 +83,13 @@ class FindLatestVersionForCurrentTest(unittest.TestCase):
             "2.0.0",
         )
 
-    def test_current_rc_returns_rc_not_stable(self):
-        # mirrors classify.test.ts: "returns the stable when current is rc"
-        # Python difference: TS returns "2.0.0" (picks highest-versioned entry
-        # whose stability >= rc).  Python scans in reverse and returns the first
-        # entry whose PRERELEASE_WEIGHT <= rc weight (4); stable weight (5) > 4
-        # so "2.0.0" is skipped and "2.0.0-RC1" is returned instead.
+    def test_current_rc_returns_stable_upgrade(self):
+        # #312: a more-stable upgrade must win. From an RC current, the stable
+        # 2.0.0 qualifies (stable >= rc) and is the highest candidate, so it is
+        # returned in preference to the same-core 2.0.0-RC1.
         self.assertEqual(
             server.find_latest_version_for_current(_MIXED_VERSIONS, "1.0.0-RC1"),
-            "2.0.0-RC1",
+            "2.0.0",
         )
 
     def test_skips_versions_less_stable_than_current_beta(self):
@@ -102,15 +100,24 @@ class FindLatestVersionForCurrentTest(unittest.TestCase):
             "2.0.0-beta1",
         )
 
-    def test_returns_snapshot_when_stable_not_available(self):
-        # mirrors classify.test.ts: "returns undefined when no matching version exists"
-        # Python difference: TS returns undefined because snapshot stability is
-        # below the stable threshold.  Python returns "1.0.0-SNAPSHOT" because
-        # snapshot PRERELEASE_WEIGHT (0) <= stable max_rank (5).
+    def test_returns_none_when_only_less_stable_available(self):
+        # #312: a SNAPSHOT must never be offered as an upgrade from a stable
+        # current. Snapshot rank (0) is below stable rank (5), so nothing
+        # qualifies and None is returned.
         v = ["1.0.0-SNAPSHOT"]
-        self.assertEqual(
+        self.assertIsNone(
             server.find_latest_version_for_current(v, "1.0.0"),
-            "1.0.0-SNAPSHOT",
+        )
+
+    def test_up_to_date_current_returns_current_not_none(self):
+        # #312 correction: when current is already the highest acceptable
+        # version it is present in the list, qualifies (compare == 0, same
+        # stability) and is returned. The newer-OR-equal rule avoids the
+        # spurious "no matching version" the strict-newer check produced for
+        # already-up-to-date dependencies.
+        self.assertEqual(
+            server.find_latest_version_for_current(["1.0.0", "2.0.0"], "2.0.0"),
+            "2.0.0",
         )
 
 
