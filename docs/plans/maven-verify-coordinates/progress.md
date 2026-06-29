@@ -3,9 +3,13 @@
 > Plan: ./plan.md · Tasks: ./tasks.md · Branch feat/maven-verify-coordinates
 
 ## Status
-- [ ] T-1 — string-distance utilities
-- [ ] T-2 — verify_coordinates handler + registration
-- [ ] T-3 — docs + L5 smoke + open PR
+- [x] T-1 — string-distance + Solr-escape utilities (b816719, 10 tests)
+- [x] T-2 — verify_coordinates handler + registration (ecc5fcb, 18 tests; 282 total)
+- [x] T-3 — docs (ea7243e) + L5 smoke ✅ + PR (next)
+
+## L5 smoke (stdio, real network)
+- io.ktor:ktor-client-core → existenceStatus=exists, gaExists=True, likelyHallucination=False, repository=Maven Central.
+- org.apache.commons:commons-lang → existenceStatus=absent, likelyHallucination=True, suggestions include real commons-lang:commons-lang (ranking among equal-artifactId candidates is versionCount-penalized; deeper popularity/ownership signal tracked #322).
 
 ## Learnings
 <!-- one line per completed task -->
