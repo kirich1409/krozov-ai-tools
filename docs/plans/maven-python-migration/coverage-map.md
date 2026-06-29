@@ -1,8 +1,13 @@
 # Coverage Map — TS test suite → Python parity (T-8)
 
 Maps each of the **47** TypeScript test files under `plugins/maven-mcp/src/**/__tests__/`
-to the shipped Python runtime (`plugin/server/server.py`) and its 6 test modules
-(`tests/test_{version,parsers,github,maven_search_osv,handlers,http}.py`).
+to the shipped Python runtime (`plugin/server/server.py`) and its 8 test modules
+(`tests/test_{version,parsers,github,maven_search_osv,handlers,http,repo_discovery,resolution}.py`).
+
+> Update (`fix/maven-repo-resolution`): the repository-resolution layer (#310/#311,
+> core of #299) added project-repo discovery + cross-repo metadata merge, so the
+> 3 `discovery/*` files and `maven/resolver.test.ts` move from diverged/partial to
+> **ported** (covered by `test_repo_discovery.py` + `test_resolution.py`).
 
 **This behavioral map is the AUTHORITATIVE parity bar.** It records what the Python
 suite actually asserts. `python3 -m trace --count` (see *Untested server.py functions*)
@@ -20,8 +25,10 @@ is a **backstop only** — it proves a function executed, never that behavior wa
 - **#2** persistent file cache (feature gap)
 - **#3** AGP/AndroidX release-notes changelog providers + html-to-text + github CHANGELOG.md markdown fallback + `changelog/resolver` provider-selection — server.py has no agp/androidx/html parser and `_get_dependency_changes_impl` is GitHub-releases-only (feature gap)
 - **#4** HTTP/SSE transport — server.py is stdio-only (feature gap)
-- **#5** custom-repository discovery — **CORRECTNESS** regression (silently wrong version answers for projects with custom repos)
-- **#6** `resolveAll` parallel-merge vs first-hit — **CORRECTNESS** regression (multi-repo artifacts: first-hit drops versions present only in a later repo)
+
+**Resolved by this PR** (`fix/maven-repo-resolution`) — both former CORRECTNESS regressions are now **ported**:
+- **#5** custom-repository discovery — `discover_repositories` + project-first `_repos_for` parse declared Gradle/Maven repos (covered by `test_repo_discovery.py` + `test_resolution.py`).
+- **#6** `resolveAll` parallel-merge vs first-hit — `fetch_metadata` now merges versions across all answering repos (covered by `test_resolution.py` `TestMetadataMerge`).
 
 ## Map
 
@@ -71,11 +78,11 @@ is a **backstop only** — it proves a function executed, never that behavior wa
 | `androidx/url.test.ts` | diverged → #3 | no AndroidX URL mapping in server.py |
 | `html/to-text.test.ts` | diverged → #3 | no htmlToText util in server.py (only used by agp/androidx providers) |
 
-### maven/ + search/ + vulnerabilities/ (4) — 3 ported, 1 partial
+### maven/ + search/ + vulnerabilities/ (4) — all ported
 | TS test file | Bucket | Python |
 |---|---|---|
 | `maven/repository.test.ts` | ported | `test_maven_search_osv.py` (TestReposFor + metadata/pom URL construction) |
-| `maven/resolver.test.ts` | partial → `test_maven_search_osv.py` + resolveAll-merge diverged → #6 | first-hit `fetch_metadata` exercised (incl. `test_first_hit_not_resolveall_merge`); parallel merge-across-repos semantics not ported |
+| `maven/resolver.test.ts` | ported | `test_resolution.py` (TestMetadataMerge — cross-repo union/dedup/sort, `lastUpdated` max, all-404 raise; TestProjectFirstRouting) + `test_maven_search_osv.py`. Cross-repo merge now ported (#6); the former `test_first_hit_not_resolveall_merge` was rewritten to assert the merge |
 | `search/maven-search.test.ts` | ported | `test_maven_search_osv.py` (TestSearchMavenCentral) |
 | `vulnerabilities/osv-client.test.ts` | ported | `test_maven_search_osv.py` (TestQueryOsvBatch) |
 
@@ -89,12 +96,12 @@ is a **backstop only** — it proves a function executed, never that behavior wa
 |---|---|---|
 | `cache/file-cache.test.ts` | diverged → #2 | no persistent file cache in server.py (in-memory memoization only) |
 
-### discovery/ (3) — all diverged → #5
+### discovery/ (3) — all ported
 | TS test file | Bucket | Python |
 |---|---|---|
-| `discovery/discover.test.ts` | diverged → #5 | server.py `_repos_for` is static group-prefix routing; no build-file custom-repo discovery |
-| `discovery/gradle-parser.test.ts` | diverged → #5 | no `maven {}` / `maven("url")` parsing in server.py |
-| `discovery/maven-parser.test.ts` | diverged → #5 | no `<repositories>` parsing in server.py |
+| `discovery/discover.test.ts` | ported | `test_repo_discovery.py` (TestDiscoverRepositories — plugin/dependency scoping, gradle-wins-over-pom, 2x2 no-leak, buildscript-vs-bare) + `test_resolution.py` (TestProjectFirstRouting) |
+| `discovery/gradle-parser.test.ts` | ported | `test_repo_discovery.py` (TestParseGradleRepos — shorthands, `maven("url")`, `maven { url }` incl. url-after-credentials; TestExtractBlock — brace scanner) |
+| `discovery/maven-parser.test.ts` | ported | `test_repo_discovery.py` (TestParseMavenRepos — `<repositories>` / `<pluginRepositories>` dual-container separation) |
 
 ### tools/ (10) — all ported (`test_handlers.py`)
 | TS test file | Bucket | Python |
@@ -120,13 +127,13 @@ is a **backstop only** — it proves a function executed, never that behavior wa
 
 | Bucket | Count |
 |---|---|
-| ported | 30 |
-| partial | 3 |
-| diverged | 12 |
+| ported | 34 |
+| partial | 2 |
+| diverged | 9 |
 | N/A | 2 |
 | **Total** | **47** |
 
-partial files = `http/client.test.ts` (#1), `maven/resolver.test.ts` (#6), `changelog/resolver.test.ts` (#3) — the three required boundary files.
+partial files = `http/client.test.ts` (#1), `changelog/resolver.test.ts` (#3). (`maven/resolver.test.ts` graduated partial → ported with the cross-repo merge; the 3 `discovery/*` files graduated diverged → ported with project-repo discovery — both via `fix/maven-repo-resolution`.)
 
 ## Untested server.py functions (trace backstop)
 
