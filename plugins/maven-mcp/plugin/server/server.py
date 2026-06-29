@@ -975,6 +975,269 @@ def _parse_maven_modules(content: str) -> List[str]:
     return modules
 
 
+# ---------------------------------------------------------------------------
+# Repository discovery (project-declared repos) — discovery layer only.
+# A hand-written brace scanner is required because regex cannot balance nested
+# `{ }` blocks; scoping correctness (plugin vs dependency repos) depends on it.
+# ---------------------------------------------------------------------------
+
+# Gradle shorthand repository accessors → (function name, friendly name, URL).
+_GRADLE_SHORTHANDS = (
+    ("mavenCentral", "Maven Central", MAVEN_CENTRAL_URL),
+    ("google", "Google Maven", GOOGLE_MAVEN_URL),
+    ("gradlePluginPortal", "Gradle Plugin Portal", GRADLE_PLUGIN_PORTAL_URL),
+)
+
+# Container blocks whose nested repositories belong to the PLUGIN scope.
+_GRADLE_PLUGIN_CONTAINERS = ("pluginManagement", "buildscript")
+# Container block whose nested repositories belong to the DEPENDENCY scope.
+_GRADLE_DEP_CONTAINER = "dependencyResolutionManagement"
+
+
+def _maven_local_url() -> str:
+    """file:// marker for mavenLocal(); never HTTP-queried, just recorded."""
+    return "file://" + os.path.expanduser(os.path.join("~", ".m2", "repository"))
+
+
+def _skip_string_literal(content: str, i: int) -> int:
+    """`content[i]` is an opening quote; return the index just past its match.
+    Handles backslash escapes; an unterminated string consumes to end."""
+    quote = content[i]
+    n = len(content)
+    i += 1
+    while i < n:
+        c = content[i]
+        if c == "\\":
+            i += 2
+            continue
+        if c == quote:
+            return i + 1
+        i += 1
+    return n
+
+
+def _scan_balanced(content: str, brace_idx: int) -> Tuple[str, int]:
+    """Given the index of an opening `{`, walk a brace-depth counter and return
+    (body_without_outer_braces, index_just_past_the_closing_brace). Braces inside
+    string literals (`"`/`'`) and `//` line comments are ignored. An unbalanced
+    block returns the remainder of the content."""
+    n = len(content)
+    body_start = brace_idx + 1
+    depth = 0
+    i = brace_idx
+    while i < n:
+        c = content[i]
+        if c == '"' or c == "'":
+            i = _skip_string_literal(content, i)
+            continue
+        if c == "/" and i + 1 < n and content[i + 1] == "/":
+            nl = content.find("\n", i)
+            i = n if nl == -1 else nl
+            continue
+        if c == "{":
+            depth += 1
+        elif c == "}":
+            depth -= 1
+            if depth == 0:
+                return content[body_start:i], i + 1
+        i += 1
+    return content[body_start:], n
+
+
+def _find_block(content: str, header: str, start: int = 0) -> Optional[Tuple[str, int, int]]:
+    """Locate the first `header { ... }` block at/after `start`. Returns
+    (body, header_start_index, index_past_closing_brace) or None.
+
+    The header token is matched on word boundaries (so `maven` does not match
+    `mavenCentral`, and `maven(...)` calls are skipped — only `maven {` counts).
+    Limitation: the header search itself is NOT string/comment-aware (only the
+    body brace-scan is), so a commented-out `// pluginManagement {` header could
+    still be picked up; real builds rarely comment out container headers."""
+    pattern = re.compile(r"\b" + re.escape(header) + r"\b")
+    pos = start
+    n = len(content)
+    while True:
+        m = pattern.search(content, pos)
+        if not m:
+            return None
+        i = m.end()
+        while i < n and content[i] in " \t\r\n":
+            i += 1
+        if i < n and content[i] == "{":
+            body, after = _scan_balanced(content, i)
+            return body, m.start(), after
+        pos = m.end()
+
+
+def _extract_block(content: str, header: str) -> Optional[str]:
+    """Return the balanced `{ ... }` body of the first `header` block, or None
+    if no such block exists. String/comment-aware (see `_scan_balanced`)."""
+    found = _find_block(content, header)
+    return found[0] if found else None
+
+
+def _excise_spans(content: str, spans: List[Tuple[int, int]]) -> str:
+    """Return `content` with the given [start, end) ranges removed (merging
+    overlaps). Used to drop already-consumed container blocks before searching
+    for the bare top-level `repositories {}`."""
+    if not spans:
+        return content
+    out = []
+    last = 0
+    for s, e in sorted(spans):
+        if s < last:
+            last = max(last, e)
+            continue
+        out.append(content[last:s])
+        last = e
+    out.append(content[last:])
+    return "".join(out)
+
+
+def _dedup_repos(entries: List[Dict[str, str]]) -> List[Dict[str, str]]:
+    """Dedup RepoEntry dicts by URL, preserving first-seen (declaration) order."""
+    seen = set()
+    out = []
+    for e in entries:
+        if e["url"] in seen:
+            continue
+        seen.add(e["url"])
+        out.append(e)
+    return out
+
+
+def _parse_gradle_repos(block_body: str) -> List[Dict[str, str]]:
+    """Parse a Gradle `repositories { ... }` body into RepoEntry dicts
+    ``{"name", "url"}`` (scope is filled in by the caller). Handles shorthand
+    accessors, explicit `maven("url")` / `maven(url = "url")` calls, and
+    `maven { ... }` blocks (whose URL is extracted from the balanced body via the
+    brace scanner — NOT a brace-naive regex, so `maven { credentials{…}; url=… }`
+    is handled). Deduped by URL, declaration order preserved."""
+    entries: List[Dict[str, str]] = []
+
+    for fn, name, url in _GRADLE_SHORTHANDS:
+        if re.search(r"\b" + fn + r"\s*\(\s*\)", block_body):
+            entries.append({"name": name, "url": url})
+    if re.search(r"\bmavenLocal\s*\(\s*\)", block_body):
+        entries.append({"name": "Maven Local", "url": _maven_local_url()})
+
+    # Explicit maven("url") and maven(url = "url") (optionally wrapped in uri()).
+    for m in re.finditer(
+        r"\bmaven\s*\(\s*(?:url\s*=\s*)?(?:uri\s*\(\s*)?[\"']([^\"']+)[\"']",
+        block_body,
+    ):
+        entries.append({"name": m.group(1), "url": m.group(1)})
+
+    # maven { ... } blocks — extract each balanced body, then find its URL.
+    pos = 0
+    while True:
+        found = _find_block(block_body, "maven", pos)
+        if not found:
+            break
+        body, _start, after = found
+        um = re.search(r"\burl\b\s*(?:=\s*)?(?:uri\s*\(\s*)?[\"']([^\"']+)[\"']", body)
+        if um:
+            entries.append({"name": um.group(1), "url": um.group(1)})
+        pos = after
+
+    return _dedup_repos(entries)
+
+
+def _parse_maven_repos(pom_xml: str) -> Tuple[List[Dict[str, str]], List[Dict[str, str]]]:
+    """Parse a Maven POM into (dependency repos, plugin repos). `<repositories>`
+    entries are dependency-scoped, `<pluginRepositories>` entries plugin-scoped.
+    Per repo: `<url>` is the URL, `<id>` the name (falling back to the URL)."""
+
+    def parse_container(container: str, entry: str) -> List[Dict[str, str]]:
+        out: List[Dict[str, str]] = []
+        cm = re.search(r"<" + container + r">([\s\S]*?)</" + container + r">", pom_xml)
+        if not cm:
+            return out
+        block = cm.group(1)
+        for em in re.finditer(r"<" + entry + r">([\s\S]*?)</" + entry + r">", block):
+            rb = em.group(1)
+            um = re.search(r"<url>([^<]+)</url>", rb)
+            if not um:
+                continue
+            url = um.group(1).strip()
+            idm = re.search(r"<id>([^<]+)</id>", rb)
+            name = idm.group(1).strip() if idm else url
+            out.append({"name": name, "url": url})
+        return out
+
+    deps = parse_container("repositories", "repository")
+    plugins = parse_container("pluginRepositories", "pluginRepository")
+    return deps, plugins
+
+
+def _read_build_file(path: str) -> str:
+    """Read a build file as UTF-8 text; returns "" if unreadable."""
+    try:
+        with open(path, "r", encoding="utf-8", errors="ignore") as fh:
+            return fh.read()
+    except OSError:
+        return ""
+
+
+def discover_repositories(project_root: str) -> Dict[str, List[Dict[str, str]]]:
+    """Discover project-declared repositories, scoped into plugin vs dependency.
+
+    Returns ``{"dependency": [RepoEntry], "plugin": [RepoEntry]}`` where each
+    RepoEntry tags itself with ``"scope"``. Gradle is preferred; the POM is read
+    only when NO Gradle build/settings file exists (gradle-first / pom-exclusive).
+    Only the project_root build files are read — submodules are out of scope."""
+    result: Dict[str, List[Dict[str, str]]] = {"dependency": [], "plugin": []}
+
+    gradle_files = GRADLE_BUILD_FILES + GRADLE_SETTINGS_FILES
+    gradle_present = any(
+        os.path.exists(os.path.join(project_root, f)) for f in gradle_files
+    )
+
+    if gradle_present:
+        plugin_entries: List[Dict[str, str]] = []
+        dep_entries: List[Dict[str, str]] = []
+        for fname in GRADLE_SETTINGS_FILES + GRADLE_BUILD_FILES:
+            path = os.path.join(project_root, fname)
+            if not os.path.exists(path):
+                continue
+            content = _read_build_file(path)
+            consumed: List[Tuple[int, int]] = []
+            for header in _GRADLE_PLUGIN_CONTAINERS + (_GRADLE_DEP_CONTAINER,):
+                found = _find_block(content, header)
+                if not found:
+                    continue
+                body, start, after = found
+                consumed.append((start, after))
+                repos_body = _extract_block(body, "repositories")
+                if repos_body is None:
+                    continue
+                parsed = _parse_gradle_repos(repos_body)
+                if header == _GRADLE_DEP_CONTAINER:
+                    dep_entries.extend(parsed)
+                else:
+                    plugin_entries.extend(parsed)
+            # Excise consumed container spans BEFORE the bare top-level
+            # repositories{} search, else a buildscript/pluginManagement-nested
+            # `repositories` would be mis-read as dependency scope.
+            stripped = _excise_spans(content, consumed)
+            bare = _extract_block(stripped, "repositories")
+            if bare is not None:
+                dep_entries.extend(_parse_gradle_repos(bare))
+        result["plugin"] = _dedup_repos(plugin_entries)
+        result["dependency"] = _dedup_repos(dep_entries)
+    else:
+        pom_path = os.path.join(project_root, "pom.xml")
+        if os.path.exists(pom_path):
+            deps, plugins = _parse_maven_repos(_read_build_file(pom_path))
+            result["dependency"] = _dedup_repos(deps)
+            result["plugin"] = _dedup_repos(plugins)
+
+    for scope, repos in result.items():
+        for entry in repos:
+            entry["scope"] = scope
+    return result
+
+
 def _detect_build_system(project_root: str) -> str:
     for f in GRADLE_BUILD_FILES + GRADLE_SETTINGS_FILES:
         if os.path.exists(os.path.join(project_root, f)):
