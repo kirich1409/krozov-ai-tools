@@ -1172,6 +1172,132 @@ class TestScanProjectGradle(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
+# scan_project — buildSrc/ and build-logic/ convention-plugin discovery (#292)
+# ---------------------------------------------------------------------------
+
+class TestScanProjectBuildSrc(unittest.TestCase):
+    """End-to-end tests for buildSrc/ and build-logic/ discovery in scan_project()."""
+
+    def test_buildsrc_own_build_file_kind_buildsrc(self):
+        files = {
+            "settings.gradle.kts": "",
+            "buildSrc/build.gradle.kts": (
+                "dependencies {\n"
+                '    implementation("com.squareup:javapoet:1.13.0")\n'
+                "}"
+            ),
+        }
+        with temp_project(files) as root:
+            result = server.scan_project(root)
+        dep = next((d for d in result["dependencies"]
+                    if d.get("artifactId") == "javapoet"), None)
+        self.assertIsNotNone(dep)
+        self.assertEqual(dep["groupId"], "com.squareup")
+        self.assertEqual(dep["source"]["kind"], "buildsrc")
+        self.assertEqual(dep["source"]["file"], "buildSrc/build.gradle.kts")
+
+    def test_buildsrc_convention_plugin_script_kind_convention_plugin(self):
+        files = {
+            "settings.gradle.kts": "",
+            "buildSrc/src/main/kotlin/some-convention.gradle.kts": (
+                "dependencies {\n"
+                '    implementation("io.ktor:ktor-client-core:3.1.1")\n'
+                "}"
+            ),
+        }
+        with temp_project(files) as root:
+            result = server.scan_project(root)
+        dep = next((d for d in result["dependencies"]
+                    if d.get("artifactId") == "ktor-client-core"), None)
+        self.assertIsNotNone(dep)
+        self.assertEqual(dep["source"]["kind"], "convention-plugin")
+        self.assertEqual(
+            dep["source"]["file"], "buildSrc/src/main/kotlin/some-convention.gradle.kts"
+        )
+
+    def test_build_logic_subproject_build_file_kind_convention_plugin(self):
+        files = {
+            "settings.gradle.kts": "",
+            "build-logic/convention/build.gradle.kts": (
+                "dependencies {\n"
+                '    implementation("com.squareup:javapoet:1.13.0")\n'
+                "}"
+            ),
+        }
+        with temp_project(files) as root:
+            result = server.scan_project(root)
+        dep = next((d for d in result["dependencies"]
+                    if d.get("artifactId") == "javapoet"), None)
+        self.assertIsNotNone(dep)
+        self.assertEqual(dep["source"]["kind"], "convention-plugin")
+        self.assertEqual(dep["source"]["file"], "build-logic/convention/build.gradle.kts")
+
+    def test_build_logic_convention_plugin_script_kind_convention_plugin(self):
+        files = {
+            "settings.gradle.kts": "",
+            "build-logic/convention/src/main/kotlin/foo-convention.gradle.kts": (
+                "dependencies {\n"
+                '    implementation("io.ktor:ktor-client-core:3.1.1")\n'
+                "}"
+            ),
+        }
+        with temp_project(files) as root:
+            result = server.scan_project(root)
+        dep = next((d for d in result["dependencies"]
+                    if d.get("artifactId") == "ktor-client-core"), None)
+        self.assertIsNotNone(dep)
+        self.assertEqual(dep["source"]["kind"], "convention-plugin")
+        self.assertEqual(
+            dep["source"]["file"],
+            "build-logic/convention/src/main/kotlin/foo-convention.gradle.kts",
+        )
+
+    def test_no_buildsrc_or_build_logic_no_new_kinds_emitted(self):
+        files = {
+            "build.gradle.kts": (
+                "dependencies {\n"
+                '    implementation("io.ktor:ktor-client-core:3.1.1")\n'
+                "}"
+            ),
+        }
+        with temp_project(files) as root:
+            result = server.scan_project(root)
+        kinds = {d["source"]["kind"] for d in result["dependencies"]}
+        self.assertNotIn("buildsrc", kinds)
+        self.assertNotIn("convention-plugin", kinds)
+        self.assertEqual(len(result["dependencies"]), 1)
+
+    def test_module_and_buildsrc_each_counted_once_no_double_scan(self):
+        files = {
+            "settings.gradle.kts": 'include(":app")',
+            "app/build.gradle.kts": (
+                "dependencies {\n"
+                '    implementation("io.ktor:ktor-client-core:3.1.1")\n'
+                "}"
+            ),
+            "buildSrc/build.gradle.kts": (
+                "dependencies {\n"
+                '    implementation("com.squareup:javapoet:1.13.0")\n'
+                "}"
+            ),
+        }
+        with temp_project(files) as root:
+            result = server.scan_project(root)
+        ktor_deps = [d for d in result["dependencies"] if d.get("artifactId") == "ktor-client-core"]
+        javapoet_deps = [d for d in result["dependencies"] if d.get("artifactId") == "javapoet"]
+        self.assertEqual(len(ktor_deps), 1)
+        self.assertEqual(ktor_deps[0]["source"]["kind"], "module-direct")
+        self.assertEqual(ktor_deps[0]["source"]["module"], ":app")
+        self.assertEqual(len(javapoet_deps), 1)
+        self.assertEqual(javapoet_deps[0]["source"]["kind"], "buildsrc")
+        buildsrc_file_entries = [
+            d for d in result["dependencies"]
+            if d["source"].get("file") == "buildSrc/build.gradle.kts"
+        ]
+        self.assertEqual(len(buildsrc_file_entries), 1)
+
+
+# ---------------------------------------------------------------------------
 # scan_project — Maven (end-to-end via temp_project)
 # Mirrors: src/dependencies/__tests__/scan.test.ts (Maven sections)
 # ---------------------------------------------------------------------------

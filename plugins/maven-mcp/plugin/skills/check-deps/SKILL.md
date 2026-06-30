@@ -314,7 +314,6 @@ Attempt to fix incompatibilities. If non-trivial, revert that entry and note it 
 
 - **Major version bumps** require explicit per-entry confirmation.
 - **Multi-catalog `from("g:a:v")` form** is not supported.
-- **`buildSrc/` and convention plugins** are not scanned.
 - **Transitive dependencies** are not enumerated — only direct declarations.
 - This skill does not auto-select unstable/pre-release versions.
 - **Vulnerabilities for plugin entries** may not be detected (OSV coverage gap for
