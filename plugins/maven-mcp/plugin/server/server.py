@@ -586,9 +586,11 @@ def fetch_metadata(group_id: str, artifact_id: str, ctx: "ResolutionContext") ->
                 # exception message, which flows into tool-facing "error" fields.
                 last_err = f"HTTP {status} from {_strip_userinfo(entry['name'])}"
         except Exception as e:
-            # Mirrors the redaction in the non-200 branch above: defense-in-depth
-            # against a future transport-exception type that embeds the URL
-            # (today's URLError/socket.timeout messages do not).
+            # Mirrors the non-200 branch above for consistency. _strip_userinfo
+            # only redacts a string that IS a bare scheme://user:pass@host URL,
+            # not one embedded in free text, so this is a no-op against today's
+            # URLError/socket.timeout messages (which don't embed the URL at
+            # all) — kept for the narrow case where str(e) is itself a raw URL.
             last_err = _strip_userinfo(str(e))
     if not answered:
         raise ValueError(f"Could not fetch metadata for {group_id}:{artifact_id}: {last_err}")
