@@ -13,6 +13,7 @@ import io
 import os
 import sys
 import tempfile
+import unittest.mock
 import urllib.error
 from typing import Any, Callable, Dict, List, Union
 
@@ -26,12 +27,17 @@ _SERVER_DIR = os.path.normpath(
 if _SERVER_DIR not in sys.path:
     sys.path.insert(0, _SERVER_DIR)
 
+# Disable the on-disk cache for the whole test suite by default so mocked
+# urlopen responses are not written to ~/.cache and do not serve stale data
+# on subsequent runs.  Cache-specific tests re-enable per-test via temp_cache_dir().
+os.environ.setdefault("MAVEN_MCP_CACHE_DISABLE", "1")
+
 import server  # noqa: E402  (must follow the sys.path shim above)
 
 # Public test API re-exported for ``from _helpers import ...``. Listing
 # ``server`` makes the shimmed import above an intentional re-export rather
 # than an unused import.
-__all__ = ["server", "mock_urlopen", "http_error", "temp_project", "empty_ctx"]
+__all__ = ["server", "mock_urlopen", "http_error", "temp_project", "empty_ctx", "temp_cache_dir"]
 
 
 def empty_ctx(public_fallback: bool = False) -> "server.ResolutionContext":
@@ -148,3 +154,29 @@ def temp_project(files: Dict[str, str]):
             with open(path, "w", encoding="utf-8") as fh:
                 fh.write(content)
         yield root
+
+
+@contextlib.contextmanager
+def temp_cache_dir():
+    """Pin the file cache to a fresh temp dir and ensure MAVEN_MCP_CACHE_DISABLE is absent.
+
+    Pins ``XDG_CACHE_HOME`` to a fresh ``TemporaryDirectory`` via
+    ``unittest.mock.patch.dict`` (guaranteed env restore on exit).
+    ``MAVEN_MCP_CACHE_DISABLE`` is popped before entering the patch so the
+    cache is active inside the context; the ``finally`` block restores it even
+    if the body raises, so both keys reset atomically.
+
+    Usage::
+
+        with temp_cache_dir() as tmpdir:
+            server._file_cache.set(url, 200, b"body")
+            # cache file written under tmpdir/maven-central-mcp/
+    """
+    with tempfile.TemporaryDirectory() as tmpdir:
+        prior_disable = os.environ.pop("MAVEN_MCP_CACHE_DISABLE", None)
+        try:
+            with unittest.mock.patch.dict("os.environ", {"XDG_CACHE_HOME": tmpdir}):
+                yield tmpdir
+        finally:
+            if prior_disable is not None:
+                os.environ["MAVEN_MCP_CACHE_DISABLE"] = prior_disable

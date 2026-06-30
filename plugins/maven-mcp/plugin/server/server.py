@@ -4,15 +4,19 @@ Maven MCP server — MCP stdio (JSON-RPC 2.0) over stdin/stdout.
 No external dependencies; Python 3.9+ standard library only.
 """
 
+import base64
 import datetime
 import email.utils
 import functools
+import hashlib
 import json
+import logging
 import os
 import random
 import re
 import socket
 import sys
+import tempfile
 import time
 import urllib.request
 import urllib.parse
@@ -60,6 +64,18 @@ GITHUB_API = "https://api.github.com"
 OSV_API = "https://api.osv.dev/v1/querybatch"
 SEARCH_API = "https://search.maven.org/solrsearch/select"
 
+# Persistent file cache TTLs and capacity (see FileCache below).
+TTL_POM = 7 * 86400     # 7 days — release POMs are immutable once published
+TTL_METADATA = 3600     # 1 hour — version lists change, but not constantly
+TTL_SEARCH = 3600       # 1 hour — Maven Central Solr search index
+
+CACHE_MAX_ENTRIES = 2000
+
+# Belt-and-suspenders denylist for http_get_cached.  Private Maven repo hosts
+# are NOT listed — this is a blocklist (not an allowlist) so project-declared
+# repos at any host are still cached via the call-site-discipline path.
+_CACHE_DENYLIST = frozenset({"api.github.com", "api.osv.dev"})
+
 GRADLE_BUILD_FILES = ["build.gradle.kts", "build.gradle"]
 GRADLE_SETTINGS_FILES = ["settings.gradle.kts", "settings.gradle"]
 MAX_MODULE_DEPTH = 5
@@ -102,6 +118,22 @@ def _github_headers() -> Dict[str, str]:
 
 # Injectable so tests can monkeypatch it and run instantly (no real sleeping).
 _sleep: Callable[[float], None] = time.sleep
+
+# Injectable clock: monkeypatch _now in tests to control TTL boundary assertions.
+_now: Callable[[], float] = time.time
+
+# Module-level logger targets sys.stderr — the MCP protocol uses stdout for
+# JSON-RPC; any diagnostic byte written there corrupts the channel.
+# Guard against double-adding the handler on module re-import (test isolation).
+_logger = logging.getLogger("maven_mcp")
+_logger.propagate = False
+if not _logger.handlers:
+    _log_handler = logging.StreamHandler(sys.stderr)
+    _logger.addHandler(_log_handler)
+else:
+    # Re-import in the same process: reuse the existing handler so tests can
+    # still access server._log_handler to redirect it.
+    _log_handler = _logger.handlers[0]
 
 
 def _is_retryable_status(status: int) -> bool:
@@ -211,6 +243,168 @@ def http_post_json(url: str, payload: Any, headers: Optional[Dict[str, str]] = N
         h.update(headers)
     req = urllib.request.Request(url, data=data, headers=h, method="POST")
     return _request_with_retry(req)
+
+
+# ---------------------------------------------------------------------------
+# Persistent file cache
+# ---------------------------------------------------------------------------
+
+class FileCache:
+    """On-disk response cache for Maven read paths.
+
+    Key is sha256(url) hex — a hash is used rather than a path-encoded URL so
+    keys cannot contain path separators regardless of URL content.  Headers are
+    intentionally excluded from the key: every wired call site uses the default
+    User-Agent-only headers, and accepting auth-bearing headers not folded into
+    the key would be a latent footgun (cached response served for a different
+    caller's credentials).
+
+    Security properties:
+    - Only status == 200 is ever written; error bodies are never cached.
+    - Each entry JSON stores the full URL; stored url != requested url
+      (hash collision, practically impossible) is treated as a miss.
+    - Cache dir and files use owner-only permissions (0o700 / 0o600).
+    - Disk errors on set() are swallowed and logged to stderr (never stdout,
+      which is the JSON-RPC channel); any error on get() produces a miss.
+    """
+
+    def _get_dir(self) -> Optional[str]:
+        """Resolve and ensure the cache directory, per-call (reads os.environ at call time).
+
+        Returns the path on success, None on OSError (degrade to no-op).
+        Re-running makedirs + chmod on every call is cheap for an already-correct
+        dir and correctly handles the pre-existing loose-perm case (makedirs'
+        mode= is umask-masked and a no-op when the dir pre-exists).
+        """
+        xdg = os.environ.get("XDG_CACHE_HOME")
+        base = xdg if xdg else os.path.join(os.path.expanduser("~"), ".cache")
+        d = os.path.join(base, "maven-central-mcp")
+        try:
+            os.makedirs(d, mode=0o700, exist_ok=True)
+            # Explicit chmod on the LEAF dir only: makedirs' mode= is
+            # umask-masked and does nothing when the dir pre-exists with
+            # loose perms.  The chmod is the reliable tightening path.
+            os.chmod(d, 0o700)
+            return d
+        except OSError:
+            return None
+
+    def _key_path(self, cache_dir: str, url: str) -> str:
+        h = hashlib.sha256(url.encode("utf-8")).hexdigest()
+        return os.path.join(cache_dir, h + ".json")
+
+    def get(self, url: str, ttl: float) -> Optional[Tuple[int, bytes]]:
+        """Return (status, body) if a fresh entry exists, else None.
+
+        TTL check is strictly >, so exactly-at-TTL is a HIT.
+        Any error (missing file, corrupt JSON, OSError, url mismatch) -> None.
+        """
+        if os.environ.get("MAVEN_MCP_CACHE_DISABLE", "").lower() in ("1", "true", "yes", "on"):
+            return None
+        d = self._get_dir()
+        if d is None:
+            return None
+        path = self._key_path(d, url)
+        try:
+            with open(path, "rb") as fh:
+                entry = json.loads(fh.read())
+            if entry.get("url") != url:
+                return None
+            if _now() - entry["ts"] > ttl:
+                return None
+            return (entry["status"], base64.b64decode(entry["body_b64"]))
+        except Exception:
+            return None
+
+    def set(self, url: str, status: int, body: bytes) -> None:
+        """Write url->body to cache. No-op for non-200, disabled, or dir failure."""
+        if status != 200:
+            return
+        if os.environ.get("MAVEN_MCP_CACHE_DISABLE", "").lower() in ("1", "true", "yes", "on"):
+            return
+        d = self._get_dir()
+        if d is None:
+            return
+        path = self._key_path(d, url)
+        entry = {
+            "v": 1,
+            "url": url,
+            "status": 200,
+            "body_b64": base64.b64encode(body).decode("ascii"),
+            "ts": _now(),
+        }
+        data = json.dumps(entry).encode("utf-8")
+        tmp: Optional[str] = None
+        try:
+            fd, tmp = tempfile.mkstemp(dir=d, suffix=".tmp")
+            try:
+                os.write(fd, data)
+            finally:
+                os.close(fd)
+            os.chmod(tmp, 0o600)
+            os.replace(tmp, path)
+        except OSError as exc:
+            _logger.warning("FileCache set failed for %s: %s", url, exc)
+            if tmp is not None:
+                try:
+                    os.unlink(tmp)
+                except OSError:
+                    pass
+            return
+        self._evict(d)
+
+    def _evict(self, cache_dir: str) -> None:
+        """FIFO eviction: if count > CACHE_MAX_ENTRIES delete oldest-by-mtime
+        down to ~90% of the cap.  get() never touches mtime so order is by
+        write time, not access time."""
+        try:
+            entries = [
+                os.path.join(cache_dir, f)
+                for f in os.listdir(cache_dir)
+                if f.endswith(".json")
+            ]
+            if len(entries) <= CACHE_MAX_ENTRIES:
+                return
+            entries.sort(key=lambda p: os.stat(p).st_mtime)
+            target = int(CACHE_MAX_ENTRIES * 0.9)
+            for p in entries[: len(entries) - target]:
+                try:
+                    os.unlink(p)
+                except (OSError, FileNotFoundError):
+                    pass
+        except OSError:
+            pass
+
+
+_file_cache = FileCache()
+
+
+def http_get_cached(url: str, ttl_seconds: float) -> Tuple[int, bytes]:
+    """Cached GET: returns a cached (200, body) on hit, else delegates to http_get.
+
+    No ``headers`` parameter — callers use the default UA-only headers, and
+    accepting auth-bearing headers not folded into the cache key would be a
+    latent footgun (cached response served for a different caller's credentials).
+
+    Sensitive hosts (api.github.com, api.osv.dev) bypass to raw http_get via
+    a static denylist: belt-and-suspenders against future mis-wiring.  Private
+    Maven repo hosts are NOT blocked — this is a blocklist, not an allowlist.
+
+    A cache hit short-circuits ABOVE the #306 retry layer: the response is
+    returned directly without ever calling http_get (and thus without consuming
+    any retry budget).  Non-200 responses and propagating transport errors are
+    never cached; the caller receives them exactly as http_get would return/raise.
+    """
+    host = urllib.parse.urlparse(url).hostname or ""
+    if host in _CACHE_DENYLIST:
+        return http_get(url)
+    result = _file_cache.get(url, ttl_seconds)
+    if result is not None:
+        return result
+    status, body = http_get(url)
+    if status == 200:
+        _file_cache.set(url, status, body)
+    return (status, body)
 
 
 # ---------------------------------------------------------------------------
@@ -348,7 +542,7 @@ def fetch_metadata(group_id: str, artifact_id: str, ctx: "ResolutionContext") ->
     for entry in repos:
         url = _metadata_url(entry["url"], group_id, artifact_id)
         try:
-            status, body = http_get(url)
+            status, body = http_get_cached(url, TTL_METADATA)
             if status == 200:
                 # "answered" is gated on HTTP 200 itself, not on a non-empty
                 # version list — a 200 with empty <versions> still counts as a
@@ -382,7 +576,7 @@ def check_version_in_repos(group_id: str, artifact_id: str, version: str, ctx: "
     for entry in repos:
         url = _metadata_url(entry["url"], group_id, artifact_id)
         try:
-            status, body = http_get(url)
+            status, body = http_get_cached(url, TTL_METADATA)
             if status == 200:
                 xml = body.decode("utf-8", errors="replace")
                 versions = re.findall(r"<version>([^<]+)</version>", xml)
@@ -398,7 +592,7 @@ def fetch_pom(group_id: str, artifact_id: str, version: str, ctx: "ResolutionCon
     for entry in repos:
         url = _pom_url(entry["url"], group_id, artifact_id, version)
         try:
-            status, body = http_get(url)
+            status, body = http_get_cached(url, TTL_POM)
             if status == 200:
                 return body.decode("utf-8", errors="replace")
         except Exception:
@@ -1006,10 +1200,10 @@ def query_osv_batch(deps: List[Dict]) -> List[Dict]:
 # Maven Central search
 # ---------------------------------------------------------------------------
 
-def search_maven_central(query: str, limit: int = 10) -> List[Dict]:
+def search_maven_central(query: str, limit: int = 10, use_cache: bool = True) -> List[Dict]:
     try:
         url = f"{SEARCH_API}?q={urllib.parse.quote(query)}&rows={limit}&wt=json"
-        status, body = http_get(url)
+        status, body = http_get_cached(url, TTL_SEARCH) if use_cache else http_get(url)
         if status != 200:
             return []
         data = json.loads(body)
@@ -2308,7 +2502,7 @@ def _verify_one(
         # Escape Solr metacharacters before the token reaches the query so a
         # crafted artifactId can't be parsed as Solr syntax to broaden the match
         # set (a suggestion-steering vector).
-        candidates = search_maven_central(_solr_escape(artifact_id), _SUGGEST_SEARCH_ROWS)
+        candidates = search_maven_central(_solr_escape(artifact_id), _SUGGEST_SEARCH_ROWS, use_cache=False)
         scored = []
         flag = False
         for cand in candidates:
