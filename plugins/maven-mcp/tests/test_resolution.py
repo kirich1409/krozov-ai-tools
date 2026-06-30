@@ -12,6 +12,7 @@ falsifiable: it asserts which repo URLs reach urlopen (and, for #310, that Maven
 Central is ABSENT) or the exact merged version set / raised message.
 """
 
+import http.client
 import json
 import os
 import unittest
@@ -575,6 +576,40 @@ class TestUserinfoRedaction(unittest.TestCase):
         self.assertIn(REDACTED_URL, entry["error"])
         self.assertNotIn("repopass", json.dumps(out))
 
+    def test_strip_userinfo_returns_input_unchanged_on_parse_failure(self):
+        # Pins the documented best-effort behavior: urlsplit raises ValueError
+        # on a malformed bracketed-IPv6 host, and _strip_userinfo fails open
+        # (returns the input unchanged) rather than raising. This input can
+        # never reach a successful HTTP fetch in this codebase (Request
+        # construction would fail the same way), so it never reaches the
+        # resolvedFrom/repository success-path output.
+        malformed = "https://user:pass@[::1"
+        self.assertEqual(server._strip_userinfo(malformed), malformed)
+
+    def test_fetch_metadata_transport_exception_with_credentials_does_not_leak_password(self):
+        # /finalize Phase C (comment-analyzer + advisor): a userinfo URL
+        # (https://user:pass@host) makes urlopen raise http.client.InvalidURL,
+        # NOT urllib.error.URLError — it lands in fetch_metadata's generic
+        # `except Exception` branch, whose message historically embedded the
+        # raw password (e.g. "nonnumeric port: 'repopass@host'"), a shape
+        # _strip_userinfo's bare-URL check cannot redact. The fix builds the
+        # message from known-safe components (exception type name + the
+        # already-redacted repo name) instead of interpolating str(e).
+        files = {"settings.gradle.kts": _settings('maven { url = uri("%s") }' % CREDENTIALED_URL)}
+        leak = http.client.InvalidURL("nonnumeric port: 'repopass@nexus.example.com'")
+        with temp_project(files) as root:
+            with unittest.mock.patch(
+                "urllib.request.urlopen", side_effect=mock_urlopen([leak]),
+            ):
+                out = server.handle_check_multiple_dependencies({
+                    "dependencies": [{"groupId": "com.acme", "artifactId": "lib"}],
+                    "projectPath": root,
+                })
+        entry = out["results"][0]
+        self.assertIn("error", entry)
+        self.assertIn("InvalidURL", entry["error"])
+        self.assertNotIn("repopass", json.dumps(out))
+
 
 class TestAuditDownstreamErrorResolvedFrom(unittest.TestCase):
     # /finalize Phase 0 (removed-behavior auditor) finding: handle_audit_project_
@@ -602,6 +637,10 @@ class TestAuditDownstreamErrorResolvedFrom(unittest.TestCase):
         self.assertNotIn("latestVersion", entry)  # degraded entry, same as before
         self.assertIsNotNone(entry.get("resolvedFrom"))
         self.assertEqual(entry["resolvedFrom"]["url"], CUSTOM_URL)
+        # silent-failure-hunter (/finalize Phase C): the degraded entry used to
+        # carry no "error" key at all (bare `except Exception:`), unlike its
+        # sibling handlers — fixed alongside the resolvedFrom threading above.
+        self.assertEqual(entry.get("error"), "boom")
 
 
 if __name__ == "__main__":

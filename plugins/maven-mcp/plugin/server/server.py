@@ -586,12 +586,15 @@ def fetch_metadata(group_id: str, artifact_id: str, ctx: "ResolutionContext") ->
                 # exception message, which flows into tool-facing "error" fields.
                 last_err = f"HTTP {status} from {_strip_userinfo(entry['name'])}"
         except Exception as e:
-            # Mirrors the non-200 branch above for consistency. _strip_userinfo
-            # only redacts a string that IS a bare scheme://user:pass@host URL,
-            # not one embedded in free text, so this is a no-op against today's
-            # URLError/socket.timeout messages (which don't embed the URL at
-            # all) — kept for the narrow case where str(e) is itself a raw URL.
-            last_err = _strip_userinfo(str(e))
+            # Never interpolate str(e) here: a userinfo URL (https://user:pass@host)
+            # makes urlopen raise http.client.InvalidURL — NOT a urllib.error.URLError,
+            # so it lands in this generic branch — whose message embeds the raw
+            # password (e.g. "nonnumeric port: 'pass@host'"), a string shape
+            # _strip_userinfo cannot redact (it only redacts a value that IS a bare
+            # scheme://user:pass@host URL, not a credential fragment embedded in
+            # free text). Build the message from known-safe components instead:
+            # the exception type name plus the already-redacted repo name.
+            last_err = f"{type(e).__name__} from {_strip_userinfo(entry['name'])}"
     if not answered:
         raise ValueError(f"Could not fetch metadata for {group_id}:{artifact_id}: {last_err}")
     versions = sorted(set(merged_versions), key=functools.cmp_to_key(compare_versions))
@@ -2398,7 +2401,11 @@ def handle_audit_project_dependencies(args: Dict) -> Any:
                 "configuration": (dep.get("usages") or [{}])[0].get("configuration"),
                 "resolvedFrom": resolved_from,
             })
-        except Exception:
+        except Exception as e:
+            # str(e) is safe here: fetch_metadata's own messages are redacted
+            # at the source (see fetch_metadata), and find_latest_version_for_
+            # current/get_upgrade_type are pure version-string functions that
+            # never embed a repo URL.
             error_entry = {
                 "groupId": dep["groupId"],
                 "artifactId": dep["artifactId"],
@@ -2407,6 +2414,7 @@ def handle_audit_project_dependencies(args: Dict) -> Any:
                 "usages": dep.get("usages", []),
                 "module": (dep.get("usages") or [{}])[0].get("module"),
                 "configuration": (dep.get("usages") or [{}])[0].get("configuration"),
+                "error": str(e),
             }
             if resolved_from is not None:
                 error_entry["resolvedFrom"] = resolved_from
