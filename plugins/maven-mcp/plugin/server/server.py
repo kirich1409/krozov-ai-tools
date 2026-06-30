@@ -849,6 +849,60 @@ def extract_licenses_from_pom(pom_xml: str) -> List[str]:
     return names
 
 
+def _gradle_plugin_marker_plugin_id(group_id: str, artifact_id: str) -> Optional[str]:
+    """Returns the plugin id if (group_id, artifact_id) is a Gradle plugin marker
+    coordinate (`{pluginId}:{pluginId}.gradle.plugin`), else None. Stricter than the
+    `.gradle.plugin`-suffix-only check used for repo-scope routing (_repos_for) —
+    that check stays suffix-only by design (see CLAUDE.md); this one additionally
+    requires group_id == pluginId, which is the actual marker shape, since it
+    drives POM-dependency resolution, not just repo routing."""
+    suffix = ".gradle.plugin"
+    if not artifact_id.endswith(suffix):
+        return None
+    plugin_id = artifact_id[: -len(suffix)]
+    if not plugin_id or group_id != plugin_id:
+        return None
+    return plugin_id
+
+
+def resolve_plugin_marker_implementation(
+    group_id: str, artifact_id: str, version: Optional[str], ctx: "ResolutionContext"
+) -> Optional[Dict[str, str]]:
+    """Gradle plugin marker artifacts are minimal POMs whose only purpose is a
+    single <dependency> pointing at the real implementation artifact — OSV indexes
+    the implementation, not the marker, so callers must resolve markers before
+    querying vulnerabilities (#290). Returns {groupId, artifactId, version} of the
+    resolved implementation, or None when the coordinate isn't a marker, or
+    resolution fails for any reason (missing version, POM fetch failure, no/
+    incomplete <dependency> block, unresolved ${...} property) — callers MUST
+    degrade gracefully on None, never raise."""
+    if not _gradle_plugin_marker_plugin_id(group_id, artifact_id):
+        return None
+    if not version:
+        return None
+    pom = fetch_pom(group_id, artifact_id, version, ctx)
+    if not pom:
+        return None
+    xml = _strip_xml_comments(pom)
+    dep_m = re.search(r"<dependency>([\s\S]*?)</dependency>", xml)
+    if not dep_m:
+        return None
+    block = dep_m.group(1)
+    gid_m = re.search(r"<groupId>([^<]+)</groupId>", block)
+    aid_m = re.search(r"<artifactId>([^<]+)</artifactId>", block)
+    ver_m = re.search(r"<version>([^<]+)</version>", block)
+    if not gid_m or not aid_m or not ver_m:
+        return None
+    impl_group_id = gid_m.group(1).strip()
+    impl_artifact_id = aid_m.group(1).strip()
+    impl_version = ver_m.group(1).strip()
+    if not impl_group_id or not impl_artifact_id or not impl_version:
+        return None
+    if impl_version.startswith("${"):
+        return None
+    return {"groupId": impl_group_id, "artifactId": impl_artifact_id, "version": impl_version}
+
+
 def guess_github_repo(group_id: str, artifact_id: str) -> Optional[Dict[str, str]]:
     for prefix in ("com.github.", "io.github."):
         if group_id.startswith(prefix) and len(group_id) > len(prefix):
@@ -2124,13 +2178,29 @@ def handle_scan_project_dependencies(args: Dict) -> Any:
 
 
 def handle_get_dependency_vulnerabilities(args: Dict) -> Any:
-    raw = query_osv_batch(args["dependencies"])
-    return {
-        "results": [
-            {**r, "vulnerabilityCount": len(r["vulnerabilities"])}
-            for r in raw
-        ]
-    }
+    ctx = build_resolution_context(args)
+    original_deps = args["dependencies"]
+    query_deps = []
+    resolutions = []
+    for dep in original_deps:
+        resolved = resolve_plugin_marker_implementation(
+            dep["groupId"], dep["artifactId"], dep.get("version"), ctx
+        )
+        resolutions.append(resolved)
+        query_deps.append(resolved if resolved else dep)
+
+    raw = query_osv_batch(query_deps)
+    results = []
+    for i, r in enumerate(raw):
+        entry = dict(r)
+        if resolutions[i]:
+            entry["groupId"] = original_deps[i]["groupId"]
+            entry["artifactId"] = original_deps[i]["artifactId"]
+            entry["version"] = original_deps[i]["version"]
+            entry["resolvedImplementation"] = resolutions[i]
+        entry["vulnerabilityCount"] = len(entry["vulnerabilities"])
+        results.append(entry)
+    return {"results": results}
 
 
 def handle_get_dependency_health(args: Dict) -> Any:
@@ -2357,9 +2427,14 @@ def handle_audit_project_dependencies(args: Dict) -> Any:
 
         unique_gavs = []
         unique_keys = []
+        resolved_impls: Dict[str, Optional[Dict]] = {}
         for key, entries in gav_map.items():
             first = entries[0]
-            unique_gavs.append({
+            resolved = resolve_plugin_marker_implementation(
+                first["groupId"], first["artifactId"], first["currentVersion"], ctx
+            )
+            resolved_impls[key] = resolved
+            unique_gavs.append(resolved if resolved else {
                 "groupId": first["groupId"],
                 "artifactId": first["artifactId"],
                 "version": first["currentVersion"],
@@ -2373,8 +2448,11 @@ def handle_audit_project_dependencies(args: Dict) -> Any:
                 {"id": v["id"], "severity": v.get("severity"), "fixedVersion": v.get("fixedVersion")}
                 for v in vuln_results[i].get("vulnerabilities", [])
             ]
+            resolved = resolved_impls.get(key)
             for target in targets:
                 target["vulnerabilities"] = mapped_vulns
+                if resolved:
+                    target["resolvedImplementation"] = resolved
 
     summary = {
         "total": len(audit_deps),
@@ -2694,7 +2772,8 @@ TOOLS = [
                         },
                         "required": ["groupId", "artifactId", "version"],
                     },
-                }
+                },
+                "projectPath": {"type": "string", "description": "Project root used to resolve declared repositories. Defaults to the current working directory."},
             },
             "required": ["dependencies"],
         },

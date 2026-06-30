@@ -294,6 +294,120 @@ class TestFetchPom(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
+# _gradle_plugin_marker_plugin_id / resolve_plugin_marker_implementation (#290)
+# ---------------------------------------------------------------------------
+class TestGradlePluginMarkerPluginId(unittest.TestCase):
+    def test_detects_valid_marker(self):
+        self.assertEqual(
+            server._gradle_plugin_marker_plugin_id(
+                "com.example.foo", "com.example.foo.gradle.plugin"
+            ),
+            "com.example.foo",
+        )
+
+    def test_rejects_non_marker_suffix(self):
+        self.assertIsNone(
+            server._gradle_plugin_marker_plugin_id("io.ktor", "ktor-core")
+        )
+
+    def test_rejects_mismatched_group_id(self):
+        # Suffix matches but groupId != pluginId — not the actual marker shape.
+        self.assertIsNone(
+            server._gradle_plugin_marker_plugin_id(
+                "com.example.other", "com.example.foo.gradle.plugin"
+            )
+        )
+
+
+class TestResolvePluginMarkerImplementation(unittest.TestCase):
+    _MARKER_POM = (
+        "<project><dependencies><dependency>"
+        "<groupId>com.example</groupId>"
+        "<artifactId>foo-impl</artifactId>"
+        "<version>1.2.3</version>"
+        "</dependency></dependencies></project>"
+    ).encode()
+
+    def test_resolves_implementation_gav_from_marker_pom(self):
+        with unittest.mock.patch(
+            "urllib.request.urlopen",
+            side_effect=mock_urlopen([(200, self._MARKER_POM)]),
+        ):
+            result = server.resolve_plugin_marker_implementation(
+                "com.example.foo", "com.example.foo.gradle.plugin", "1.0.0", empty_ctx()
+            )
+        self.assertEqual(
+            result, {"groupId": "com.example", "artifactId": "foo-impl", "version": "1.2.3"}
+        )
+
+    def test_non_marker_coordinate_makes_zero_network_calls(self):
+        with unittest.mock.patch(
+            "urllib.request.urlopen", side_effect=mock_urlopen([])
+        ) as m:
+            result = server.resolve_plugin_marker_implementation(
+                "io.ktor", "ktor-core", "3.1.1", empty_ctx()
+            )
+        self.assertIsNone(result)
+        self.assertEqual(m.call_count, 0)
+
+    def test_mismatched_group_id_makes_zero_network_calls(self):
+        with unittest.mock.patch(
+            "urllib.request.urlopen", side_effect=mock_urlopen([])
+        ) as m:
+            result = server.resolve_plugin_marker_implementation(
+                "com.example.other", "com.example.foo.gradle.plugin", "1.0.0", empty_ctx()
+            )
+        self.assertIsNone(result)
+        self.assertEqual(m.call_count, 0)
+
+    def test_degrades_gracefully_on_pom_fetch_failure(self):
+        with unittest.mock.patch(
+            "urllib.request.urlopen",
+            side_effect=mock_urlopen([http_error("u", 404, "Not Found")]),
+        ):
+            result = server.resolve_plugin_marker_implementation(
+                "com.example.foo", "com.example.foo.gradle.plugin", "1.0.0", empty_ctx()
+            )
+        self.assertIsNone(result)
+
+    def test_degrades_gracefully_when_no_dependency_block(self):
+        pom = b"<project><groupId>com.example.foo</groupId></project>"
+        with unittest.mock.patch(
+            "urllib.request.urlopen", side_effect=mock_urlopen([(200, pom)])
+        ):
+            result = server.resolve_plugin_marker_implementation(
+                "com.example.foo", "com.example.foo.gradle.plugin", "1.0.0", empty_ctx()
+            )
+        self.assertIsNone(result)
+
+    def test_degrades_gracefully_on_unresolved_version_property(self):
+        pom = (
+            "<project><dependencies><dependency>"
+            "<groupId>com.example</groupId>"
+            "<artifactId>foo-impl</artifactId>"
+            "<version>${foo.version}</version>"
+            "</dependency></dependencies></project>"
+        ).encode()
+        with unittest.mock.patch(
+            "urllib.request.urlopen", side_effect=mock_urlopen([(200, pom)])
+        ):
+            result = server.resolve_plugin_marker_implementation(
+                "com.example.foo", "com.example.foo.gradle.plugin", "1.0.0", empty_ctx()
+            )
+        self.assertIsNone(result)
+
+    def test_returns_none_when_version_missing(self):
+        with unittest.mock.patch(
+            "urllib.request.urlopen", side_effect=mock_urlopen([])
+        ) as m:
+            result = server.resolve_plugin_marker_implementation(
+                "com.example.foo", "com.example.foo.gradle.plugin", None, empty_ctx()
+            )
+        self.assertIsNone(result)
+        self.assertEqual(m.call_count, 0)
+
+
+# ---------------------------------------------------------------------------
 # search_maven_central (server.py:731)
 # Mirrors src/search/__tests__/maven-search.test.ts
 # ---------------------------------------------------------------------------
