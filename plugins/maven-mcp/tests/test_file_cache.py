@@ -11,7 +11,6 @@ import io
 import json
 import os
 import stat
-import tempfile
 import unittest
 import unittest.mock
 import urllib.error
@@ -190,14 +189,14 @@ class TestFileCache(unittest.TestCase):
             os.umask(old_umask)
 
     def test_preexisting_loose_perm_dir_tightened(self):
-        """A pre-existing 0o777 dir must be tightened to 0o700 on first cache use.
+        """A pre-existing 0o755 dir must be tightened to 0o700 on first cache use.
 
         This is the case that ACTUALLY exercises the explicit os.chmod call;
         the fresh-dir umask test passes even if the chmod is deleted.
         """
         cache_dir = os.path.join(self.tmpdir, "maven-central-mcp")
-        os.makedirs(cache_dir, mode=0o777, exist_ok=True)
-        os.chmod(cache_dir, 0o777)  # force loose perms before cache touches it
+        os.makedirs(cache_dir, mode=0o755, exist_ok=True)
+        os.chmod(cache_dir, 0o755)  # force loose perms before cache touches it
 
         url = "https://repo1.maven.org/maven2/loose_perm.xml"
         server._file_cache.set(url, 200, b"body")
@@ -216,15 +215,16 @@ class TestFileCache(unittest.TestCase):
         url = "https://repo1.maven.org/maven2/swallow.xml"
         stderr_buf = io.StringIO()
         stdout_buf = io.StringIO()
-        original_stream = server._log_handler.stream
-        server._log_handler.setStream(stderr_buf)
+        handler = server._logger.handlers[0]
+        original_stream = handler.stream
+        handler.setStream(stderr_buf)
         try:
             with unittest.mock.patch("os.replace", side_effect=OSError("simulated disk full")):
                 with unittest.mock.patch("sys.stdout", stdout_buf):
                     # Must NOT raise
                     server._file_cache.set(url, 200, b"body")
         finally:
-            server._log_handler.setStream(original_stream)
+            handler.setStream(original_stream)
         # JSON-RPC channel (stdout) must be untouched — load-bearing assertion
         self.assertEqual(stdout_buf.getvalue(), "")
         # Warning must land on stderr via the logger
@@ -506,11 +506,11 @@ class TestHttpGetCached(unittest.TestCase):
             try:
                 server.fetch_metadata("com.missing", "artifact", ctx)
             except ValueError:
-                pass
+                pass  # ValueError is expected when no repo returns 200; we only care about call_count
             try:
                 server.fetch_metadata("com.missing", "artifact", ctx)
             except ValueError:
-                pass
+                pass  # ValueError is expected when no repo returns 200; we only care about call_count
         self.assertEqual(m.call_count, 2, "404 must not be cached")
         self.assertEqual(self._cache_files(), [],
                          "no cache file must be written for 404")
@@ -526,11 +526,11 @@ class TestHttpGetCached(unittest.TestCase):
             try:
                 server.fetch_metadata("com.retried", "artifact", ctx)
             except Exception:
-                pass
+                pass  # any exception from 503 retry exhaustion is expected; we only care about call_count
             try:
                 server.fetch_metadata("com.retried", "artifact", ctx)
             except Exception:
-                pass
+                pass  # any exception from 503 retry exhaustion is expected; we only care about call_count
         self.assertEqual(m.call_count, attempts * 2,
                          f"each 503 call should retry {attempts} times, never cached")
         self.assertEqual(self._cache_files(), [],

@@ -128,12 +128,7 @@ _now: Callable[[], float] = time.time
 _logger = logging.getLogger("maven_mcp")
 _logger.propagate = False
 if not _logger.handlers:
-    _log_handler = logging.StreamHandler(sys.stderr)
-    _logger.addHandler(_log_handler)
-else:
-    # Re-import in the same process: reuse the existing handler so tests can
-    # still access server._log_handler to redirect it.
-    _log_handler = _logger.handlers[0]
+    _logger.addHandler(logging.StreamHandler(sys.stderr))
 
 
 def _is_retryable_status(status: int) -> bool:
@@ -349,7 +344,7 @@ class FileCache:
                 try:
                     os.unlink(tmp)
                 except OSError:
-                    pass
+                    pass  # best-effort cleanup of the temp file; a concurrent delete or vanished file is not an error
             return
         self._evict(d)
 
@@ -371,9 +366,9 @@ class FileCache:
                 try:
                     os.unlink(p)
                 except (OSError, FileNotFoundError):
-                    pass
+                    pass  # concurrent delete between listdir and unlink is harmless; skip and continue eviction
         except OSError:
-            pass
+            pass  # best-effort eviction — a transient I/O error does not affect correctness of the cache
 
 
 _file_cache = FileCache()
