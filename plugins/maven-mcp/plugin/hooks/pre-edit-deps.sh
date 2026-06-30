@@ -148,7 +148,8 @@ if [ -n "$COORDS_FILE" ]; then
   esac
 fi
 
-[ -n "$COORDS_FILE" ] && [ -s "$COORDS_FILE" ] || exit 0
+[ -n "$COORDS_FILE" ] || exit 0
+[ -s "$COORDS_FILE" ] || exit 0
 
 # ── Sanitize: charset filter, deduplicate, drop non-literal version → GA-only ─
 # "Non-literal" means version contains $ (interpolation) → treat as GA-only.
@@ -166,8 +167,10 @@ while IFS= read -r COORD; do
   G_CLEAN=$(printf '%s' "$G" | tr -cd 'A-Za-z0-9._-') || G_CLEAN=""
   A_CLEAN=$(printf '%s' "$A" | tr -cd 'A-Za-z0-9._-') || A_CLEAN=""
 
-  [ "$G_CLEAN" = "$G" ] && [ -n "$G" ] || continue
-  [ "$A_CLEAN" = "$A" ] && [ -n "$A" ] || continue
+  [ -n "$G" ] || continue
+  [ "$G_CLEAN" = "$G" ] || continue
+  [ -n "$A" ] || continue
+  [ "$A_CLEAN" = "$A" ] || continue
 
   # Version: if empty, contains $, or has chars outside [A-Za-z0-9._-] → GA-only
   if [ -n "$V" ]; then
@@ -309,8 +312,10 @@ RESP1=$(printf '%s\n' "$SERVER_OUTPUT" | \
   jq -c 'select(.id==1)' 2>/dev/null | head -n1) || RESP1=""
 
 RESP2=""
-[ -n "$REQ2" ] && RESP2=$(printf '%s\n' "$SERVER_OUTPUT" | \
-  jq -c 'select(.id==2)' 2>/dev/null | head -n1) || RESP2=""
+if [ -n "$REQ2" ]; then
+  RESP2=$(printf '%s\n' "$SERVER_OUTPUT" | \
+    jq -c 'select(.id==2)' 2>/dev/null | head -n1) || RESP2=""
+fi
 
 # Extract tool result payload; .error or missing .result → fail-open for that tool
 VERIFY_RESULT=""
