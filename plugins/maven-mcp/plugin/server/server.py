@@ -4,16 +4,20 @@ Maven MCP server — MCP stdio (JSON-RPC 2.0) over stdin/stdout.
 No external dependencies; Python 3.9+ standard library only.
 """
 
+import datetime
+import email.utils
 import functools
 import json
 import os
+import random
 import re
 import socket
 import sys
+import time
 import urllib.request
 import urllib.parse
 import urllib.error
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -23,6 +27,15 @@ SERVER_NAME = "maven-mcp"
 SERVER_VERSION = "0.23.0"
 USER_AGENT = "maven-mcp/0.23.0"
 HTTP_TIMEOUT = 15
+
+# Bounded retry/backoff (ported from the retired TS `fetchWithRetry`). The TS
+# default was `retries = 1` => 2 total attempts; this matches it. Backoff base
+# mirrors the TS 200ms + up-to-300ms jitter, here applied exponentially.
+HTTP_MAX_ATTEMPTS = 2          # total attempts (1 initial + 1 retry)
+HTTP_BACKOFF_BASE = 0.2        # seconds; delay = base * 2**attempt + jitter
+HTTP_BACKOFF_JITTER = 0.3      # seconds; uniform [0, jitter) added per attempt
+HTTP_RETRY_AFTER_MAX = 30.0    # cap an upstream Retry-After so a hostile header can't stall us
+HTTP_TOTAL_RETRY_BUDGET = 60.0  # wall-clock cap across all attempts + sleeps
 
 MAVEN_CENTRAL_URL = "https://repo1.maven.org/maven2"
 GOOGLE_MAVEN_URL = "https://dl.google.com/dl/android/maven2"
@@ -87,14 +100,108 @@ def _github_headers() -> Dict[str, str]:
     return h
 
 
-def http_get(url: str, headers: Optional[Dict[str, str]] = None) -> Tuple[int, bytes]:
-    """Returns (status_code, body_bytes). Raises urllib.error.URLError on network error."""
-    req = urllib.request.Request(url, headers=headers or _make_headers())
+# Injectable so tests can monkeypatch it and run instantly (no real sleeping).
+_sleep: Callable[[float], None] = time.sleep
+
+
+def _is_retryable_status(status: int) -> bool:
+    """Transient HTTP statuses worth retrying: 429 + any 5xx (matches the TS
+    `isRetriableStatus`). Definitive responses (2xx/3xx/4xx-except-429) are not
+    retried — the caller's tri-state contract treats them as final."""
+    return status == 429 or 500 <= status < 600
+
+
+def _backoff_delay(attempt: int) -> float:
+    """Exponential backoff with jitter for retry ``attempt`` (0-based)."""
+    return HTTP_BACKOFF_BASE * (2 ** attempt) + random.random() * HTTP_BACKOFF_JITTER
+
+
+def _parse_retry_after(headers: Any) -> Optional[float]:
+    """Parse a ``Retry-After`` header (delta-seconds or HTTP-date) into seconds,
+    clamped to ``HTTP_RETRY_AFTER_MAX`` so a hostile value cannot stall the
+    server. Returns ``None`` when the header is absent or unparseable."""
+    if headers is None:
+        return None
+    get = getattr(headers, "get", None)
+    raw = get("Retry-After") if callable(get) else None
+    if not raw:
+        return None
+    raw = raw.strip()
     try:
-        with urllib.request.urlopen(req, timeout=HTTP_TIMEOUT) as resp:
-            return resp.status, resp.read()
-    except urllib.error.HTTPError as e:
-        return e.code, b""
+        secs = float(int(raw))  # delta-seconds form
+    except ValueError:
+        try:
+            dt = email.utils.parsedate_to_datetime(raw)  # HTTP-date form
+        except (TypeError, ValueError):
+            # 3.9 raises TypeError, 3.10+ raises ValueError on a bad date.
+            return None
+        if dt is None:
+            return None
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=datetime.timezone.utc)
+        secs = (dt - datetime.datetime.now(datetime.timezone.utc)).total_seconds()
+    if secs < 0:
+        secs = 0.0
+    return min(secs, HTTP_RETRY_AFTER_MAX)
+
+
+def _request_with_retry(req: urllib.request.Request) -> Tuple[int, bytes]:
+    """Issue ``req`` with bounded retry/backoff on transient failures.
+
+    Tri-state contract (relied on by the resolution layer and verify_coordinates):
+    returns ``(status, body)`` for ANY HTTP response — including a persistent
+    429/5xx after retries are exhausted — and only re-raises the last transport
+    error (URLError / socket.timeout) when EVERY attempt failed at the transport
+    level without ever obtaining an HTTP response. A 4xx (incl. 404) is never
+    turned into a raise. Retry is fully internal and transparent to callers.
+    """
+    deadline = time.monotonic() + HTTP_TOTAL_RETRY_BUDGET
+    last_result: Optional[Tuple[int, bytes]] = None
+    last_exc: Optional[BaseException] = None
+    for attempt in range(HTTP_MAX_ATTEMPTS):
+        retry_after: Optional[float] = None
+        try:
+            with urllib.request.urlopen(req, timeout=HTTP_TIMEOUT) as resp:
+                status, body = resp.status, resp.read()
+                if not _is_retryable_status(status):
+                    return status, body
+                # A retryable status surfaced as a success object (rare — urllib
+                # normally raises HTTPError for 4xx/5xx); remember it and retry.
+                last_result = (status, body)
+                retry_after = _parse_retry_after(getattr(resp, "headers", None))
+        except urllib.error.HTTPError as e:
+            # HTTPError IS-A URLError but represents a real HTTP response, not a
+            # transport failure — must be caught first. Body stays b"" (the
+            # legacy mapping callers depend on); we never read e.read().
+            if not _is_retryable_status(e.code):
+                return e.code, b""
+            last_result = (e.code, b"")
+            retry_after = _parse_retry_after(e.headers)
+        except (urllib.error.URLError, socket.timeout) as e:
+            last_exc = e
+        if attempt >= HTTP_MAX_ATTEMPTS - 1:
+            break
+        delay = retry_after if retry_after is not None else _backoff_delay(attempt)
+        if time.monotonic() + delay > deadline:
+            break  # honoring the delay would blow the total-time budget
+        _sleep(delay)
+    # Prefer any HTTP response seen over a transport error: raise only when no
+    # attempt ever produced an HTTP response.
+    if last_result is not None:
+        return last_result
+    if last_exc is not None:
+        raise last_exc
+    # Defensive: unreachable while HTTP_MAX_ATTEMPTS >= 1 (every attempt sets
+    # last_result or last_exc). Raise an explicit error rather than `raise None`.
+    raise urllib.error.URLError("HTTP request failed: no response and no transport error")
+
+
+def http_get(url: str, headers: Optional[Dict[str, str]] = None) -> Tuple[int, bytes]:
+    """Returns (status_code, body_bytes). Retries transient failures internally
+    (see _request_with_retry); raises urllib.error.URLError / socket.timeout only
+    when every attempt hit a transport error."""
+    req = urllib.request.Request(url, headers=headers or _make_headers())
+    return _request_with_retry(req)
 
 
 def http_post_json(url: str, payload: Any, headers: Optional[Dict[str, str]] = None) -> Tuple[int, bytes]:
@@ -103,11 +210,7 @@ def http_post_json(url: str, payload: Any, headers: Optional[Dict[str, str]] = N
     if headers:
         h.update(headers)
     req = urllib.request.Request(url, data=data, headers=h, method="POST")
-    try:
-        with urllib.request.urlopen(req, timeout=HTTP_TIMEOUT) as resp:
-            return resp.status, resp.read()
-    except urllib.error.HTTPError as e:
-        return e.code, b""
+    return _request_with_retry(req)
 
 
 # ---------------------------------------------------------------------------

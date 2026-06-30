@@ -1,23 +1,23 @@
 """HTTP utility tests: ``http_get`` / ``http_post_json`` plus the header builders
-``_make_headers`` / ``_github_headers`` (server.py:73-108).
+``_make_headers`` / ``_github_headers`` and the shared ``_request_with_retry``
+helper (server.py HTTP utilities section).
 
-Mirrors the NON-retry assertions of ``src/http/__tests__/client.test.ts``:
-default User-Agent, caller-header pass-through, status pass-through, and error
-mapping.
+Mirrors the assertions of the retired ``src/http/__tests__/client.test.ts``:
+default User-Agent, caller-header pass-through, status pass-through, error
+mapping, AND the retry behavior (5xx / 429 / transport-error retry with
+backoff). The Python port restores the retry/backoff that #302 dropped (issue
+#306): the runtime retries transient failures internally while preserving the
+tri-state contract callers depend on — a final 429/5xx still returns
+``(code, b"")`` (never raised), a 4xx/2xx/3xx is never retried, and a transport
+error is re-raised only when EVERY attempt hit one.
 
-DIVERGENCE #1 (tracked as a T-10 follow-up issue): the retired TS
-``fetchWithRetry`` retried once on 5xx / 429 responses and on network errors
-with backoff. The Python runtime's ``http_get`` / ``http_post_json`` perform a
-SINGLE request and map ``urllib.error.HTTPError`` straight to ``(code, b"")``
-with no retry, backoff, or rate-limit handling. This absence is intentional for
-the current runtime, so there is deliberately NO retry test here — the TS retry
-cases (5xx retry, 429 retry, network-error retry, "stops after retries") have no
-Python counterpart by design.
+Retry is exercised with ``server._sleep`` patched out so the suite never sleeps.
 """
 
 import json
 import unittest
 import unittest.mock
+import urllib.error
 
 from _helpers import server, mock_urlopen, http_error
 
@@ -71,15 +71,21 @@ class HttpGetTest(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertEqual(body, b"<xml/>")
 
-    def test_maps_httperror_to_code_and_empty_bytes(self):
-        err = http_error("https://example.test/x", 500)
-        with unittest.mock.patch(
-            "urllib.request.urlopen",
-            side_effect=mock_urlopen([err]),
-        ):
-            status, body = server.http_get("https://example.test/x")
+    def test_persistent_5xx_returns_code_and_empty_bytes_after_cap(self):
+        # 500 is retryable, so a persistent 500 is retried up to the cap and
+        # then mapped to (500, b"") — NOT raised. (Was the no-retry mapping test
+        # before #306; now folds into the persistent-5xx contract case.)
+        url = "https://example.test/x"
+        errs = [http_error(url, 500) for _ in range(server.HTTP_MAX_ATTEMPTS)]
+        with unittest.mock.patch.object(server, "_sleep") as sleep, \
+                unittest.mock.patch(
+                    "urllib.request.urlopen", side_effect=mock_urlopen(errs)
+                ) as urlopen:
+            status, body = server.http_get(url)
         self.assertEqual(status, 500)
         self.assertEqual(body, b"")
+        self.assertEqual(urlopen.call_count, server.HTTP_MAX_ATTEMPTS)
+        self.assertEqual(sleep.call_count, server.HTTP_MAX_ATTEMPTS - 1)
 
     def test_attaches_default_user_agent(self):
         with unittest.mock.patch(
@@ -128,15 +134,163 @@ class HttpPostJsonTest(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertEqual(body, b'{"ok":true}')
 
-    def test_maps_httperror_to_code_and_empty_bytes(self):
-        err = http_error("https://example.test/osv", 500)
-        with unittest.mock.patch(
-            "urllib.request.urlopen",
-            side_effect=mock_urlopen([err]),
-        ):
-            status, body = server.http_post_json("https://example.test/osv", {})
+    def test_persistent_5xx_returns_code_and_empty_bytes_after_cap(self):
+        url = "https://example.test/osv"
+        errs = [http_error(url, 500) for _ in range(server.HTTP_MAX_ATTEMPTS)]
+        with unittest.mock.patch.object(server, "_sleep") as sleep, \
+                unittest.mock.patch(
+                    "urllib.request.urlopen", side_effect=mock_urlopen(errs)
+                ) as urlopen:
+            status, body = server.http_post_json(url, {})
         self.assertEqual(status, 500)
         self.assertEqual(body, b"")
+        self.assertEqual(urlopen.call_count, server.HTTP_MAX_ATTEMPTS)
+        self.assertEqual(sleep.call_count, server.HTTP_MAX_ATTEMPTS - 1)
+
+    def test_retries_on_5xx_then_succeeds(self):
+        url = "https://example.test/osv"
+        seq = [http_error(url, 503), (200, b'{"ok":true}')]
+        with unittest.mock.patch.object(server, "_sleep") as sleep, \
+                unittest.mock.patch(
+                    "urllib.request.urlopen", side_effect=mock_urlopen(seq)
+                ) as urlopen:
+            status, body = server.http_post_json(url, {})
+        self.assertEqual(status, 200)
+        self.assertEqual(body, b'{"ok":true}')
+        self.assertEqual(urlopen.call_count, 2)
+        self.assertEqual(sleep.call_count, 1)
+
+
+class HttpRetryTest(unittest.TestCase):
+    """Retry/backoff behavior ported from the retired TS ``fetchWithRetry``."""
+
+    URL = "https://example.test/x"
+
+    def test_503_then_200_returns_200_after_one_retry(self):
+        seq = [http_error(self.URL, 503), (200, b"ok")]
+        with unittest.mock.patch.object(server, "_sleep") as sleep, \
+                unittest.mock.patch(
+                    "urllib.request.urlopen", side_effect=mock_urlopen(seq)
+                ) as urlopen:
+            status, body = server.http_get(self.URL)
+        self.assertEqual(status, 200)
+        self.assertEqual(body, b"ok")
+        self.assertEqual(urlopen.call_count, 2)
+        self.assertEqual(sleep.call_count, 1)
+
+    def test_429_retry_after_seconds_honored_then_success(self):
+        seq = [
+            http_error(self.URL, 429, hdrs={"Retry-After": "2"}),
+            (200, b"ok"),
+        ]
+        with unittest.mock.patch.object(server, "_sleep") as sleep, \
+                unittest.mock.patch(
+                    "urllib.request.urlopen", side_effect=mock_urlopen(seq)
+                ) as urlopen:
+            status, body = server.http_get(self.URL)
+        self.assertEqual(status, 200)
+        self.assertEqual(urlopen.call_count, 2)
+        # The Retry-After value (2s) is honored verbatim — below the cap.
+        self.assertEqual(sleep.call_args.args[0], 2.0)
+
+    def test_retry_after_absurd_value_clamped_to_max(self):
+        seq = [
+            http_error(self.URL, 503, hdrs={"Retry-After": "99999"}),
+            (200, b"ok"),
+        ]
+        with unittest.mock.patch.object(server, "_sleep") as sleep, \
+                unittest.mock.patch(
+                    "urllib.request.urlopen", side_effect=mock_urlopen(seq)
+                ):
+            status, _ = server.http_get(self.URL)
+        self.assertEqual(status, 200)
+        # A hostile Retry-After is clamped to HTTP_RETRY_AFTER_MAX, not slept verbatim.
+        self.assertEqual(sleep.call_args.args[0], server.HTTP_RETRY_AFTER_MAX)
+
+    def test_retry_after_http_date_clamped_to_max(self):
+        # HTTP-date form of Retry-After: a far-future date yields a huge delta,
+        # which is clamped to HTTP_RETRY_AFTER_MAX. Deterministic (no timing
+        # dependence) because the date is centuries out.
+        seq = [
+            http_error(self.URL, 503, hdrs={"Retry-After": "Wed, 21 Oct 2099 07:28:00 GMT"}),
+            (200, b"ok"),
+        ]
+        with unittest.mock.patch.object(server, "_sleep") as sleep, \
+                unittest.mock.patch(
+                    "urllib.request.urlopen", side_effect=mock_urlopen(seq)
+                ):
+            status, _ = server.http_get(self.URL)
+        self.assertEqual(status, 200)
+        self.assertEqual(sleep.call_args.args[0], server.HTTP_RETRY_AFTER_MAX)
+
+    def test_persistent_503_returns_503_not_raised(self):
+        errs = [http_error(self.URL, 503) for _ in range(server.HTTP_MAX_ATTEMPTS)]
+        with unittest.mock.patch.object(server, "_sleep"), \
+                unittest.mock.patch(
+                    "urllib.request.urlopen", side_effect=mock_urlopen(errs)
+                ) as urlopen:
+            status, body = server.http_get(self.URL)
+        self.assertEqual(status, 503)
+        self.assertEqual(body, b"")
+        self.assertEqual(urlopen.call_count, server.HTTP_MAX_ATTEMPTS)
+
+    def test_transport_error_every_attempt_raises_after_cap(self):
+        errs = [urllib.error.URLError("boom") for _ in range(server.HTTP_MAX_ATTEMPTS)]
+        with unittest.mock.patch.object(server, "_sleep"), \
+                unittest.mock.patch(
+                    "urllib.request.urlopen", side_effect=mock_urlopen(errs)
+                ) as urlopen:
+            with self.assertRaises(urllib.error.URLError):
+                server.http_get(self.URL)
+        self.assertEqual(urlopen.call_count, server.HTTP_MAX_ATTEMPTS)
+
+    def test_transport_error_then_200_returns_200(self):
+        seq = [urllib.error.URLError("boom"), (200, b"ok")]
+        with unittest.mock.patch.object(server, "_sleep") as sleep, \
+                unittest.mock.patch(
+                    "urllib.request.urlopen", side_effect=mock_urlopen(seq)
+                ) as urlopen:
+            status, body = server.http_get(self.URL)
+        self.assertEqual(status, 200)
+        self.assertEqual(body, b"ok")
+        self.assertEqual(urlopen.call_count, 2)
+        self.assertEqual(sleep.call_count, 1)
+
+    def test_404_returned_immediately_no_retry(self):
+        with unittest.mock.patch.object(server, "_sleep") as sleep, \
+                unittest.mock.patch(
+                    "urllib.request.urlopen",
+                    side_effect=mock_urlopen([http_error(self.URL, 404)]),
+                ) as urlopen:
+            status, body = server.http_get(self.URL)
+        self.assertEqual(status, 404)
+        self.assertEqual(body, b"")
+        self.assertEqual(urlopen.call_count, 1)
+        sleep.assert_not_called()
+
+    def test_200_not_retried(self):
+        with unittest.mock.patch.object(server, "_sleep") as sleep, \
+                unittest.mock.patch(
+                    "urllib.request.urlopen",
+                    side_effect=mock_urlopen([(200, b"ok")]),
+                ) as urlopen:
+            server.http_get(self.URL)
+        self.assertEqual(urlopen.call_count, 1)
+        sleep.assert_not_called()
+
+    def test_4xx_non_429_not_retried(self):
+        for code in (400, 401, 403):
+            with self.subTest(code=code):
+                with unittest.mock.patch.object(server, "_sleep") as sleep, \
+                        unittest.mock.patch(
+                            "urllib.request.urlopen",
+                            side_effect=mock_urlopen([http_error(self.URL, code)]),
+                        ) as urlopen:
+                    status, body = server.http_get(self.URL)
+                self.assertEqual(status, code)
+                self.assertEqual(body, b"")
+                self.assertEqual(urlopen.call_count, 1)
+                sleep.assert_not_called()
 
 
 if __name__ == "__main__":
