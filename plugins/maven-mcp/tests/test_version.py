@@ -8,6 +8,7 @@ Mirrors assertions from:
 All test methods call pure functions only — no network, no mocking required.
 """
 
+import functools
 import unittest
 
 from _helpers import server
@@ -120,6 +121,19 @@ class FindLatestVersionForCurrentTest(unittest.TestCase):
             "2.0.0",
         )
 
+    def test_bare_release_preferred_over_compat_suffix_build(self):
+        # #325: get_latest_version picked "0.8.0-0.6.x-compat" over "0.8.0".
+        # The candidate list mirrors how the server actually feeds this
+        # function — sorted ascending via compare_versions (server.py:557)
+        # before selection — so this exercises the real selection pipeline,
+        # not just the comparator in isolation.
+        raw = ["0.7.0", "0.8.0-0.6.x-compat", "0.8.0"]
+        versions = sorted(set(raw), key=functools.cmp_to_key(server.compare_versions))
+        self.assertEqual(
+            server.find_latest_version_for_current(versions, "0.7.0"),
+            "0.8.0",
+        )
+
 
 # ---------------------------------------------------------------------------
 # compare_versions
@@ -141,6 +155,39 @@ class CompareVersionsTest(unittest.TestCase):
         # mirrors compare.test.ts: "orders pre-releases relative to each other"
         self.assertGreater(server.compare_versions("2.0.0-RC1", "2.0.0-beta1"), 0)
         self.assertLess(server.compare_versions("2.0.0-alpha1", "2.0.0-beta1"), 0)
+
+    def test_bare_release_outranks_same_core_qualifier_suffix(self):
+        # #325: "0.8.0" and "0.8.0-0.6.x-compat" share the same numeric core
+        # and both classify as "stable" (no alpha/beta/rc/milestone/snapshot
+        # match in "-compat"), so the only signal left is the prerelease-number
+        # tail. A bare release (no suffix at all) must rank above a same-core
+        # release carrying a numeric qualifier suffix, not below it.
+        self.assertGreater(server.compare_versions("0.8.0", "0.8.0-0.6.x-compat"), 0)
+        self.assertLess(server.compare_versions("0.8.0-0.6.x-compat", "0.8.0"), 0)
+
+    def test_bare_release_outranks_digitless_qualifier_suffix(self):
+        # #325: a suffix with no digits at all (e.g. "-compat", "-jre") must
+        # not slip past the fix — _extract_prerelease_numbers returns [] for
+        # both a truly bare version AND a digitless suffix, so the fix must
+        # key on suffix presence, not on prerelease-number-list emptiness.
+        self.assertGreater(server.compare_versions("0.8.0", "0.8.0-compat"), 0)
+        self.assertLess(server.compare_versions("0.8.0-compat", "0.8.0"), 0)
+
+    def test_both_prerelease_number_tails_still_compare_correctly(self):
+        # #325 regression guard: the fix must not break ordering when BOTH
+        # sides carry a numeric suffix — rc.2 still ranks above rc.1.
+        self.assertGreater(server.compare_versions("1.0.0-rc.2", "1.0.0-rc.1"), 0)
+        self.assertLess(server.compare_versions("1.0.0-rc.1", "1.0.0-rc.2"), 0)
+
+    def test_both_suffixed_same_class_falls_back_to_prerelease_tail(self):
+        # #325 regression guard: when BOTH sides carry a suffix, the new
+        # suffix-presence branch must not fire (true == true), so ordering
+        # still falls through to the existing prerelease-number tail compare
+        # unaffected — "beta" (no digits) ranks below "beta2" exactly as
+        # before this fix, both within the same classify_version() class.
+        self.assertEqual(server.classify_version("1.0.0-beta"), server.classify_version("1.0.0-beta2"))
+        self.assertLess(server.compare_versions("1.0.0-beta", "1.0.0-beta2"), 0)
+        self.assertGreater(server.compare_versions("1.0.0-beta2", "1.0.0-beta"), 0)
 
 
 # ---------------------------------------------------------------------------
