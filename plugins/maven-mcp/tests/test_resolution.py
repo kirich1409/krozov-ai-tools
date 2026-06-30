@@ -263,6 +263,8 @@ class TestHandlerThreading(unittest.TestCase):
                 })
         self.assertTrue(out["exists"])
         self.assertEqual(out["repository"], CUSTOM_URL)
+        self.assertEqual(out["resolvedFrom"]["url"], CUSTOM_URL)
+        self.assertIs(out["resolvedFrom"]["viaPublicFallback"], False)
         self.assertFalse(any(u.startswith(server.MAVEN_CENTRAL_URL) for u in _urls(m)))
 
     def test_get_dependency_health_single_repo_preserves_last_published(self):
@@ -284,6 +286,48 @@ class TestHandlerThreading(unittest.TestCase):
                 })
         result = out["results"][0]
         self.assertEqual(result["lastPublishedToMaven"], "20240515000000")
+
+
+# ---------------------------------------------------------------------------
+# T-7 — #317 provenance reporting (resolvedFrom / viaPublicFallback)
+# ---------------------------------------------------------------------------
+class TestProvenanceReporting(unittest.TestCase):
+    def test_public_fallback_answers_reports_via_public_fallback(self):
+        # #317 AC: a Central-only coordinate in an internal-repo-only project,
+        # with MAVEN_MCP_PUBLIC_FALLBACK=on, must report viaPublicFallback=true
+        # (a project-first false-negative made visible) rather than a plain
+        # not-found. CUSTOM_URL 404s first; the appended public Central 200s.
+        files = {"settings.gradle.kts": _settings('maven { url = uri("%s") }' % CUSTOM_URL)}
+        responses = [
+            http_error(CUSTOM_URL, 404, "Not Found"),
+            (200, _meta(["1.0.0", "2.0.0"])),
+        ]
+        with temp_project(files) as root:
+            with unittest.mock.patch.dict(
+                os.environ, {"MAVEN_MCP_PUBLIC_FALLBACK": "on"}
+            ), unittest.mock.patch(
+                "urllib.request.urlopen", side_effect=mock_urlopen(responses)
+            ):
+                out = server.handle_get_latest_version({
+                    "groupId": "com.acme", "artifactId": "lib", "projectPath": root,
+                })
+        self.assertEqual(out["resolvedFrom"]["url"], server.MAVEN_CENTRAL_URL)
+        self.assertIs(out["resolvedFrom"]["viaPublicFallback"], True)
+
+    def test_declared_repo_answers_reports_no_public_fallback(self):
+        # Normal case: the project's own declared repo answers directly, no
+        # fallback involved -> viaPublicFallback=false.
+        files = {"settings.gradle.kts": _settings('maven { url = uri("%s") }' % CUSTOM_URL)}
+        with temp_project(files) as root:
+            with unittest.mock.patch(
+                "urllib.request.urlopen",
+                side_effect=mock_urlopen([(200, _meta(["1.0.0"]))]),
+            ):
+                out = server.handle_get_latest_version({
+                    "groupId": "com.acme", "artifactId": "lib", "projectPath": root,
+                })
+        self.assertEqual(out["resolvedFrom"]["url"], CUSTOM_URL)
+        self.assertIs(out["resolvedFrom"]["viaPublicFallback"], False)
 
 
 if __name__ == "__main__":

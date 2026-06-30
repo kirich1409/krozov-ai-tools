@@ -64,13 +64,15 @@ Version answers resolve through the repositories the **project actually declares
 
 **Optional `projectPath`.** Every resolution tool accepts an optional `projectPath` arg; it defaults to the current working directory. `build_resolution_context(args)` builds the `ResolutionContext` once at the handler boundary (project path + discovered repos + the toggle, read once) and threads it down to every leaf resolver.
 
+**Provenance reporting (`resolvedFrom`, #317).** `fetch_metadata(group_id, artifact_id, ctx)` additionally tracks the **first** repo (in `_repos_for` order — declared repos before any public-fallback append) that answers HTTP 200, and returns it as `resolvedFrom: {url, scope, viaPublicFallback}`. `viaPublicFallback` is `true` only when every declared repo in scope 404'd/failed and a fallback-routed entry (declared-scope-empty fallback, or a `MAVEN_MCP_PUBLIC_FALLBACK=on` append) is what actually answered — this is the #299 false-negative signal: a coordinate that exists on public Central but is absent from the project's declared internal repo is now distinguishable from genuine absence. Every handler that consumes `fetch_metadata` exposes `resolvedFrom` on its success path: `get_latest_version`, `check_multiple_dependencies`, `compare_dependency_versions`, `get_dependency_changes`, `get_dependency_health`, `audit_project_dependencies`. `check_version_exists` gets the equivalent from `check_version_in_repos` (now returning the full matching repo entry instead of just its name). No `resolvedFrom` is emitted on the absent/error paths — nothing answered, so there is no provenance to report. `verify_coordinates` is explicitly out of scope here — it runs its own per-repo probe with its own `repository` field (separate tri-state contract, see below).
+
 ### Documented limitations
 
 - **Root-only discovery** — only the project-root build files are read; per-submodule `build.gradle*` / `pom.xml` repositories are not discovered.
 - **`mavenLocal()`** is recorded (as a `file://` marker) but never HTTP-queried, so it does not count as a queryable repo for fallback decisions.
 - **Variable-interpolated repo URLs are unsupported** — a `url = "…/${repoPath}"` is captured verbatim (the `${...}` is not expanded), so such a URL will not resolve.
 - **Resolved plugin impl-GAV scoping** — only the `.gradle.plugin` marker suffix classifies as plugin scope; a resolved plugin implementation GAV classifies as a library (deferred to #290; documented, not a defect).
-- **Deferred #299 pieces** (this layer addresses the core; the rest are follow-ups): provenance reporting (`resolvedFrom` / `viaPublicFallback`) — #317; `repositoriesMode` semantics — #318 (current behavior unions settings + project repos, so it **may over-report** when a build restricts project-level repos); parent-POM / Maven-profile inheritance — #319; content / group filtering — #320.
+- **Deferred #299 pieces** (this layer addresses the core; the rest are follow-ups): `repositoriesMode` semantics — #318 (current behavior unions settings + project repos, so it **may over-report** when a build restricts project-level repos); parent-POM / Maven-profile inheritance — #319; content / group filtering — #320.
 
 ## `verify_coordinates`
 

@@ -245,16 +245,16 @@ class TestCheckVersionInRepos(unittest.TestCase):
             "urllib.request.urlopen",
             side_effect=mock_urlopen([(200, _metadata_xml(["1.0.0", "2.0.0"]))]),
         ):
-            name = server.check_version_in_repos("io.ktor", "ktor-core", "2.0.0", empty_ctx())
-        self.assertEqual(name, "Maven Central")
+            result = server.check_version_in_repos("io.ktor", "ktor-core", "2.0.0", empty_ctx())
+        self.assertEqual(result["name"], "Maven Central")
 
     def test_returns_none_when_version_absent(self):
         with unittest.mock.patch(
             "urllib.request.urlopen",
             side_effect=mock_urlopen([(200, _metadata_xml(["1.0.0"]))]),
         ):
-            name = server.check_version_in_repos("io.ktor", "ktor-core", "9.9.9", empty_ctx())
-        self.assertIsNone(name)
+            result = server.check_version_in_repos("io.ktor", "ktor-core", "9.9.9", empty_ctx())
+        self.assertIsNone(result)
 
     def test_checks_google_then_central_when_only_central_has_version(self):
         # Unlike fetch_metadata, this iterates ALL repos until the version is
@@ -266,8 +266,8 @@ class TestCheckVersionInRepos(unittest.TestCase):
         with unittest.mock.patch(
             "urllib.request.urlopen", side_effect=mock_urlopen(responses)
         ) as m:
-            name = server.check_version_in_repos("androidx.core", "core-ktx", "2.0.0", empty_ctx())
-        self.assertEqual(name, "Maven Central")
+            result = server.check_version_in_repos("androidx.core", "core-ktx", "2.0.0", empty_ctx())
+        self.assertEqual(result["name"], "Maven Central")
         self.assertEqual(m.call_count, 2)
 
 

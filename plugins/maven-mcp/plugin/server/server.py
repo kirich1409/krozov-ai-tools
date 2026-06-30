@@ -534,6 +534,9 @@ def fetch_metadata(group_id: str, artifact_id: str, ctx: "ResolutionContext") ->
     last_updated: Optional[str] = None
     answered = False
     last_err = None
+    # First repo (in _repos_for order: declared repos before any public-fallback
+    # append) that answers 200 — surfaced as resolvedFrom for #317 provenance.
+    resolved_from: Optional[Dict[str, Any]] = None
     for entry in repos:
         url = _metadata_url(entry["url"], group_id, artifact_id)
         try:
@@ -543,6 +546,12 @@ def fetch_metadata(group_id: str, artifact_id: str, ctx: "ResolutionContext") ->
                 # version list — a 200 with empty <versions> still counts as a
                 # reachable repo, matching the legacy first-hit contract.
                 answered = True
+                if resolved_from is None:
+                    resolved_from = {
+                        "url": entry["url"],
+                        "scope": entry["scope"],
+                        "viaPublicFallback": entry["is_public_fallback"],
+                    }
                 parsed = _parse_metadata_xml(body.decode("utf-8", errors="replace"), group_id, artifact_id)
                 merged_versions.extend(parsed["versions"])
                 lu = parsed.get("lastUpdated")
@@ -562,11 +571,12 @@ def fetch_metadata(group_id: str, artifact_id: str, ctx: "ResolutionContext") ->
         "latest": find_latest_version(versions, "PREFER_STABLE"),
         "release": find_latest_version(versions, "STABLE_ONLY"),
         "lastUpdated": last_updated,
+        "resolvedFrom": resolved_from,
     }
 
 
-def check_version_in_repos(group_id: str, artifact_id: str, version: str, ctx: "ResolutionContext") -> Optional[str]:
-    """Returns repo name if version exists, else None."""
+def check_version_in_repos(group_id: str, artifact_id: str, version: str, ctx: "ResolutionContext") -> Optional[Dict[str, Any]]:
+    """Returns the matching repo entry (name/url/scope/is_public_fallback) if version exists, else None."""
     repos = _repos_for(group_id, artifact_id, ctx)
     for entry in repos:
         url = _metadata_url(entry["url"], group_id, artifact_id)
@@ -576,7 +586,7 @@ def check_version_in_repos(group_id: str, artifact_id: str, version: str, ctx: "
                 xml = body.decode("utf-8", errors="replace")
                 versions = re.findall(r"<version>([^<]+)</version>", xml)
                 if version in versions:
-                    return entry["name"]
+                    return entry
         except Exception:
             continue
     return None
@@ -1067,6 +1077,7 @@ def _get_dependency_changes_impl(group_id: str, artifact_id: str, from_version: 
         metadata = fetch_metadata(group_id, artifact_id, ctx)
     except Exception as e:
         return {**base, "error": str(e)}
+    base = {**base, "resolvedFrom": metadata.get("resolvedFrom")}
 
     versions_in_range = _filter_version_range(metadata["versions"], from_version, to_version)
     if not versions_in_range:
@@ -2014,6 +2025,7 @@ def handle_get_latest_version(args: Dict) -> Any:
         "latestVersion": selected,
         "stability": classify_version(selected),
         "allVersionsCount": len(metadata["versions"]),
+        "resolvedFrom": metadata.get("resolvedFrom"),
     }
 
 
@@ -2022,15 +2034,20 @@ def handle_check_version_exists(args: Dict) -> Any:
     artifact_id = args["artifactId"]
     version = args["version"]
     ctx = build_resolution_context(args)
-    repo_name = check_version_in_repos(group_id, artifact_id, version, ctx)
-    if repo_name:
+    entry = check_version_in_repos(group_id, artifact_id, version, ctx)
+    if entry:
         return {
             "groupId": group_id,
             "artifactId": artifact_id,
             "version": version,
             "exists": True,
             "stability": classify_version(version),
-            "repository": repo_name,
+            "repository": entry["name"],
+            "resolvedFrom": {
+                "url": entry["url"],
+                "scope": entry["scope"],
+                "viaPublicFallback": entry["is_public_fallback"],
+            },
         }
     return {
         "groupId": group_id,
@@ -2054,6 +2071,7 @@ def handle_check_multiple_dependencies(args: Dict) -> Any:
                 "artifactId": dep["artifactId"],
                 "latestVersion": latest,
                 "stability": classify_version(latest),
+                "resolvedFrom": metadata.get("resolvedFrom"),
             })
         except Exception as e:
             results.append({
@@ -2084,6 +2102,7 @@ def handle_compare_dependency_versions(args: Dict) -> Any:
                 "latestStability": classify_version(latest),
                 "upgradeType": upgrade_type,
                 "upgradeAvailable": upgrade_type != "none",
+                "resolvedFrom": metadata.get("resolvedFrom"),
             })
         except Exception as e:
             results.append({
@@ -2155,6 +2174,7 @@ def handle_get_dependency_health(args: Dict) -> Any:
             result["healthError"] = str(e)
             results.append(result)
             continue
+        result["resolvedFrom"] = metadata.get("resolvedFrom")
 
         versions = metadata["versions"]
         result["versionCount"] = len(versions)
@@ -2324,6 +2344,7 @@ def handle_audit_project_dependencies(args: Dict) -> Any:
                 "usages": dep.get("usages", []),
                 "module": (dep.get("usages") or [{}])[0].get("module"),
                 "configuration": (dep.get("usages") or [{}])[0].get("configuration"),
+                "resolvedFrom": metadata.get("resolvedFrom"),
             })
         except Exception:
             audit_deps.append({
