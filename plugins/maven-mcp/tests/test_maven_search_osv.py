@@ -406,6 +406,32 @@ class TestResolvePluginMarkerImplementation(unittest.TestCase):
         self.assertIsNone(result)
         self.assertEqual(m.call_count, 0)
 
+    def test_skips_dependency_inside_dependency_management_block(self):
+        # A <dependencyManagement> block lists a version pin BEFORE the marker's
+        # real <dependency> — the unscoped regex would match the pin first; the
+        # scoped lookup must skip past dependencyManagement entirely.
+        pom = (
+            "<project><dependencyManagement><dependencies><dependency>"
+            "<groupId>com.example</groupId>"
+            "<artifactId>not-the-impl</artifactId>"
+            "<version>9.9.9</version>"
+            "</dependency></dependencies></dependencyManagement>"
+            "<dependencies><dependency>"
+            "<groupId>com.example</groupId>"
+            "<artifactId>foo-impl</artifactId>"
+            "<version>1.2.3</version>"
+            "</dependency></dependencies></project>"
+        ).encode()
+        with unittest.mock.patch(
+            "urllib.request.urlopen", side_effect=mock_urlopen([(200, pom)])
+        ):
+            result = server.resolve_plugin_marker_implementation(
+                "com.example.foo", "com.example.foo.gradle.plugin", "1.0.0", empty_ctx()
+            )
+        self.assertEqual(
+            result, {"groupId": "com.example", "artifactId": "foo-impl", "version": "1.2.3"}
+        )
+
 
 # ---------------------------------------------------------------------------
 # search_maven_central (server.py:731)

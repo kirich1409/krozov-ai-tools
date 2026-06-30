@@ -375,6 +375,48 @@ class TestGetDependencyVulnerabilities(unittest.TestCase):
         self.assertEqual(result["vulnerabilityCount"], 1)
         self.assertEqual(result["vulnerabilities"][0]["fixedVersion"], "1.2.3")
 
+    def test_non_marker_request_skips_resolution_context(self):
+        # #290 purity fix: discover_repositories does filesystem I/O reading the
+        # project's build files. A request with no plugin-marker-shaped
+        # dependency must never trigger it — patch it to raise if called.
+        osv = {"results": [{"vulns": []}]}
+        with unittest.mock.patch(
+            "server.discover_repositories",
+            side_effect=AssertionError(
+                "discover_repositories must not be called for non-marker requests"
+            ),
+        ):
+            with _patch_urlopen([(200, _json(osv))]):
+                out = server.handle_get_dependency_vulnerabilities({
+                    "dependencies": [
+                        {"groupId": "com.example", "artifactId": "lib", "version": "1.0.0"},
+                    ],
+                })
+        self.assertEqual(out["results"][0]["vulnerabilityCount"], 0)
+
+    def test_resolution_context_failure_degrades_gracefully(self):
+        # A marker-shaped request whose resolution-context construction fails
+        # (e.g. an unreadable/malformed build file) must not raise — the marker
+        # is treated as unresolved and queried against OSV as-is.
+        osv = {"results": [{"vulns": []}]}
+        with unittest.mock.patch(
+            "server.discover_repositories", side_effect=OSError("malformed build file"),
+        ):
+            with _patch_urlopen([(200, _json(osv))]) as m:
+                out = server.handle_get_dependency_vulnerabilities({
+                    "dependencies": [
+                        {
+                            "groupId": "com.example.foo",
+                            "artifactId": "com.example.foo.gradle.plugin",
+                            "version": "1.0.0",
+                        },
+                    ],
+                })
+        result = out["results"][0]
+        self.assertNotIn("resolvedImplementation", result)
+        self.assertEqual(m.call_count, 1)  # only the OSV POST, no POM fetch attempted
+        self.assertEqual(result["vulnerabilityCount"], 0)
+
 
 # --- handle_get_dependency_health -------------------------------------------
 

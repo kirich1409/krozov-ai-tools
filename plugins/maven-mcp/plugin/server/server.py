@@ -884,6 +884,13 @@ def resolve_plugin_marker_implementation(
     if not pom:
         return None
     xml = _strip_xml_comments(pom)
+    # Drop any <dependencyManagement> block before searching: it holds version
+    # pins, not the marker's real implementation dependency, and an unscoped
+    # search would match a <dependency> inside it first if one is present.
+    # NOTE: duplicates _parse_maven_deps' dependency-block extraction (~1508)
+    # with slightly different field requirements; not unified to keep this fix
+    # minimal — candidate for a future shared single-dependency-block parser.
+    xml = re.sub(r"<dependencyManagement>[\s\S]*?</dependencyManagement>", "", xml)
     dep_m = re.search(r"<dependency>([\s\S]*?)</dependency>", xml)
     if not dep_m:
         return None
@@ -2178,17 +2185,40 @@ def handle_scan_project_dependencies(args: Dict) -> Any:
 
 
 def handle_get_dependency_vulnerabilities(args: Dict) -> Any:
-    ctx = build_resolution_context(args)
     original_deps = args["dependencies"]
+    # Only build a ResolutionContext (filesystem read of the project's build
+    # files, see discover_repositories) when at least one requested dependency
+    # is actually a plugin-marker shape — preserves the original zero-FS-I/O,
+    # single-network-call contract for ordinary (non-marker) requests (#290
+    # purity fix: this used to run unconditionally for every caller).
+    has_marker = any(
+        _gradle_plugin_marker_plugin_id(dep["groupId"], dep["artifactId"])
+        for dep in original_deps
+    )
+    ctx: Optional["ResolutionContext"] = None
+    if has_marker:
+        try:
+            ctx = build_resolution_context(args)
+        except Exception:
+            ctx = None  # degrade: markers stay unresolved, queried as-is below
+
     query_deps = []
     resolutions = []
     for dep in original_deps:
-        resolved = resolve_plugin_marker_implementation(
-            dep["groupId"], dep["artifactId"], dep.get("version"), ctx
+        resolved = (
+            resolve_plugin_marker_implementation(
+                dep["groupId"], dep["artifactId"], dep.get("version"), ctx
+            )
+            if ctx is not None
+            else None
         )
         resolutions.append(resolved)
         query_deps.append(resolved if resolved else dep)
 
+    # NOTE: unlike handle_audit_project_dependencies, this does not dedupe
+    # identical (groupId, artifactId, version) requests before querying OSV —
+    # known minor inefficiency, left as a follow-up rather than risking a
+    # larger restructure here.
     raw = query_osv_batch(query_deps)
     results = []
     for i, r in enumerate(raw):
@@ -2819,7 +2849,7 @@ TOOLS = [
         "inputSchema": {
             "type": "object",
             "properties": {
-                "projectPath": {"type": "string"},
+                "projectPath": {"type": "string", "description": "Project root used to resolve declared repositories. Defaults to the current working directory."},
                 "includeVulnerabilities": {"type": "boolean", "description": "Include OSV vulnerability check (default true)"},
                 "productionOnly": {"type": "boolean", "description": "Exclude test-scope dependencies (default true)"},
             },
