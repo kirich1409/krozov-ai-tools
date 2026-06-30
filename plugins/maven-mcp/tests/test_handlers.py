@@ -58,6 +58,16 @@ class TestGetLatestVersion(unittest.TestCase):
         self.assertEqual(out["stability"], "stable")
         self.assertEqual(out["allVersionsCount"], 2)
 
+    def test_prefers_bare_release_over_compat_suffix_build(self):
+        # #325 end-to-end repro: handle_get_latest_version must pick "0.8.0",
+        # not the same-core "0.8.0-0.6.x-compat" qualifier build.
+        with _patch_urlopen([(200, _meta(["0.6.0", "0.7.0", "0.7.1", "0.8.0-0.6.x-compat", "0.8.0"]))]):
+            out = server.handle_get_latest_version(
+                {"groupId": "org.jetbrains.kotlinx", "artifactId": "kotlinx-datetime"}
+            )
+        self.assertEqual(out["latestVersion"], "0.8.0")
+        self.assertEqual(out["stability"], "stable")
+
     def test_no_stable_version_raises(self):
         # STABLE_ONLY over a prerelease-only metadata -> find_latest_version None
         # -> handler raises ValueError (server.py :1235-:1236).

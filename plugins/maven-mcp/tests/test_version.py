@@ -75,6 +75,21 @@ class ClassifyVersionTest(unittest.TestCase):
 _MIXED_VERSIONS = ["1.0.0", "2.0.0-alpha1", "2.0.0-beta1", "2.0.0-RC1", "2.0.0"]
 
 
+class FindLatestVersionTest(unittest.TestCase):
+    """find_latest_version is what handle_get_latest_version actually calls
+    (server.py ~:2008) — #325 was reported against that tool specifically,
+    so the regression must be pinned here, not only on the sibling
+    find_latest_version_for_current used by compare/audit tools."""
+
+    def test_bare_release_preferred_over_compat_suffix_build(self):
+        # #325: get_latest_version picked "0.8.0-0.6.x-compat" over "0.8.0".
+        # Mirrors how fetch_metadata builds the sorted versions list fed to
+        # find_latest_version (server.py:557).
+        raw = ["0.7.0", "0.8.0-0.6.x-compat", "0.8.0"]
+        versions = sorted(set(raw), key=functools.cmp_to_key(server.compare_versions))
+        self.assertEqual(server.find_latest_version(versions, "PREFER_STABLE"), "0.8.0")
+
+
 class FindLatestVersionForCurrentTest(unittest.TestCase):
 
     def test_returns_stable_when_current_is_stable(self):
