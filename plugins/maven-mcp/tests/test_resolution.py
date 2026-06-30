@@ -329,6 +329,163 @@ class TestProvenanceReporting(unittest.TestCase):
         self.assertEqual(out["resolvedFrom"]["url"], CUSTOM_URL)
         self.assertIs(out["resolvedFrom"]["viaPublicFallback"], False)
 
+    # --- resolvedFrom is wired onto the OTHER handlers touched by #317 --------
+    # The two tests above pin viaPublicFallback semantics through
+    # get_latest_version; these smoke-tests confirm the field is actually
+    # present (and correctly shaped) on every other success path. A
+    # custom-repo-only project where that repo answers 200 must surface
+    # resolvedFrom={url=CUSTOM_URL, scope="dependency", viaPublicFallback=False}.
+    def _assert_declared(self, rf):
+        self.assertIsNotNone(rf)
+        self.assertEqual(rf["url"], CUSTOM_URL)
+        self.assertEqual(rf["scope"], "dependency")
+        self.assertIs(rf["viaPublicFallback"], False)
+
+    def test_check_multiple_dependencies_includes_resolved_from(self):
+        files = {"settings.gradle.kts": _settings('maven { url = uri("%s") }' % CUSTOM_URL)}
+        with temp_project(files) as root:
+            with unittest.mock.patch(
+                "urllib.request.urlopen",
+                side_effect=mock_urlopen([(200, _meta(["1.0.0", "2.0.0"]))]),
+            ):
+                out = server.handle_check_multiple_dependencies({
+                    "dependencies": [{"groupId": "com.acme", "artifactId": "lib"}],
+                    "projectPath": root,
+                })
+        self._assert_declared(out["results"][0]["resolvedFrom"])
+
+    def test_compare_dependency_versions_includes_resolved_from(self):
+        files = {"settings.gradle.kts": _settings('maven { url = uri("%s") }' % CUSTOM_URL)}
+        with temp_project(files) as root:
+            with unittest.mock.patch(
+                "urllib.request.urlopen",
+                side_effect=mock_urlopen([(200, _meta(["1.0.0", "2.0.0"]))]),
+            ):
+                out = server.handle_compare_dependency_versions({
+                    "dependencies": [{
+                        "groupId": "com.acme", "artifactId": "lib",
+                        "currentVersion": "1.0.0",
+                    }],
+                    "projectPath": root,
+                })
+        self._assert_declared(out["results"][0]["resolvedFrom"])
+
+    def test_get_dependency_health_includes_resolved_from(self):
+        # resolvedFrom is set right after the metadata fetch, before the POM
+        # probe; com.acme is not GitHub-guessable so the chain stops after
+        # metadata + POM-404 with no further network.
+        files = {"settings.gradle.kts": _settings('maven { url = uri("%s") }' % CUSTOM_URL)}
+        responses = [
+            (200, _meta(["1.0.0"], "20240515000000")),
+            http_error(CUSTOM_URL, 404, "Not Found"),  # POM
+        ]
+        with temp_project(files) as root:
+            with unittest.mock.patch(
+                "urllib.request.urlopen", side_effect=mock_urlopen(responses)
+            ):
+                out = server.handle_get_dependency_health({
+                    "dependencies": [{"groupId": "com.acme", "artifactId": "lib"}],
+                    "projectPath": root,
+                })
+        self._assert_declared(out["results"][0]["resolvedFrom"])
+
+    def test_audit_project_dependencies_includes_resolved_from(self):
+        # Gradle project with a declared dependency; vulnerabilities disabled so
+        # the only network call is the metadata fetch against the custom repo.
+        files = {
+            "settings.gradle.kts": _settings('maven { url = uri("%s") }' % CUSTOM_URL),
+            "build.gradle.kts": 'dependencies { implementation("com.acme:lib:1.0.0") }',
+        }
+        with temp_project(files) as root:
+            with unittest.mock.patch(
+                "urllib.request.urlopen",
+                side_effect=mock_urlopen([(200, _meta(["1.0.0", "2.0.0"]))]),
+            ):
+                out = server.handle_audit_project_dependencies({
+                    "projectPath": root, "includeVulnerabilities": False,
+                })
+        self._assert_declared(out["dependencies"][0]["resolvedFrom"])
+
+    def test_get_dependency_changes_impl_includes_resolved_from(self):
+        # Downstream no-versions-in-range still carries resolvedFrom: the repo
+        # answered, so provenance is known even though the result is an error.
+        files = {"settings.gradle.kts": _settings('maven { url = uri("%s") }' % CUSTOM_URL)}
+        with temp_project(files) as root:
+            ctx = server.build_resolution_context({"projectPath": root})
+            with unittest.mock.patch(
+                "urllib.request.urlopen",
+                side_effect=mock_urlopen([(200, _meta(["1.0.0", "2.0.0"]))]),
+            ):
+                out = server._get_dependency_changes_impl(
+                    "com.acme", "lib", "2.0.0", "3.0.0", ctx,
+                )
+        self.assertIn("error", out)  # no versions in (2.0.0, 3.0.0]
+        self._assert_declared(out["resolvedFrom"])
+
+    # --- finding #1 (code-reviewer, /finalize Phase A): the two handlers below
+    # used to build their error entry from a single try/except wrapping BOTH
+    # fetch_metadata AND downstream selection, so a downstream "no version"
+    # error dropped resolvedFrom even though a repo had actually answered. Fixed
+    # by capturing resolved_from right after fetch_metadata succeeds and
+    # threading it into the except-branch error entry too.
+    def test_check_multiple_dependencies_downstream_error_includes_resolved_from(self):
+        # The repo answers 200 but with an empty version list, so
+        # find_latest_version returns None and the handler raises "No version
+        # found" downstream of a successful fetch_metadata.
+        files = {"settings.gradle.kts": _settings('maven { url = uri("%s") }' % CUSTOM_URL)}
+        with temp_project(files) as root:
+            with unittest.mock.patch(
+                "urllib.request.urlopen",
+                side_effect=mock_urlopen([(200, _meta([]))]),
+            ):
+                out = server.handle_check_multiple_dependencies({
+                    "dependencies": [{"groupId": "com.acme", "artifactId": "lib"}],
+                    "projectPath": root,
+                })
+        entry = out["results"][0]
+        self.assertIn("error", entry)
+        self._assert_declared(entry["resolvedFrom"])
+
+    def test_compare_dependency_versions_downstream_error_includes_resolved_from(self):
+        # Same shape as above: empty version list -> find_latest_version_for_current
+        # returns None -> "No matching version found", downstream of a
+        # successful fetch_metadata.
+        files = {"settings.gradle.kts": _settings('maven { url = uri("%s") }' % CUSTOM_URL)}
+        with temp_project(files) as root:
+            with unittest.mock.patch(
+                "urllib.request.urlopen",
+                side_effect=mock_urlopen([(200, _meta([]))]),
+            ):
+                out = server.handle_compare_dependency_versions({
+                    "dependencies": [{
+                        "groupId": "com.acme", "artifactId": "lib",
+                        "currentVersion": "1.0.0",
+                    }],
+                    "projectPath": root,
+                })
+        entry = out["results"][0]
+        self.assertIn("error", entry)
+        self._assert_declared(entry["resolvedFrom"])
+
+    def test_check_multiple_dependencies_fetch_failure_omits_resolved_from(self):
+        # Mirror image of the downstream-error test above: when fetch_metadata
+        # itself raises (every repo in scope 404s), there is genuinely no
+        # provenance to report, so resolvedFrom must be ABSENT from the error
+        # entry (not present-as-None).
+        files = {"settings.gradle.kts": _settings('maven { url = uri("%s") }' % CUSTOM_URL)}
+        with temp_project(files) as root:
+            with unittest.mock.patch(
+                "urllib.request.urlopen",
+                side_effect=mock_urlopen([http_error(CUSTOM_URL, 404, "Not Found")]),
+            ):
+                out = server.handle_check_multiple_dependencies({
+                    "dependencies": [{"groupId": "com.acme", "artifactId": "lib"}],
+                    "projectPath": root,
+                })
+        entry = out["results"][0]
+        self.assertIn("error", entry)
+        self.assertNotIn("resolvedFrom", entry)
+
 
 if __name__ == "__main__":
     unittest.main()

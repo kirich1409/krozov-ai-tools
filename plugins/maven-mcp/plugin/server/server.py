@@ -520,6 +520,11 @@ def _parse_metadata_xml(xml: str, group_id: str, artifact_id: str) -> Dict[str, 
     }
 
 
+def _to_resolved_from(entry: Dict[str, Any]) -> Dict[str, Any]:
+    """Project a repo entry (from _repos_for/_public_repos) into the public resolvedFrom shape."""
+    return {"url": entry["url"], "scope": entry["scope"], "viaPublicFallback": entry["is_public_fallback"]}
+
+
 def fetch_metadata(group_id: str, artifact_id: str, ctx: "ResolutionContext") -> Dict[str, Any]:
     """Query every repo in ``ctx`` and MERGE results across those answering 200:
     version sets are unioned, deduped and sorted ascending so a private repo's
@@ -547,11 +552,7 @@ def fetch_metadata(group_id: str, artifact_id: str, ctx: "ResolutionContext") ->
                 # reachable repo, matching the legacy first-hit contract.
                 answered = True
                 if resolved_from is None:
-                    resolved_from = {
-                        "url": entry["url"],
-                        "scope": entry["scope"],
-                        "viaPublicFallback": entry["is_public_fallback"],
-                    }
+                    resolved_from = _to_resolved_from(entry)
                 parsed = _parse_metadata_xml(body.decode("utf-8", errors="replace"), group_id, artifact_id)
                 merged_versions.extend(parsed["versions"])
                 lu = parsed.get("lastUpdated")
@@ -1077,7 +1078,7 @@ def _get_dependency_changes_impl(group_id: str, artifact_id: str, from_version: 
         metadata = fetch_metadata(group_id, artifact_id, ctx)
     except Exception as e:
         return {**base, "error": str(e)}
-    base = {**base, "resolvedFrom": metadata.get("resolvedFrom")}
+    base["resolvedFrom"] = metadata.get("resolvedFrom")
 
     versions_in_range = _filter_version_range(metadata["versions"], from_version, to_version)
     if not versions_in_range:
@@ -2043,11 +2044,7 @@ def handle_check_version_exists(args: Dict) -> Any:
             "exists": True,
             "stability": classify_version(version),
             "repository": entry["name"],
-            "resolvedFrom": {
-                "url": entry["url"],
-                "scope": entry["scope"],
-                "viaPublicFallback": entry["is_public_fallback"],
-            },
+            "resolvedFrom": _to_resolved_from(entry),
         }
     return {
         "groupId": group_id,
@@ -2061,8 +2058,13 @@ def handle_check_multiple_dependencies(args: Dict) -> Any:
     ctx = build_resolution_context(args)
     results = []
     for dep in args["dependencies"]:
+        # resolved_from is captured as soon as fetch_metadata succeeds, so a
+        # downstream "no version found" still carries provenance (#317 finding 1:
+        # a repo did answer, so resolvedFrom is known even on a not-found result).
+        resolved_from = None
         try:
             metadata = fetch_metadata(dep["groupId"], dep["artifactId"], ctx)
+            resolved_from = metadata.get("resolvedFrom")
             latest = find_latest_version(metadata["versions"], "PREFER_STABLE")
             if not latest:
                 raise ValueError("No version found")
@@ -2071,16 +2073,19 @@ def handle_check_multiple_dependencies(args: Dict) -> Any:
                 "artifactId": dep["artifactId"],
                 "latestVersion": latest,
                 "stability": classify_version(latest),
-                "resolvedFrom": metadata.get("resolvedFrom"),
+                "resolvedFrom": resolved_from,
             })
         except Exception as e:
-            results.append({
+            error_entry = {
                 "groupId": dep["groupId"],
                 "artifactId": dep["artifactId"],
                 "latestVersion": "",
                 "stability": "",
                 "error": str(e),
-            })
+            }
+            if resolved_from is not None:
+                error_entry["resolvedFrom"] = resolved_from
+            results.append(error_entry)
     return {"results": results}
 
 
@@ -2088,8 +2093,13 @@ def handle_compare_dependency_versions(args: Dict) -> Any:
     ctx = build_resolution_context(args)
     results = []
     for dep in args["dependencies"]:
+        # resolved_from is captured as soon as fetch_metadata succeeds, so a
+        # downstream "no matching version" still carries provenance (#317 finding 1:
+        # a repo did answer, so resolvedFrom is known even on a not-found result).
+        resolved_from = None
         try:
             metadata = fetch_metadata(dep["groupId"], dep["artifactId"], ctx)
+            resolved_from = metadata.get("resolvedFrom")
             latest = find_latest_version_for_current(metadata["versions"], dep["currentVersion"])
             if not latest:
                 raise ValueError("No matching version found")
@@ -2102,10 +2112,10 @@ def handle_compare_dependency_versions(args: Dict) -> Any:
                 "latestStability": classify_version(latest),
                 "upgradeType": upgrade_type,
                 "upgradeAvailable": upgrade_type != "none",
-                "resolvedFrom": metadata.get("resolvedFrom"),
+                "resolvedFrom": resolved_from,
             })
         except Exception as e:
-            results.append({
+            error_entry = {
                 "groupId": dep["groupId"],
                 "artifactId": dep["artifactId"],
                 "currentVersion": dep.get("currentVersion", ""),
@@ -2114,7 +2124,10 @@ def handle_compare_dependency_versions(args: Dict) -> Any:
                 "upgradeType": "none",
                 "upgradeAvailable": False,
                 "error": str(e),
-            })
+            }
+            if resolved_from is not None:
+                error_entry["resolvedFrom"] = resolved_from
+            results.append(error_entry)
     summary = {
         "total": len(results),
         "upgradeable": sum(1 for r in results if r.get("upgradeAvailable")),
