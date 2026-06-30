@@ -47,8 +47,10 @@ Repositories are selected by static group-prefix routing (Gradle Plugin Portal f
 
 ## Optional
 
-- **jq** — used by the PostToolUse hook (`plugin/hooks/post-edit-deps.sh`) to parse JSON input. The hook is a no-op when `jq` is not installed; the MCP server itself does not need it.
-- **GITHUB_TOKEN** — set this environment variable to raise GitHub API rate limits from 60 to 5000 requests/hour. Used by the `get_dependency_changes` and `get_dependency_health` tools to fetch release notes, repository metadata, and issue statistics.
+- **jq** — used by both hooks (`plugin/hooks/pre-edit-deps.sh`, `plugin/hooks/post-edit-deps.sh`) to parse JSON input. Both hooks are no-ops when `jq` is not installed; the MCP server itself does not need it.
+- **timeout / gtimeout** — used by the PreToolUse guard hook (`pre-edit-deps.sh`) to cap the server call at 8 s. On macOS, `timeout` is not available by default; install GNU coreutils via `brew install coreutils` to get `gtimeout`. When neither is present the hook exits immediately (fail-open) — the MCP server is never called and every edit proceeds.
+- **GITHUB_TOKEN** — set this environment variable to raise GitHub API rate limits from 60 to 5000 requests/hour. Used by the `get_dependency_changes` and `get_dependency_health` tools to fetch release notes, repository metadata, and issue statistics. The PreToolUse hook scrubs this variable from the environment it passes to the server (least-privilege).
+- **MAVEN_MCP_PUBLIC_FALLBACK** — optional toggle (default OFF). When ON, public well-known repos are appended even for projects that declare their own repositories. Affects the coordinate existence check in the PreToolUse guard hook.
 
 ## Installation
 
@@ -60,7 +62,22 @@ The plugin manifest registers the bundled server automatically; no separate inst
 
 ## Hooks
 
-The plugin includes a PostToolUse hook that triggers when build files (`build.gradle`, `pom.xml`, `libs.versions.toml`, etc.) are edited. It reminds you to run `/check-deps` to verify dependency updates. The hook requires `jq` and silently does nothing if `jq` is not installed.
+### PreToolUse write-time guard (`pre-edit-deps.sh`)
+
+Fires before `Edit`, `Write`, or `MultiEdit` on build files (`build.gradle[.kts]`, `settings.gradle[.kts]`, `pom.xml`, `libs.versions.toml`). It extracts Maven coordinates from the new content and runs two checks:
+
+1. **Existence check** via `verify_coordinates` — flags coordinates that are absent from all resolved repositories AND are likely hallucinated (high similarity to a real name) or have did-you-mean candidates on Maven Central. The decision is `deny` with suggested candidates when actionable, `allow` otherwise. Bare absence with no signal (e.g. private or non-Central coordinates with no similar names) is always allowed.
+2. **Vulnerability check** via `get_dependency_vulnerabilities` — for versioned coordinates only, flags CRITICAL or HIGH CVEs as `ask` (advisory prompt).
+
+`deny` takes priority over `ask`. The guard is **advisory, not enforcement**: a `deny` decision displays a reason and candidates, but the user can override by confirming the edit in Claude Code.
+
+The guard is **structurally fail-open**: any failure — jq absent, no `timeout`/`gtimeout`, server error, network error, rate limit, private/auth-gated repository — results in silent allow with no output. The server process is capped at 8 s (`timeout 8`) inside the hook's 12 s outer timeout; `GITHUB_TOKEN` is scrubbed from the spawned environment.
+
+**Scope limitation:** the existence check is Maven-Central-scoped for the did-you-mean suggestions (the Solr suggest backend covers Central only). Existence is checked against project-declared repositories (with public fallback), so private-repo coords receive a best-effort check; only the suggestion backend is Central-only.
+
+### PostToolUse reminder (`post-edit-deps.sh`)
+
+Fires after `Edit` or `Write` on build files and reminds you to run `/check-deps` to verify dependency updates. Requires `jq`; silently does nothing if `jq` is not installed.
 
 ## Caching
 
