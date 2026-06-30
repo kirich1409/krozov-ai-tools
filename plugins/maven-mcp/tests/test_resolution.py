@@ -554,6 +554,55 @@ class TestUserinfoRedaction(unittest.TestCase):
         self.assertEqual(result["repository"], REDACTED_URL)
         self.assertNotIn("repopass", json.dumps(out))
 
+    def test_fetch_metadata_failure_message_does_not_leak_credentials(self):
+        # /finalize Phase 0 (cross-file tracer) + advisor finding: fetch_metadata's
+        # non-200 last_err embeds entry["name"], which can be the literal
+        # credentialed URL (maven("url") declarations set name == url). That
+        # message flows into handle_check_multiple_dependencies's "error" field —
+        # confirm the credential does not leak there either.
+        files = {"settings.gradle.kts": _settings('maven { url = uri("%s") }' % CREDENTIALED_URL)}
+        with temp_project(files) as root:
+            with unittest.mock.patch(
+                "urllib.request.urlopen",
+                side_effect=mock_urlopen([http_error(CREDENTIALED_URL, 404, "Not Found")]),
+            ):
+                out = server.handle_check_multiple_dependencies({
+                    "dependencies": [{"groupId": "com.acme", "artifactId": "lib"}],
+                    "projectPath": root,
+                })
+        entry = out["results"][0]
+        self.assertIn("error", entry)
+        self.assertIn(REDACTED_URL, entry["error"])
+        self.assertNotIn("repopass", json.dumps(out))
+
+
+class TestAuditDownstreamErrorResolvedFrom(unittest.TestCase):
+    # /finalize Phase 0 (removed-behavior auditor) finding: handle_audit_project_
+    # dependencies shares the #317 finding-1 shape (fetch_metadata + downstream
+    # selection in one try/except) but wasn't covered by the original fix. An
+    # unexpected exception from get_upgrade_type (after a successful fetch) must
+    # still carry resolvedFrom in the degraded entry, like the other handlers.
+    def test_downstream_exception_after_successful_fetch_preserves_resolved_from(self):
+        files = {
+            "settings.gradle.kts": _settings('maven { url = uri("%s") }' % CUSTOM_URL),
+            "build.gradle.kts": 'dependencies { implementation("com.acme:lib:1.0.0") }',
+        }
+        with temp_project(files) as root:
+            with unittest.mock.patch(
+                "urllib.request.urlopen",
+                side_effect=mock_urlopen([(200, _meta(["1.0.0", "2.0.0"]))]),
+            ):
+                with unittest.mock.patch(
+                    "server.get_upgrade_type", side_effect=RuntimeError("boom")
+                ):
+                    out = server.handle_audit_project_dependencies({
+                        "projectPath": root, "includeVulnerabilities": False,
+                    })
+        entry = out["dependencies"][0]
+        self.assertNotIn("latestVersion", entry)  # degraded entry, same as before
+        self.assertIsNotNone(entry.get("resolvedFrom"))
+        self.assertEqual(entry["resolvedFrom"]["url"], CUSTOM_URL)
+
 
 if __name__ == "__main__":
     unittest.main()

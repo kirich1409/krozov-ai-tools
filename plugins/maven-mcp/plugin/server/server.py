@@ -581,7 +581,10 @@ def fetch_metadata(group_id: str, artifact_id: str, ctx: "ResolutionContext") ->
                 if lu and (last_updated is None or lu > last_updated):
                     last_updated = lu
             else:
-                last_err = f"HTTP {status} from {entry['name']}"
+                # entry["name"] can be the literal repo URL for maven("url")
+                # declarations (name == url); redact before it reaches the
+                # exception message, which flows into tool-facing "error" fields.
+                last_err = f"HTTP {status} from {_strip_userinfo(entry['name'])}"
         except Exception as e:
             last_err = str(e)
     if not answered:
@@ -2366,10 +2369,16 @@ def handle_audit_project_dependencies(args: Dict) -> Any:
 
     for dep in deps_with_version:
         ga_key = f"{dep['groupId']}:{dep['artifactId']}"
+        # resolved_from is captured as soon as fetch_metadata succeeds, so an
+        # unexpected downstream failure still carries provenance — mirrors the
+        # #317 finding 1 fix applied to handle_check_multiple_dependencies /
+        # handle_compare_dependency_versions.
+        resolved_from = None
         try:
             if ga_key not in metadata_cache:
                 metadata_cache[ga_key] = fetch_metadata(dep["groupId"], dep["artifactId"], ctx)
             metadata = metadata_cache[ga_key]
+            resolved_from = metadata.get("resolvedFrom")
             latest = find_latest_version_for_current(metadata["versions"], dep["version"])
             upgrade_type = get_upgrade_type(dep["version"], latest) if latest else "none"
             audit_deps.append({
@@ -2382,10 +2391,10 @@ def handle_audit_project_dependencies(args: Dict) -> Any:
                 "usages": dep.get("usages", []),
                 "module": (dep.get("usages") or [{}])[0].get("module"),
                 "configuration": (dep.get("usages") or [{}])[0].get("configuration"),
-                "resolvedFrom": metadata.get("resolvedFrom"),
+                "resolvedFrom": resolved_from,
             })
         except Exception:
-            audit_deps.append({
+            error_entry = {
                 "groupId": dep["groupId"],
                 "artifactId": dep["artifactId"],
                 "currentVersion": dep["version"],
@@ -2393,7 +2402,10 @@ def handle_audit_project_dependencies(args: Dict) -> Any:
                 "usages": dep.get("usages", []),
                 "module": (dep.get("usages") or [{}])[0].get("module"),
                 "configuration": (dep.get("usages") or [{}])[0].get("configuration"),
-            })
+            }
+            if resolved_from is not None:
+                error_entry["resolvedFrom"] = resolved_from
+            audit_deps.append(error_entry)
 
     for dep in deps_without_version:
         audit_deps.append({
