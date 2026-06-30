@@ -9,6 +9,7 @@ import datetime
 import email.utils
 import functools
 import hashlib
+import http.client
 import json
 import logging
 import os
@@ -206,6 +207,11 @@ def _request_with_retry(req: urllib.request.Request) -> Tuple[int, bytes]:
             retry_after = _parse_retry_after(e.headers)
         except (urllib.error.URLError, socket.timeout) as e:
             last_exc = e
+        # http.client.InvalidURL (e.g. a malformed userinfo URL) is deliberately
+        # NOT caught here — it is a request-construction failure, not a transport
+        # failure, so it is not retryable and propagates to the caller. Both
+        # known callers (fetch_metadata and _verify_one) handle it explicitly at
+        # their own layer rather than relying on a generic retry-and-swallow here.
         if attempt >= HTTP_MAX_ATTEMPTS - 1:
             break
         delay = retry_after if retry_after is not None else _backoff_delay(attempt)
@@ -2530,9 +2536,16 @@ def _verify_one(
         url = _metadata_url(entry["url"], group_id, artifact_id)
         try:
             status, body = http_get(url)
-        except (urllib.error.URLError, socket.timeout):
+        except (urllib.error.URLError, socket.timeout, http.client.InvalidURL):
             # Transport failure (offline / DNS / read timeout) — verification
             # unavailable for THIS repo; contributes "unknown", never "absent".
+            # http.client.InvalidURL (NOT a urllib.error.URLError subclass) is
+            # what a userinfo repo URL (https://user:pass@host) raises during
+            # request construction — same fetch_metadata credential-leak class
+            # (#317 security review): without this clause it would escape to
+            # handle_verify_coordinates's outer `except Exception as e: str(e)`
+            # and embed the raw password in the "error" field. Treated as an
+            # ordinary unverifiable-repo transport failure, never stringified.
             saw_unverifiable = True
             continue
         if status == 200:

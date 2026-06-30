@@ -555,6 +555,28 @@ class TestUserinfoRedaction(unittest.TestCase):
         self.assertEqual(result["repository"], REDACTED_URL)
         self.assertNotIn("repopass", json.dumps(out))
 
+    def test_verify_coordinates_transport_exception_with_credentials_does_not_leak_password(self):
+        # /finalize Phase D (security-expert, follow-up to the fetch_metadata
+        # fix below): _verify_one runs its OWN per-repo probe (not
+        # fetch_metadata), with the same urlopen-raises-InvalidURL-on-userinfo-
+        # URL hazard. Without an explicit catch it escapes to
+        # handle_verify_coordinates's outer `except Exception as e: str(e)` and
+        # leaks the password. Must degrade to "unknown" (an ordinary
+        # unverifiable-repo outcome), never an error entry with a raw message.
+        files = {"settings.gradle.kts": _settings('maven { url = uri("%s") }' % CREDENTIALED_URL)}
+        leak = http.client.InvalidURL("nonnumeric port: 'repopass@nexus.example.com'")
+        with temp_project(files) as root:
+            with unittest.mock.patch(
+                "urllib.request.urlopen", side_effect=mock_urlopen([leak]),
+            ):
+                out = server.handle_verify_coordinates({
+                    "dependencies": [{"groupId": "com.acme", "artifactId": "lib"}],
+                    "projectPath": root,
+                })
+        result = out["results"][0]
+        self.assertEqual(result["existenceStatus"], "unknown")
+        self.assertNotIn("repopass", json.dumps(out))
+
     def test_fetch_metadata_failure_message_does_not_leak_credentials(self):
         # /finalize Phase 0 (cross-file tracer) + advisor finding: fetch_metadata's
         # non-200 last_err embeds entry["name"], which can be the literal
