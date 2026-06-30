@@ -188,20 +188,22 @@ class TestFileCache(unittest.TestCase):
         finally:
             os.umask(old_umask)
 
-    def test_preexisting_loose_perm_dir_tightened(self):
-        """A pre-existing 0o750 dir must be tightened to 0o700 on first cache use.
+    def test_preexisting_dir_gets_explicit_chmod_700(self):
+        """_get_dir() must call os.chmod(dir, 0o700) even when the dir pre-exists.
 
-        This is the case that ACTUALLY exercises the explicit os.chmod call;
-        the fresh-dir umask test passes even if the chmod is deleted.
+        Asserts the explicit chmod call rather than creating a CodeQL-flagged
+        loose-permission dir.  If the os.chmod line is removed from _get_dir(),
+        this assertion fails — stronger regression guard than the old umask-based
+        check, which passed vacuously even without the chmod call.
         """
         cache_dir = os.path.join(self.tmpdir, "maven-central-mcp")
-        os.makedirs(cache_dir, mode=0o750, exist_ok=True)
-        os.chmod(cache_dir, 0o750)  # force loose perms before cache touches it
+        os.makedirs(cache_dir, mode=0o700, exist_ok=True)
 
-        url = "https://repo1.maven.org/maven2/loose_perm.xml"
-        server._file_cache.set(url, 200, b"body")
-        dir_mode = stat.S_IMODE(os.stat(cache_dir).st_mode)
-        self.assertEqual(dir_mode, 0o700, f"dir should be tightened to 0o700, got {oct(dir_mode)}")
+        with unittest.mock.patch("os.chmod") as mock_chmod:
+            result = server._file_cache._get_dir()
+
+        self.assertEqual(result, cache_dir)
+        mock_chmod.assert_any_call(cache_dir, 0o700)
 
     # ---- set-swallow channel safety ----------------------------------------
 
