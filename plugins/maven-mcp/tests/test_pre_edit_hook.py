@@ -20,13 +20,12 @@ import json
 import os
 import shutil
 import subprocess
-import sys
 import tempfile
 import textwrap
 import unittest
 import unittest.mock
 
-from _helpers import server, mock_urlopen
+from _helpers import server
 
 # ---------------------------------------------------------------------------
 # Locate hook script
@@ -53,6 +52,60 @@ def _require_jq_and_timeout(msg="jq and timeout/gtimeout required to invoke stub
     On macOS without coreutils this skips gracefully; CI (ubuntu-latest) has timeout.
     """
     return unittest.skipUnless(_HAS_JQ and _HAS_TIMEOUT, msg)
+
+
+# ---------------------------------------------------------------------------
+# Shadow-bin helper for fail-open PATH tests
+# ---------------------------------------------------------------------------
+
+# All tools the hook invokes via PATH (bash builtins like printf/command excluded).
+# Used to build a minimal shadow PATH that is missing exactly one tool, so the
+# excluded tool is the only thing absent — all others remain reachable.
+_HOOK_SHELL_TOOLS = (
+    "bash", "cat", "basename", "mktemp", "grep", "sed",
+    "tr", "sort", "head", "wc", "env", "cut", "jq", "python3",
+)
+
+
+def _shadow_bin_without(excluded_tool, tmpdir_root):
+    """Build a shadow bin dir under tmpdir_root with symlinks for all _HOOK_SHELL_TOOLS
+    except excluded_tool, plus the system timeout command (timeout/gtimeout) if available.
+
+    Returns (shadow_dir, bash_abs_path) on success; (None, None) if any required
+    tool (other than excluded_tool) cannot be located on this runner — caller
+    should call skipTest() in that case.
+    """
+    bash_abs = shutil.which("bash")
+    if bash_abs is None:
+        return None, None
+
+    shadow = os.path.join(tmpdir_root, "shadow_bin")
+    os.makedirs(shadow, exist_ok=True)
+
+    for tool in _HOOK_SHELL_TOOLS:
+        if tool == excluded_tool:
+            continue  # intentionally absent in this shadow env
+        real = shutil.which(tool)
+        if real is None:
+            return None, None  # required tool missing on this runner
+        link = os.path.join(shadow, tool)
+        if not os.path.exists(link):
+            os.symlink(real, link)
+
+    # Also symlink the timeout command (timeout or gtimeout) if available.
+    # Required so the python3-absent test reaches the python3 check rather
+    # than exiting at the timeout check.
+    for tcmd in ("timeout", "gtimeout"):
+        if tcmd == excluded_tool:
+            continue
+        real = shutil.which(tcmd)
+        if real is not None:
+            link = os.path.join(shadow, tcmd)
+            if not os.path.exists(link):
+                os.symlink(real, link)
+            break  # only one timeout variant needed
+
+    return shadow, bash_abs
 
 
 # ---------------------------------------------------------------------------
@@ -338,7 +391,7 @@ class ExtractionTest(unittest.TestCase):
                                                "implementation 'com.example:lib:1.0.0'"))
         self.assertEqual(proc.returncode, 0)
         args = _stub_args(self.tmp)
-        self.assertTrue(len(args) >= 1, "stub must be invoked")
+        self.assertGreaterEqual(len(args), 1, "stub must be invoked")
         deps = args[0]["arguments"].get("dependencies", [])
         self.assertEqual(len(deps), 1)
         self.assertEqual(deps[0]["groupId"], "com.example")
@@ -352,7 +405,7 @@ class ExtractionTest(unittest.TestCase):
                                                'implementation("com.example:lib:2.0.0")'))
         self.assertEqual(proc.returncode, 0)
         args = _stub_args(self.tmp)
-        self.assertTrue(len(args) >= 1)
+        self.assertGreaterEqual(len(args), 1)
         deps = args[0]["arguments"].get("dependencies", [])
         self.assertEqual(len(deps), 1)
         self.assertEqual(deps[0].get("version"), "2.0.0")
@@ -364,10 +417,10 @@ class ExtractionTest(unittest.TestCase):
                                                'implementation "com.example:lib:$someVar"'))
         self.assertEqual(proc.returncode, 0)
         args = _stub_args(self.tmp)
-        self.assertTrue(len(args) >= 1)
+        self.assertGreaterEqual(len(args), 1)
         deps = args[0]["arguments"].get("dependencies", [])
         found = [d for d in deps if d.get("groupId") == "com.example"]
-        self.assertTrue(len(found) >= 1, "coord should be extracted as GA-only")
+        self.assertGreaterEqual(len(found), 1, "coord should be extracted as GA-only")
         self.assertNotIn("version", found[0], "version must be absent for $var interpolation")
 
     def test_gradle_dollar_var_excluded_from_vuln_check(self):
@@ -397,9 +450,9 @@ class ExtractionTest(unittest.TestCase):
         proc = _run_hook(self.tmp, _edit_stdin("pom.xml", content))
         self.assertEqual(proc.returncode, 0)
         args = _stub_args(self.tmp)
-        self.assertTrue(len(args) >= 1)
+        self.assertGreaterEqual(len(args), 1)
         deps = args[0]["arguments"].get("dependencies", [])
-        self.assertTrue(len(deps) >= 1)
+        self.assertGreaterEqual(len(deps), 1)
         self.assertEqual(deps[0]["groupId"], "org.apache.commons")
         self.assertEqual(deps[0]["artifactId"], "commons-lang3")
 
@@ -415,11 +468,11 @@ class ExtractionTest(unittest.TestCase):
         ))
         self.assertEqual(proc.returncode, 0)
         args = _stub_args(self.tmp)
-        self.assertTrue(len(args) >= 1)
+        self.assertGreaterEqual(len(args), 1)
         deps = args[0]["arguments"].get("dependencies", [])
         found = [d for d in deps
                  if d.get("groupId") == "com.example" and d.get("artifactId") == "toml-lib"]
-        self.assertTrue(len(found) >= 1, "toml module coord should be extracted")
+        self.assertGreaterEqual(len(found), 1, "toml module coord should be extracted")
 
     def test_toml_version_ref_becomes_ga_only_no_vuln_call(self):
         """TOML module-only (no inline version) → GA-only; vuln call absent."""
@@ -448,10 +501,10 @@ class ExtractionTest(unittest.TestCase):
         proc = _run_hook(self.tmp, stdin)
         self.assertEqual(proc.returncode, 0)
         args = _stub_args(self.tmp)
-        self.assertTrue(len(args) >= 1)
+        self.assertGreaterEqual(len(args), 1)
         deps = args[0]["arguments"].get("dependencies", [])
         found = [d for d in deps if d.get("groupId") == "com.foo"]
-        self.assertTrue(len(found) >= 1)
+        self.assertGreaterEqual(len(found), 1)
 
 
 @_require_jq_and_timeout()
@@ -480,7 +533,7 @@ class WriteContentPathTest(unittest.TestCase):
         )
         proc = _run_hook(self.tmp, stdin)
         args = _stub_args(self.tmp)
-        self.assertTrue(len(args) >= 1, "stub invoked via Write .content path (positive control)")
+        self.assertGreaterEqual(len(args), 1, "stub invoked via Write .content path (positive control)")
         decision = _parse_decision(proc.stdout)
         self.assertIsNotNone(decision, "should produce a deny decision")
         hook_out = decision["hookSpecificOutput"]
@@ -525,7 +578,7 @@ class AllowCasesTest(unittest.TestCase):
         self.assertEqual(proc.returncode, 0)
         self.assertIsNone(_parse_decision(proc.stdout), "bare absent must ALLOW")
         # Positive control: stub invoked (not a vacuous pass)
-        self.assertTrue(len(_stub_args(self.tmp)) >= 1, "stub must be invoked (positive control)")
+        self.assertGreaterEqual(len(_stub_args(self.tmp)), 1, "stub must be invoked (positive control)")
 
     def test_exists_clean_no_vuln_allows(self):
         """exists + no CVE → allow."""
@@ -537,7 +590,7 @@ class AllowCasesTest(unittest.TestCase):
                                                'implementation "com.example:lib:1.0"'))
         self.assertEqual(proc.returncode, 0)
         self.assertIsNone(_parse_decision(proc.stdout))
-        self.assertTrue(len(_stub_args(self.tmp)) >= 1)
+        self.assertGreaterEqual(len(_stub_args(self.tmp)), 1)
 
     def test_medium_low_cve_allows(self):
         """MEDIUM/LOW CVEs → allow (not surfaced by the hook)."""
@@ -552,7 +605,7 @@ class AllowCasesTest(unittest.TestCase):
                                                'implementation "org.vuln:lib:1.0"'))
         self.assertEqual(proc.returncode, 0)
         self.assertIsNone(_parse_decision(proc.stdout))
-        self.assertTrue(len(_stub_args(self.tmp)) >= 1)
+        self.assertGreaterEqual(len(_stub_args(self.tmp)), 1)
 
     def test_unknown_status_allows(self):
         """existenceStatus==unknown (degraded) → ALLOW; must not gate."""
@@ -562,7 +615,7 @@ class AllowCasesTest(unittest.TestCase):
                                                'implementation "com.unknown:thing:1.0"'))
         self.assertEqual(proc.returncode, 0)
         self.assertIsNone(_parse_decision(proc.stdout))
-        self.assertTrue(len(_stub_args(self.tmp)) >= 1)
+        self.assertGreaterEqual(len(_stub_args(self.tmp)), 1)
 
 
 @_require_jq_and_timeout()
@@ -589,7 +642,7 @@ class DenyCasesTest(unittest.TestCase):
         self.assertEqual(hook_out["hookEventName"], "PreToolUse")
         self.assertEqual(hook_out["permissionDecision"], "deny")
         self.assertIn("com.fake", hook_out["permissionDecisionReason"])
-        self.assertTrue(len(_stub_args(self.tmp)) >= 1)
+        self.assertGreaterEqual(len(_stub_args(self.tmp)), 1)
 
     def test_absent_with_suggestion_denies_non_imperative(self):
         """absent + non-empty suggestions → deny; reason phrases as candidates-to-verify."""
@@ -663,7 +716,7 @@ class AskCasesTest(unittest.TestCase):
         self.assertEqual(ho["permissionDecision"], "ask")
         self.assertIn("CVE-2024-1234", ho["permissionDecisionReason"])
         self.assertIn("2.0.0", ho["permissionDecisionReason"])
-        self.assertTrue(len(args) >= 1)
+        self.assertGreaterEqual(len(args), 1)
 
     def test_high_cve_no_fix_still_asks(self):
         """HIGH CVE without fixedVersion → ask (no dead-end deny)."""
@@ -749,32 +802,40 @@ class FailOpenCasesTest(unittest.TestCase):
         self._assert_fail_open(proc)
 
     def test_python3_not_in_path(self):
-        """python3 absent from PATH → fail-open at command-v check."""
+        """python3 absent from PATH → fail-open at command -v check."""
         _make_fixture(self.tmp, {1: {"results": []}})
-        # Remove PATH entries that contain python3 while preserving other utilities.
-        # On most systems python3 is in one directory; other shell utils live elsewhere.
-        filtered = [
-            p for p in os.environ.get("PATH", "").split(os.pathsep)
-            if not os.path.isfile(os.path.join(p, "python3"))
-        ]
-        proc = _run_hook(
-            self.tmp,
-            self._gradle_stdin(),
-            extra_env={"PATH": os.pathsep.join(filtered)},
+        # Build a shadow bin with every hook tool symlinked except python3.
+        # Invoke bash by its absolute path so subprocess.run does not depend
+        # on PATH to find bash itself (on Linux all tools share /usr/bin,
+        # so filtering by directory would also remove bash and cause an error).
+        shadow_dir, bash_abs = _shadow_bin_without("python3", self.tmp)
+        if shadow_dir is None:
+            self.skipTest("could not build shadow bin (required tool missing on this runner)")
+        proc = subprocess.run(
+            [bash_abs, _HOOK_PATH],
+            input=json.dumps(self._gradle_stdin()).encode(),
+            capture_output=True,
+            env={**os.environ, "CLAUDE_PLUGIN_ROOT": self.tmp, "PATH": shadow_dir},
+            timeout=30,
         )
         self._assert_fail_open(proc)
 
     def test_jq_not_in_path(self):
         """jq absent from PATH → fail-open at very first fast-gate check."""
         _make_fixture(self.tmp, {1: {"results": []}})
-        filtered = [
-            p for p in os.environ.get("PATH", "").split(os.pathsep)
-            if not os.path.isfile(os.path.join(p, "jq"))
-        ]
-        proc = _run_hook(
-            self.tmp,
-            self._gradle_stdin(),
-            extra_env={"PATH": os.pathsep.join(filtered)},
+        # Build a shadow bin with every hook tool symlinked except jq.
+        # Invoke bash by its absolute path so subprocess.run does not depend
+        # on PATH to find bash itself (on Linux all tools share /usr/bin,
+        # so filtering by directory would also remove bash and cause an error).
+        shadow_dir, bash_abs = _shadow_bin_without("jq", self.tmp)
+        if shadow_dir is None:
+            self.skipTest("could not build shadow bin (required tool missing on this runner)")
+        proc = subprocess.run(
+            [bash_abs, _HOOK_PATH],
+            input=json.dumps(self._gradle_stdin()).encode(),
+            capture_output=True,
+            env={**os.environ, "CLAUDE_PLUGIN_ROOT": self.tmp, "PATH": shadow_dir},
+            timeout=30,
         )
         self._assert_fail_open(proc)
 
@@ -849,7 +910,7 @@ class BoundaryTest(unittest.TestCase):
         proc = _run_hook(self.tmp, _edit_stdin("build.gradle", "\n".join(lines)))
         self.assertEqual(proc.returncode, 0)
         args = _stub_args(self.tmp)
-        self.assertTrue(len(args) >= 1)
+        self.assertGreaterEqual(len(args), 1)
         deps = args[0]["arguments"].get("dependencies", [])
         self.assertLessEqual(len(deps), 8, "at most MAX_COORDS=8 deps sent")
 
@@ -861,7 +922,7 @@ class BoundaryTest(unittest.TestCase):
         proc = _run_hook(self.tmp, _edit_stdin("build.gradle", content))
         self.assertEqual(proc.returncode, 0)
         args = _stub_args(self.tmp)
-        self.assertTrue(len(args) >= 1)
+        self.assertGreaterEqual(len(args), 1)
         deps = args[0]["arguments"].get("dependencies", [])
         matching = [d for d in deps
                     if d.get("groupId") == "com.example" and d.get("artifactId") == "lib"]
@@ -945,7 +1006,7 @@ class ContractDriftGuardTest(unittest.TestCase):
         text = result["result"]["content"][0]["text"]
         parsed = json.loads(text)
         self.assertIn("results", parsed)
-        self.assertTrue(len(parsed["results"]) >= 1)
+        self.assertGreaterEqual(len(parsed["results"]), 1)
         self.assertIn("existenceStatus", parsed["results"][0])
 
     def test_get_dependency_vulnerabilities_request_accepted_by_real_dispatch(self):
