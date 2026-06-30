@@ -586,7 +586,10 @@ def fetch_metadata(group_id: str, artifact_id: str, ctx: "ResolutionContext") ->
                 # exception message, which flows into tool-facing "error" fields.
                 last_err = f"HTTP {status} from {_strip_userinfo(entry['name'])}"
         except Exception as e:
-            last_err = str(e)
+            # Mirrors the redaction in the non-200 branch above: defense-in-depth
+            # against a future transport-exception type that embeds the URL
+            # (today's URLError/socket.timeout messages do not).
+            last_err = _strip_userinfo(str(e))
     if not answered:
         raise ValueError(f"Could not fetch metadata for {group_id}:{artifact_id}: {last_err}")
     versions = sorted(set(merged_versions), key=functools.cmp_to_key(compare_versions))
