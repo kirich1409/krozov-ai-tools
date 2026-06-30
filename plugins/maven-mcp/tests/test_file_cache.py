@@ -189,14 +189,14 @@ class TestFileCache(unittest.TestCase):
             os.umask(old_umask)
 
     def test_preexisting_loose_perm_dir_tightened(self):
-        """A pre-existing 0o755 dir must be tightened to 0o700 on first cache use.
+        """A pre-existing 0o750 dir must be tightened to 0o700 on first cache use.
 
         This is the case that ACTUALLY exercises the explicit os.chmod call;
         the fresh-dir umask test passes even if the chmod is deleted.
         """
         cache_dir = os.path.join(self.tmpdir, "maven-central-mcp")
-        os.makedirs(cache_dir, mode=0o755, exist_ok=True)
-        os.chmod(cache_dir, 0o755)  # force loose perms before cache touches it
+        os.makedirs(cache_dir, mode=0o750, exist_ok=True)
+        os.chmod(cache_dir, 0o750)  # force loose perms before cache touches it
 
         url = "https://repo1.maven.org/maven2/loose_perm.xml"
         server._file_cache.set(url, 200, b"body")
