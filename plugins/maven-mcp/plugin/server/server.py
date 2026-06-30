@@ -520,9 +520,31 @@ def _parse_metadata_xml(xml: str, group_id: str, artifact_id: str) -> Dict[str, 
     }
 
 
+def _strip_userinfo(url: str) -> str:
+    """Redact ``user:pass@`` userinfo from a repo URL before it reaches
+    tool-facing JSON (#317 security review). Repo URLs are captured verbatim
+    from build files, so a discouraged hardcoded
+    ``url = "https://user:pass@host/repo"`` would otherwise echo the literal
+    credential into MCP output. Output-boundary only — the raw, credentialed
+    URL is still what actually gets HTTP-fetched; this never touches the
+    fetch path, only what is reported back."""
+    try:
+        parsed = urllib.parse.urlsplit(url)
+    except ValueError:
+        return url
+    if "@" not in parsed.netloc:
+        return url
+    host = parsed.netloc.rsplit("@", 1)[-1]
+    return urllib.parse.urlunsplit((parsed.scheme, f"***@{host}", parsed.path, parsed.query, parsed.fragment))
+
+
 def _to_resolved_from(entry: Dict[str, Any]) -> Dict[str, Any]:
     """Project a repo entry (from _repos_for/_public_repos) into the public resolvedFrom shape."""
-    return {"url": entry["url"], "scope": entry["scope"], "viaPublicFallback": entry["is_public_fallback"]}
+    return {
+        "url": _strip_userinfo(entry["url"]),
+        "scope": entry["scope"],
+        "viaPublicFallback": entry["is_public_fallback"],
+    }
 
 
 def fetch_metadata(group_id: str, artifact_id: str, ctx: "ResolutionContext") -> Dict[str, Any]:
@@ -2043,7 +2065,10 @@ def handle_check_version_exists(args: Dict) -> Any:
             "version": version,
             "exists": True,
             "stability": classify_version(version),
-            "repository": entry["name"],
+            # entry["name"] can be the literal repo URL (maven("url") declarations
+            # set name == url), so it goes through the same userinfo redaction as
+            # resolvedFrom.url.
+            "repository": _strip_userinfo(entry["name"]),
             "resolvedFrom": _to_resolved_from(entry),
         }
     return {
@@ -2529,7 +2554,9 @@ def _verify_one(
     if latest:
         result["stability"] = classify_version(latest)
     if first_answering_repo is not None:
-        result["repository"] = first_answering_repo
+        # first_answering_repo can be the literal repo URL (maven("url")
+        # declarations set name == url) — same userinfo redaction as resolvedFrom.
+        result["repository"] = _strip_userinfo(first_answering_repo)
 
     if existence_status == "absent":
         req_ga = (group_id + ":" + artifact_id).lower()

@@ -12,6 +12,7 @@ falsifiable: it asserts which repo URLs reach urlopen (and, for #310, that Maven
 Central is ABSENT) or the exact merged version set / raised message.
 """
 
+import json
 import os
 import unittest
 import unittest.mock
@@ -485,6 +486,73 @@ class TestProvenanceReporting(unittest.TestCase):
         entry = out["results"][0]
         self.assertIn("error", entry)
         self.assertNotIn("resolvedFrom", entry)
+
+
+# ---------------------------------------------------------------------------
+# Security review (#317 finding 2) — userinfo redaction
+# ---------------------------------------------------------------------------
+# A hardcoded `url = "https://user:pass@host/repo"` is a discouraged but real
+# pattern; repo URLs are captured verbatim from build files (no expansion), so
+# without redaction the literal credential would flow into MCP tool-facing
+# JSON (resolvedFrom.url, the check_version_exists/verify_coordinates
+# "repository" field). _strip_userinfo is applied at the output boundary only
+# — the raw, credentialed URL is still what is actually HTTP-fetched.
+CREDENTIALED_URL = "https://repouser:repopass@nexus.example.com/m2"
+REDACTED_URL = "https://***@nexus.example.com/m2"
+
+
+class TestUserinfoRedaction(unittest.TestCase):
+    def test_strip_userinfo_redacts_credentials(self):
+        self.assertEqual(server._strip_userinfo(CREDENTIALED_URL), REDACTED_URL)
+
+    def test_strip_userinfo_no_op_when_no_credentials(self):
+        self.assertEqual(server._strip_userinfo(CUSTOM_URL), CUSTOM_URL)
+
+    def test_get_latest_version_resolved_from_url_redacted(self):
+        files = {"settings.gradle.kts": _settings('maven { url = uri("%s") }' % CREDENTIALED_URL)}
+        with temp_project(files) as root:
+            with unittest.mock.patch(
+                "urllib.request.urlopen",
+                side_effect=mock_urlopen([(200, _meta(["1.0.0"]))]),
+            ):
+                out = server.handle_get_latest_version({
+                    "groupId": "com.acme", "artifactId": "lib", "projectPath": root,
+                })
+        self.assertEqual(out["resolvedFrom"]["url"], REDACTED_URL)
+        self.assertNotIn("repopass", json.dumps(out))
+
+    def test_check_version_exists_repository_field_redacted(self):
+        # maven("url")/maven { url = ... } declarations set name == url (see
+        # discover_repositories), so the "repository" field carries the same
+        # credentialed string and needs the same redaction as resolvedFrom.url.
+        files = {"settings.gradle.kts": _settings('maven { url = uri("%s") }' % CREDENTIALED_URL)}
+        with temp_project(files) as root:
+            with unittest.mock.patch(
+                "urllib.request.urlopen",
+                side_effect=mock_urlopen([(200, _meta(["1.0.0"]))]),
+            ):
+                out = server.handle_check_version_exists({
+                    "groupId": "com.acme", "artifactId": "lib", "version": "1.0.0",
+                    "projectPath": root,
+                })
+        self.assertEqual(out["repository"], REDACTED_URL)
+        self.assertEqual(out["resolvedFrom"]["url"], REDACTED_URL)
+        self.assertNotIn("repopass", json.dumps(out))
+
+    def test_verify_coordinates_repository_field_redacted(self):
+        files = {"settings.gradle.kts": _settings('maven { url = uri("%s") }' % CREDENTIALED_URL)}
+        with temp_project(files) as root:
+            with unittest.mock.patch(
+                "urllib.request.urlopen",
+                side_effect=mock_urlopen([(200, _meta(["1.0.0"]))]),
+            ):
+                out = server.handle_verify_coordinates({
+                    "dependencies": [{"groupId": "com.acme", "artifactId": "lib"}],
+                    "projectPath": root,
+                })
+        result = out["results"][0]
+        self.assertEqual(result["repository"], REDACTED_URL)
+        self.assertNotIn("repopass", json.dumps(out))
 
 
 if __name__ == "__main__":
