@@ -680,7 +680,12 @@ def _months_since(iso: Optional[str]) -> Optional[int]:
     try:
         import datetime
         dt = _parse_iso(iso)
-        now = datetime.datetime.utcnow()
+        # datetime.utcnow() is deprecated on Python 3.12+; now(timezone.utc) is the
+        # replacement. tzinfo is stripped so `now` stays offset-naive: `dt` is forced
+        # naive just below, and subtracting a naive from an aware datetime raises
+        # TypeError. The wall-clock UTC value is identical to the old utcnow(), so the
+        # months delta is unchanged.
+        now = datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None)
         # Make both offset-naive for comparison
         if hasattr(dt, 'utcoffset') and dt.utcoffset() is not None:
             dt = dt.replace(tzinfo=None)
@@ -1058,6 +1063,21 @@ def _parse_gradle_deps(content: str, source_file: str) -> List[Dict]:
     return deps
 
 
+# Gradle `kotlin("X")` shorthand expands to the `org.jetbrains.kotlin.X` plugin
+# id. Well-known shorthands are mapped explicitly; any other arg falls back to
+# the generic `org.jetbrains.kotlin.<arg>` form.
+_KOTLIN_SHORTHAND_MAP = {
+    "jvm": "org.jetbrains.kotlin.jvm",
+    "android": "org.jetbrains.kotlin.android",
+    "kapt": "org.jetbrains.kotlin.kapt",
+    "plugin.serialization": "org.jetbrains.kotlin.plugin.serialization",
+    "multiplatform": "org.jetbrains.kotlin.multiplatform",
+    "plugin.compose": "org.jetbrains.kotlin.plugin.compose",
+    "native.cocoapods": "org.jetbrains.kotlin.native.cocoapods",
+    "plugin.parcelize": "org.jetbrains.kotlin.plugin.parcelize",
+}
+
+
 def _parse_gradle_plugins_block(content: str, is_settings: bool = False) -> List[Dict]:
     """Parse plugins {} DSL blocks. Returns list of {pluginId, version, catalogRef}."""
     results = []
@@ -1065,10 +1085,22 @@ def _parse_gradle_plugins_block(content: str, is_settings: bool = False) -> List
     plugins_re = re.compile(r'\bplugins\s*\{([^}]*)\}', re.DOTALL)
     for block_m in plugins_re.finditer(content):
         block = block_m.group(1)
-        # id("plugin.id") version "1.0"
+        # id("plugin.id") version "1.0" — Kotlin/Groovy DSL with parentheses.
         id_ver_re = re.compile(r'\bid\s*\(\s*["\']([^"\']+)["\']\s*\)(?:\s+version\s+["\']([^"\']+)["\'])?')
         for m in id_ver_re.finditer(block):
             results.append({"pluginId": m.group(1), "version": m.group(2), "catalogRef": None, "settingsBlock": is_settings})
+        # id 'plugin.id' version '1.0' — Groovy DSL without parentheses (space
+        # separator). `\s+` after `id` excludes the parenthesised form above, so
+        # no declaration is matched twice.
+        id_noparen_re = re.compile(r'\bid\s+["\']([^"\']+)["\'](?:\s+version\s+["\']([^"\']+)["\'])?')
+        for m in id_noparen_re.finditer(block):
+            results.append({"pluginId": m.group(1), "version": m.group(2), "catalogRef": None, "settingsBlock": is_settings})
+        # kotlin("jvm") version "1.9.0" — shorthand mapped to org.jetbrains.kotlin.<arg>.
+        kotlin_re = re.compile(r'\bkotlin\s*\(\s*["\']([^"\']+)["\']\s*\)(?:\s+version\s+["\']([^"\']+)["\'])?')
+        for m in kotlin_re.finditer(block):
+            arg = m.group(1)
+            plugin_id = _KOTLIN_SHORTHAND_MAP.get(arg, f"org.jetbrains.kotlin.{arg}")
+            results.append({"pluginId": plugin_id, "version": m.group(2), "catalogRef": None, "settingsBlock": is_settings})
         # alias(libs.plugins.foo)
         alias_re = re.compile(r'\balias\s*\(\s*([a-zA-Z_][a-zA-Z0-9_]*)\.plugins\.([a-zA-Z0-9.]+)\s*\)')
         for m in alias_re.finditer(block):
@@ -1104,9 +1136,19 @@ def _parse_settings_catalogs(content: str) -> List[Dict]:
     vc_re = re.compile(r'\bversionCatalogs\s*\{([\s\S]*?)\}(?=\s*\}|\s*$)', re.DOTALL)
     for vc_m in vc_re.finditer(content):
         block = vc_m.group(1)
-        # name { from(files("path")) }
+        # Groovy DSL: name { from(files("path")) }
         entry_re = re.compile(r'(\w+)\s*\{[^}]*from\s*\(\s*files?\s*\(\s*"([^"]+)"\s*\)', re.DOTALL)
         for m in entry_re.finditer(block):
+            results.append({"name": m.group(1), "tomlPath": m.group(2)})
+        # Kotlin DSL: create("name") { from(files("path")) }. The `create(` literal
+        # is not matched by the Groovy `\w+\s*\{` form above, so the two never
+        # double-count. A bodyless create("name") with no from(files(...)) yields
+        # no descriptor — scan_project() then supplies the default libs catalog.
+        create_re = re.compile(
+            r'create\s*\(\s*["\']([^"\']+)["\']\s*\)\s*\{[^}]*from\s*\(\s*files?\s*\(\s*["\']([^"\']+)["\']\s*\)',
+            re.DOTALL,
+        )
+        for m in create_re.finditer(block):
             results.append({"name": m.group(1), "tomlPath": m.group(2)})
     return results
 

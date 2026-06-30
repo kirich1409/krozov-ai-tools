@@ -14,11 +14,12 @@ Python-vs-TS behavioral differences (documented inline and in test comments):
   1. _parse_settings_catalogs returns [] for absent/empty versionCatalogs block;
      the TS parseSettingsCatalogs returns a default libs descriptor. The fallback
      is handled in scan_project(), not in the parser function itself.
-  2. _parse_settings_catalogs uses old-style Groovy block syntax
-     `name { from(files("...")) }` and does NOT parse Kotlin DSL
-     `create("name") { from(files("...")) }`.
-  3. _parse_gradle_plugins_block has no kotlin("shorthand") support
-     (TS plugins-block-parser handles kotlin("jvm") etc.; Python does not).
+  2. _parse_settings_catalogs parses both old-style Groovy block syntax
+     `name { from(files("...")) }` and Kotlin DSL
+     `create("name") { from(files("...")) }` (gap closed in #313).
+  3. _parse_gradle_plugins_block supports the `kotlin("jvm")` shorthand (mapped to
+     org.jetbrains.kotlin.jvm) and the no-paren Groovy `id 'x'` form (gap closed
+     in #313).
   4. _parse_gradle_deps return dicts have no "source" key; the source is
      attached by scan_project(). TS parseGradleDependencies includes source
      directly.
@@ -27,7 +28,9 @@ Python-vs-TS behavioral differences (documented inline and in test comments):
      TS module are skipped (divergence guardrail #5).
 """
 
+import datetime
 import unittest
+import warnings
 
 from _helpers import server, temp_project
 
@@ -284,23 +287,50 @@ class TestParseGradlePluginsBlock(unittest.TestCase):
         self.assertEqual(result[0]["pluginId"], "com.example.plugin")
         self.assertEqual(result[0]["version"], "1.0")
 
-    # Python-specific: Groovy space-style `id 'plugin' version '1.0'` (no parens) is NOT parsed.
-    # TS plugins-block-parser handles both Groovy and Kotlin DSL id() forms.
-    def test_groovy_space_style_without_parens_not_parsed(self):
+    # Groovy space-style `id 'plugin' version '1.0'` (no parens) — gap closed in #313.
+    # Mirrors: plugins-block-parser.test.ts > Groovy DSL without parens.
+    def test_groovy_space_style_without_parens_with_version(self):
         content = "plugins {\n    id 'com.example.plugin' version '1.0'\n}"
         result = server._parse_gradle_plugins_block(content)
-        # Python does not parse id without parentheses — result is empty.
-        self.assertEqual(result, [])
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0]["pluginId"], "com.example.plugin")
+        self.assertEqual(result[0]["version"], "1.0")
 
-    # NOTE: Python does NOT support kotlin("jvm") shorthand notation.
-    # TS plugins-block-parser handles kotlin("jvm") version "2.0.0"
-    # -> { pluginId: "org.jetbrains.kotlin.jvm", version: "2.0.0" }.
-    # Python returns no entry for kotlin("jvm") in the plugins block.
-    def test_kotlin_shorthand_not_supported_in_python(self):
+    # No-paren `id 'x'` (single quote) and `id "x"` (double quote) without version.
+    def test_groovy_space_style_without_parens_no_version(self):
+        single = server._parse_gradle_plugins_block("plugins {\n    id 'com.example.a'\n}")
+        self.assertEqual(len(single), 1)
+        self.assertEqual(single[0]["pluginId"], "com.example.a")
+        self.assertIsNone(single[0]["version"])
+        double = server._parse_gradle_plugins_block('plugins {\n    id "com.example.b"\n}')
+        self.assertEqual(len(double), 1)
+        self.assertEqual(double[0]["pluginId"], "com.example.b")
+        self.assertIsNone(double[0]["version"])
+
+    # kotlin("jvm") shorthand — gap closed in #313. Maps to org.jetbrains.kotlin.jvm.
+    # Mirrors: plugins-block-parser.test.ts > kotlin() shorthand.
+    def test_kotlin_shorthand_jvm(self):
         content = 'plugins {\n    kotlin("jvm") version "2.0.0"\n}'
         result = server._parse_gradle_plugins_block(content)
-        # Python does not parse kotlin() shorthand — result is empty.
-        self.assertEqual(result, [])
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0]["pluginId"], "org.jetbrains.kotlin.jvm")
+        self.assertEqual(result[0]["version"], "2.0.0")
+
+    # kotlin("plugin.serialization") version "1.9.0" — dotted shorthand with version.
+    def test_kotlin_shorthand_plugin_serialization_with_version(self):
+        content = 'plugins {\n    kotlin("plugin.serialization") version "1.9.0"\n}'
+        result = server._parse_gradle_plugins_block(content)
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0]["pluginId"], "org.jetbrains.kotlin.plugin.serialization")
+        self.assertEqual(result[0]["version"], "1.9.0")
+
+    # kotlin("X") with no version, and an unknown arg falling back to the generic form.
+    def test_kotlin_shorthand_no_version_and_generic_fallback(self):
+        content = 'plugins {\n    kotlin("android")\n    kotlin("foo.bar")\n}'
+        result = server._parse_gradle_plugins_block(content)
+        ids = {r["pluginId"]: r["version"] for r in result}
+        self.assertIsNone(ids["org.jetbrains.kotlin.android"])
+        self.assertIn("org.jetbrains.kotlin.foo.bar", ids)
 
 
 # ---------------------------------------------------------------------------
@@ -461,10 +491,9 @@ class TestParseSettingsCatalogs(unittest.TestCase):
         self.assertEqual(names["libs"], "gradle/libs.versions.toml")
         self.assertEqual(names["testLibs"], "gradle/test.versions.toml")
 
-    # NOTE: Python does NOT parse Kotlin DSL create("name") syntax.
-    # Mirrors: settings-catalogs-parser.test.ts > "parses Kotlin DSL versionCatalogs with create block"
-    # but asserts the ACTUAL Python behavior (empty), not TS behavior.
-    def test_kotlin_dsl_create_syntax_not_parsed_by_python(self):
+    # Kotlin DSL create("name") syntax — gap closed in #313.
+    # Mirrors: settings-catalogs-parser.test.ts > "parses Kotlin DSL versionCatalogs with create block".
+    def test_kotlin_dsl_create_syntax(self):
         content = (
             'dependencyResolutionManagement {\n'
             '  versionCatalogs {\n'
@@ -475,9 +504,52 @@ class TestParseSettingsCatalogs(unittest.TestCase):
             '}'
         )
         result = server._parse_settings_catalogs(content)
-        # Python does not parse create("name") DSL — returns [].
-        # TS would return [{name:"libs",...}, {name:"testLibs",...}].
+        self.assertEqual(result, [{"name": "testLibs", "tomlPath": "gradle/test.versions.toml"}])
+
+    # Kotlin DSL create("libs") { from(files(...)) } — explicit default-named catalog.
+    def test_kotlin_dsl_create_libs_with_body(self):
+        content = (
+            'dependencyResolutionManagement {\n'
+            '  versionCatalogs {\n'
+            '    create("libs") {\n'
+            '      from(files("gradle/libs.versions.toml"))\n'
+            '    }\n'
+            '  }\n'
+            '}'
+        )
+        result = server._parse_settings_catalogs(content)
+        self.assertEqual(result, [{"name": "libs", "tomlPath": "gradle/libs.versions.toml"}])
+
+    # create("libs") with no body / no from(files(...)) yields no descriptor — the
+    # parser only emits catalogs with a resolved tomlPath; scan_project() supplies
+    # the implicit default libs catalog (same convention as the empty-block case).
+    def test_kotlin_dsl_create_no_body_returns_empty(self):
+        content = (
+            'dependencyResolutionManagement {\n'
+            '  versionCatalogs {\n'
+            '    create("libs")\n'
+            '  }\n'
+            '}'
+        )
+        result = server._parse_settings_catalogs(content)
         self.assertEqual(result, [])
+
+    # Groovy `name { from(files(...)) }` still works alongside the new create() form.
+    def test_groovy_and_kotlin_dsl_mixed(self):
+        content = (
+            'versionCatalogs {\n'
+            '  libs {\n'
+            '    from(files("gradle/libs.versions.toml"))\n'
+            '  }\n'
+            '  create("testLibs") {\n'
+            '    from(files("gradle/test.versions.toml"))\n'
+            '  }\n'
+            '}'
+        )
+        result = server._parse_settings_catalogs(content)
+        names = {r["name"]: r["tomlPath"] for r in result}
+        self.assertEqual(names["libs"], "gradle/libs.versions.toml")
+        self.assertEqual(names["testLibs"], "gradle/test.versions.toml")
 
 
 # ---------------------------------------------------------------------------
@@ -1166,6 +1238,50 @@ class TestScanProjectMaven(unittest.TestCase):
             result = server.scan_project(root)
         self.assertEqual(result["buildSystem"], "unknown")
         self.assertEqual(result["dependencies"], [])
+
+
+# ---------------------------------------------------------------------------
+# _months_since — datetime.utcnow() deprecation (gap closed in #313)
+# ---------------------------------------------------------------------------
+
+class TestMonthsSince(unittest.TestCase):
+    """Tests for server._months_since after the utcnow() -> now(timezone.utc)
+    migration. The 3.13 CI leg promotes DeprecationWarning, so utcnow() must be
+    gone, and the naive-UTC arithmetic semantics must be preserved exactly."""
+
+    # The removed utcnow() emitted a DeprecationWarning on Python 3.12+; with the
+    # warning promoted to an error, any residual utcnow() call would raise here.
+    def test_no_deprecation_warning(self):
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", DeprecationWarning)
+            iso = "2020-01-01T00:00:00Z"
+            result = server._months_since(iso)
+        self.assertIsInstance(result, int)
+        self.assertGreater(result, 0)
+
+    # Semantics unchanged: the result is the integer-month delta between the
+    # current naive-UTC clock and the parsed timestamp, identical to the old
+    # utcnow()-based computation. Cross-check against an independent naive-UTC
+    # reference using the same formula.
+    def test_output_matches_naive_utc_reference(self):
+        iso = "2021-06-15T12:00:00Z"
+        result = server._months_since(iso)
+        ref_now = datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None)
+        ref_dt = datetime.datetime(2021, 6, 15, 12, 0, 0)
+        expected = int((ref_now - ref_dt).days / 30)
+        # Allow a 1-month tolerance for clock advance between the two reads.
+        self.assertLessEqual(abs(result - expected), 1)
+
+    # A recent timestamp yields a 0-month delta (not negative, not a crash).
+    def test_recent_timestamp_returns_zero(self):
+        recent = datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None)
+        iso = recent.strftime("%Y-%m-%dT%H:%M:%SZ")
+        self.assertEqual(server._months_since(iso), 0)
+
+    # None / unparseable input degrades to None (unchanged contract).
+    def test_none_and_invalid_input(self):
+        self.assertIsNone(server._months_since(None))
+        self.assertIsNone(server._months_since("not-a-date"))
 
 
 if __name__ == "__main__":
