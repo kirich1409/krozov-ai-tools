@@ -189,7 +189,11 @@ def _request_with_retry(req: urllib.request.Request) -> Tuple[int, bytes]:
     # attempt ever produced an HTTP response.
     if last_result is not None:
         return last_result
-    raise last_exc  # type: ignore[misc]  # only reached when a transport error occurred
+    if last_exc is not None:
+        raise last_exc
+    # Defensive: unreachable while HTTP_MAX_ATTEMPTS >= 1 (every attempt sets
+    # last_result or last_exc). Raise an explicit error rather than `raise None`.
+    raise urllib.error.URLError("HTTP request failed: no response and no transport error")
 
 
 def http_get(url: str, headers: Optional[Dict[str, str]] = None) -> Tuple[int, bytes]:
