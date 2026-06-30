@@ -650,11 +650,8 @@ def compare_versions(a: str, b: str) -> int:
     has_suffix_a = "-" in a or "+" in a
     has_suffix_b = "-" in b or "+" in b
     if has_suffix_a != has_suffix_b:
-        # Same core, same stability class, but only one side carries a
-        # qualifier suffix at all (e.g. "0.8.0" vs "0.8.0-0.6.x-compat" or
-        # "0.8.0-compat", #325): the bare version ranks higher, never the one
-        # with an extra qualifier — regardless of whether that suffix
-        # contains digits.
+        # #325: same core, same stability class, but only one side carries a
+        # qualifier suffix at all — the bare version always ranks higher.
         return 1 if not has_suffix_a else -1
     tail_diff = _compare_int_lists(_extract_prerelease_numbers(a), _extract_prerelease_numbers(b))
     if tail_diff != 0:
