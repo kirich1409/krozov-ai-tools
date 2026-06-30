@@ -99,6 +99,37 @@ A write-time **anti-slopsquatting** primitive: batch existence check plus a fuzz
 
 **Suggestion source = Maven Central Solr only** → a recall limit for androidx / Google-Maven / Gradle-plugin-marker coordinates (no suggestion backend for those scopes; documented, relates to #295). Existence checking still reuses the project-first resolution layer (declared repos are honored); only the did-you-mean fallback is Central-only.
 
+## Hooks
+
+### `pre-edit-deps.sh` (PreToolUse write-time guard)
+
+Fires before `Edit`/`Write`/`MultiEdit` on build files; extracts coordinates from new content and runs `verify_coordinates` + `get_dependency_vulnerabilities` via JSON-RPC 2.0 over stdin/stdout.
+
+**Structural fail-open contract — non-negotiable.** `set -euo pipefail` + `trap 'exit 0' EXIT` are at the top. Every external command is guarded so failure produces an empty result and the script continues to exit 0. The script can never reach `exit 2` (hard-block). Any malfunction (jq absent, no `timeout`/`gtimeout`, server crash, network failure) silently allows the edit through.
+
+**Decision policy:**
+- `absent + (likelyHallucination==true OR non-empty suggestions)` → `deny` with candidates framed as "verify before use"
+- `absent + no signal` (bare absent) → `allow`; covers private/non-Central/androidx coords with no similar Central name — **never tighten to deny-on-bare-absent**
+- `unknown` (401/403/429/5xx/network error from verify_coordinates) → `allow`; unknown ≠ clean but cannot assert absence
+- `exists` → `allow`
+- CRITICAL/HIGH CVE on versioned coord → `ask` (advisory prompt)
+- `deny` wins over `ask` when both fire
+
+**Security constraints:**
+- `GITHUB_TOKEN` is scrubbed from the environment before spawning `python3` (`env -u GITHUB_TOKEN`)
+- Reason strings are built entirely from known structured fields via `jq -n --arg`; file content is never interpolated into reason text
+- Suggestion coordinates are charset-filtered `[A-Za-z0-9._:-]` before embedding; suggestions are phrased as candidates to verify, not as drop-in replacements
+
+**Bash 3.2 compatibility (macOS `/bin/bash` is 3.2):**
+- No `declare -A`, no `${var,,}`, no `mapfile`/`readarray`
+- Guard every array expansion as `"${arr[@]:-}"`
+- Use `[[:space:]]` instead of `\s` in grep ERE patterns
+- Use a variable `_Q="'"` to embed single-quote in grep patterns (avoids SC2016 and broken `\x27` in single-quoted strings)
+
+**Extraction patterns:** double-quoted `"g:a[:v]"` and single-quoted `'g:a[:v]'` Gradle notation; `<groupId>`/`<artifactId>`/`<version>` blocks for pom.xml; `module = "g:a"` and `"g:a:v"` triples for TOML. Version part uses `[^"]+`/`[^']+`/`[^<]+` (any-except-closing-delimiter) — the sanitize step drops non-literal versions containing `$`.
+
+**Tests:** `tests/test_pre_edit_hook.py` — subprocess-based with a stub server; decorated with `@_require_jq_and_timeout()` (skipUnless both jq and timeout/gtimeout present). Stub exercises extraction, allow/deny/ask decisions, fail-open paths (server crash, timeout, garbage output, empty output), security constraints (`GITHUB_TOKEN` not forwarded), and the MAX_COORDS=8 cap. Tests skip gracefully on macOS (no `timeout`); run fully on CI (ubuntu-latest has `timeout`).
+
 ## Environment
 
 - `GITHUB_TOKEN` — optional, enables higher GitHub API rate limits (5000 req/h vs 60) for `get_dependency_changes` and `get_dependency_health` (the health tool also uses the rate-limited Search API for issue stats).

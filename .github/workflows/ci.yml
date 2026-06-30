@@ -76,3 +76,8 @@ jobs:
       # node build job provided).
       - if: steps.changes.outputs.maven_mcp == 'true'
         run: python -m compileall plugins/maven-mcp/plugin/server
+
+      # Shellcheck is preinstalled on ubuntu-latest.
+      - if: steps.changes.outputs.maven_mcp == 'true'
+        name: Shellcheck hooks
+        run: shellcheck plugins/maven-mcp/plugin/hooks/*.sh
