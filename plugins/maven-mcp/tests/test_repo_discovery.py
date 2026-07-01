@@ -142,6 +142,29 @@ class TestParseMavenRepos(unittest.TestCase):
         self.assertEqual(plugins, [])
 
 
+class TestParseRepositoriesMode(unittest.TestCase):
+    """Tests for server._parse_repositories_mode (#318)."""
+
+    def test_no_declaration_returns_none(self):
+        self.assertIsNone(server._parse_repositories_mode('repositories { mavenCentral() }'))
+
+    def test_kotlin_dsl_set_call_qualified(self):
+        body = 'repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)'
+        self.assertEqual(server._parse_repositories_mode(body), "FAIL_ON_PROJECT_REPOS")
+
+    def test_kotlin_dsl_set_call_bare_enum(self):
+        body = 'repositoriesMode.set(PREFER_PROJECT)'
+        self.assertEqual(server._parse_repositories_mode(body), "PREFER_PROJECT")
+
+    def test_property_assignment_qualified(self):
+        body = 'repositoriesMode = RepositoriesMode.FAIL_ON_PROJECT_REPOS'
+        self.assertEqual(server._parse_repositories_mode(body), "FAIL_ON_PROJECT_REPOS")
+
+    def test_property_assignment_bare_enum(self):
+        body = 'repositoriesMode = PREFER_PROJECT'
+        self.assertEqual(server._parse_repositories_mode(body), "PREFER_PROJECT")
+
+
 class TestDiscoverRepositories(unittest.TestCase):
     def _discover(self, files):
         with tempfile.TemporaryDirectory() as root:
@@ -204,6 +227,91 @@ class TestDiscoverRepositories(unittest.TestCase):
         dep_urls = _urls(res["dependency"])
         self.assertIn("https://G/r", dep_urls)
         self.assertNotIn("https://P/r", dep_urls)
+
+    # --- #318: repositoriesMode-aware dependency-scope resolution -----------
+    # These replace the old always-union behavior with a mode-aware split.
+
+    def test_mode_unset_prefers_project_repos_over_settings(self):
+        # Default PREFER_PROJECT: the root build file's own repositories{}
+        # wins outright -- settings repos are NOT unioned in when the project
+        # declares its own (this is the #318 over-report this issue fixes).
+        files = {
+            "settings.gradle.kts": (
+                'dependencyResolutionManagement { repositories { maven("https://SETTINGS/r") } }'
+            ),
+            "build.gradle.kts": 'repositories { maven("https://PROJECT/r") }',
+        }
+        res = self._discover(files)
+        dep_urls = _urls(res["dependency"])
+        self.assertEqual(dep_urls, ["https://PROJECT/r"])
+        self.assertNotIn("https://SETTINGS/r", dep_urls)
+
+    def test_mode_explicit_prefer_project_same_as_default(self):
+        files = {
+            "settings.gradle.kts": (
+                'dependencyResolutionManagement {\n'
+                '  repositoriesMode.set(RepositoriesMode.PREFER_PROJECT)\n'
+                '  repositories { maven("https://SETTINGS/r") }\n'
+                '}'
+            ),
+            "build.gradle.kts": 'repositories { maven("https://PROJECT/r") }',
+        }
+        res = self._discover(files)
+        self.assertEqual(_urls(res["dependency"]), ["https://PROJECT/r"])
+
+    def test_mode_fail_on_project_repos_uses_settings_only(self):
+        # A real Gradle build would error under this mode if the project also
+        # declared its own repositories{} -- so those project repos must be
+        # dropped entirely, never merged in.
+        files = {
+            "settings.gradle.kts": (
+                'dependencyResolutionManagement {\n'
+                '  repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)\n'
+                '  repositories { maven("https://SETTINGS/r") }\n'
+                '}'
+            ),
+            "build.gradle.kts": 'repositories { maven("https://PROJECT/r") }',
+        }
+        res = self._discover(files)
+        dep_urls = _urls(res["dependency"])
+        self.assertEqual(dep_urls, ["https://SETTINGS/r"])
+        self.assertNotIn("https://PROJECT/r", dep_urls)
+
+    def test_no_project_repos_falls_back_to_settings_regardless_of_mode(self):
+        # Regression guard: PREFER_PROJECT with an EMPTY project-level scope
+        # must still fall back to settings repos -- unchanged from pre-#318
+        # behavior.
+        files = {
+            "settings.gradle.kts": (
+                'dependencyResolutionManagement { repositories { maven("https://SETTINGS/r") } }'
+            ),
+        }
+        res = self._discover(files)
+        self.assertEqual(_urls(res["dependency"]), ["https://SETTINGS/r"])
+
+    def test_mode_does_not_affect_plugin_scope(self):
+        # pluginManagement/buildscript repos keep unioning across settings +
+        # build files exactly as before -- repositoriesMode only governs
+        # dependencyResolutionManagement (dependency scope).
+        files = {
+            "settings.gradle.kts": (
+                'dependencyResolutionManagement {\n'
+                '  repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)\n'
+                '  repositories { maven("https://SETTINGS/r") }\n'
+                '}\n'
+                'pluginManagement { repositories { maven("https://PLUGIN-SETTINGS/r") } }'
+            ),
+            "build.gradle.kts": (
+                'repositories { maven("https://PROJECT/r") }\n'
+                'buildscript { repositories { maven("https://PLUGIN-BUILD/r") } }'
+            ),
+        }
+        res = self._discover(files)
+        plugin_urls = _urls(res["plugin"])
+        self.assertIn("https://PLUGIN-SETTINGS/r", plugin_urls)
+        self.assertIn("https://PLUGIN-BUILD/r", plugin_urls)
+        # Dependency scope still mode-aware (FAIL_ON_PROJECT_REPOS -> settings only).
+        self.assertEqual(_urls(res["dependency"]), ["https://SETTINGS/r"])
 
 
 if __name__ == "__main__":
