@@ -247,7 +247,8 @@ State these at the top of the report when relevant:
   are included in production scope but flavor-prefixed ones
   (`<flavor>ReleaseImplementation`) may be missed.
 - OSV coverage for Gradle plugin marker artifacts is limited — plugin CVEs may not appear.
-- `buildSrc/` and composite builds (`includeBuild`) are not scanned.
+- `buildSrc/` and `build-logic/` convention-plugin dependency declarations are scanned;
+  composite builds added via `includeBuild` are not.
 
 ## Language
 

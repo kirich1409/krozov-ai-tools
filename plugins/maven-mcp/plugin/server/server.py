@@ -2013,6 +2013,64 @@ def scan_project(project_root: str) -> Dict:
         if settings_result:
             process_plugins_block(settings_result["content"], settings_result["file"], None, True)
 
+        # Step 8: Discover buildSrc/ and build-logic/ convention-plugin builds.
+        # Neither directory is ever listed in settings.gradle include(...), so
+        # Step 5 never touches them — no double-scan risk. catalogRef entries
+        # are skipped: resolving them against the root catalog would be wrong
+        # provenance scope (accepted limitation, not a bug).
+        def emit_direct_deps(content: str, rel_file: str, kind: str) -> None:
+            for dep in _parse_gradle_deps(content, rel_file):
+                if dep["catalogRef"] or not (dep["groupId"] and dep["artifactId"]):
+                    continue
+                dependencies.append({
+                    "groupId": dep["groupId"],
+                    "artifactId": dep["artifactId"],
+                    "version": dep["version"],
+                    "source": {"kind": kind, "file": rel_file, "module": None},
+                    "usages": [{"module": None, "configuration": dep["configuration"]}],
+                })
+
+        def scan_convention_plugins(src_kotlin_dir: str) -> None:
+            if not os.path.isdir(src_kotlin_dir):
+                return
+            for dirpath, _dirnames, filenames in os.walk(src_kotlin_dir):
+                for name in sorted(filenames):
+                    if not name.endswith(".gradle.kts"):
+                        continue
+                    abs_path = os.path.join(dirpath, name)
+                    rel_file = os.path.relpath(abs_path, project_root).replace(os.sep, "/")
+                    with open(abs_path, "r", encoding="utf-8", errors="replace") as fh:
+                        content = fh.read()
+                    emit_direct_deps(content, rel_file, "convention-plugin")
+
+        buildsrc_dir = os.path.join(project_root, "buildSrc")
+        if os.path.isdir(buildsrc_dir):
+            for build_file in GRADLE_BUILD_FILES:
+                path = os.path.join(buildsrc_dir, build_file)
+                if not os.path.exists(path):
+                    continue
+                with open(path, "r", encoding="utf-8", errors="replace") as fh:
+                    content = fh.read()
+                emit_direct_deps(content, f"buildSrc/{build_file}", "buildsrc")
+                break
+            scan_convention_plugins(os.path.join(buildsrc_dir, "src", "main", "kotlin"))
+
+        build_logic_dir = os.path.join(project_root, "build-logic")
+        if os.path.isdir(build_logic_dir):
+            for sub in sorted(os.listdir(build_logic_dir)):
+                sub_dir = os.path.join(build_logic_dir, sub)
+                if not os.path.isdir(sub_dir):
+                    continue
+                for build_file in GRADLE_BUILD_FILES:
+                    path = os.path.join(sub_dir, build_file)
+                    if not os.path.exists(path):
+                        continue
+                    with open(path, "r", encoding="utf-8", errors="replace") as fh:
+                        content = fh.read()
+                    emit_direct_deps(content, f"build-logic/{sub}/{build_file}", "convention-plugin")
+                    break
+                scan_convention_plugins(os.path.join(sub_dir, "src", "main", "kotlin"))
+
     elif build_system == "maven":
         _scan_maven_recursive(project_root, None, dependencies, 0)
 
