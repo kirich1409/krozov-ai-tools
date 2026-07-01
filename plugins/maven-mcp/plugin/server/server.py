@@ -499,16 +499,29 @@ def _repos_for(
         for name, url in _public_repos(group_id, artifact_id)
     ]
 
-    if queryable:
-        entries = [
-            {"name": r["name"], "url": r["url"], "scope": scope, "is_public_fallback": False}
-            for r in queryable
-        ]
-        if ctx.public_fallback:
-            entries.extend(public_entries)
-            return _dedup_repos(entries)
-        return entries
-    return public_entries
+    if not queryable:
+        return public_entries
+
+    # Content/group filtering (#320): a repo with an attached `includeGroup` /
+    # `includeGroupByRegex` filter is only consulted for a coordinate whose
+    # groupId actually matches — mirrors Gradle's own content filtering so a
+    # group-scoped repo (JitPack scoped to `com.github.*`, a filtered Google
+    # Maven declaration, etc.) is never queried for a group the real build
+    # would never route to it (the #299 false-availability class). Unfiltered
+    # repos are unaffected — the filter is opt-in per repo, not a new default
+    # restriction. If filtering excludes every declared repo, the scope is
+    # still treated as "declared" (not empty) — no unconditional public
+    # fallback, only the same opt-in `ctx.public_fallback` append as below.
+    matched = [r for r in queryable if _repo_matches_group(r, group_id)]
+
+    entries = [
+        {"name": r["name"], "url": r["url"], "scope": scope, "is_public_fallback": False}
+        for r in matched
+    ]
+    if ctx.public_fallback:
+        entries.extend(public_entries)
+        return _dedup_repos(entries)
+    return entries
 
 
 def _parse_metadata_xml(xml: str, group_id: str, artifact_id: str) -> Dict[str, Any]:
@@ -1658,6 +1671,50 @@ def _maven_local_url() -> str:
     return "file://" + os.path.expanduser(os.path.join("~", ".m2", "repository"))
 
 
+# Gradle repository content filtering (#320): `content { includeGroup(...) }` /
+# `content { includeGroupByRegex(...) }` inside a `maven {}` block, or the
+# `exclusiveContent { forRepository { maven {...} }; filter { includeGroup(...) } }`
+# shorthand, scope a repo declaration to only the group(s) it actually serves
+# (e.g. JitPack scoped to `com.github.*`). Multiple calls in one block are
+# OR-matched — a repo can allow more than one group.
+_INCLUDE_GROUP_RE = re.compile(r"\bincludeGroup\s*\(\s*[\"']([^\"']+)[\"']\s*\)")
+_INCLUDE_GROUP_REGEX_RE = re.compile(r"\bincludeGroupByRegex\s*\(\s*[\"']([^\"']+)[\"']\s*\)")
+
+
+def _parse_group_filters(block_body: str) -> List[Dict[str, str]]:
+    """Extract `includeGroup`/`includeGroupByRegex` calls from a `content {}` or
+    `filter {}` block body into ``[{"type": "exact"|"regex", "value": ...}]``."""
+    filters: List[Dict[str, str]] = []
+    for m in _INCLUDE_GROUP_RE.finditer(block_body):
+        filters.append({"type": "exact", "value": m.group(1)})
+    for m in _INCLUDE_GROUP_REGEX_RE.finditer(block_body):
+        filters.append({"type": "regex", "value": m.group(1)})
+    return filters
+
+
+def _repo_matches_group(entry: Dict[str, Any], group_id: str) -> bool:
+    """True when `entry` carries no `group_filters` (unfiltered repos are queried
+    for every group, unchanged from pre-#320 behavior), or when `group_id`
+    matches at least one attached filter: exact equality for `includeGroup`,
+    full-string regex match for `includeGroupByRegex` (mirrors Gradle's own
+    `Pattern.matches` semantics — a partial match is not enough). An invalid
+    regex is treated as non-matching rather than raising."""
+    filters = entry.get("group_filters")
+    if not filters:
+        return True
+    for f in filters:
+        if f["type"] == "exact":
+            if f["value"] == group_id:
+                return True
+        else:
+            try:
+                if re.fullmatch(f["value"], group_id):
+                    return True
+            except re.error:
+                continue
+    return False
+
+
 def _skip_string_literal(content: str, i: int) -> int:
     """`content[i]` is an opening quote; return the index just past its match.
     Handles backslash escapes; an unterminated string consumes to end."""
@@ -1771,7 +1828,11 @@ def _parse_gradle_repos(block_body: str) -> List[Dict[str, str]]:
     accessors, explicit `maven("url")` / `maven(url = "url")` calls, and
     `maven { ... }` blocks (whose URL is extracted from the balanced body via the
     brace scanner — NOT a brace-naive regex, so `maven { credentials{…}; url=… }`
-    is handled). Deduped by URL, declaration order preserved."""
+    is handled). A `maven { }` block's nested `content { includeGroup(...) }` /
+    `includeGroupByRegex(...)`, and the `exclusiveContent { forRepository { maven
+    {...} }; filter {...} }` shorthand, are both captured onto the entry as an
+    optional `group_filters` list (#320 — see *Repository resolution* in
+    CLAUDE.md). Deduped by URL, declaration order preserved."""
     entries: List[Dict[str, str]] = []
 
     for fn, name, url in _GRADLE_SHORTHANDS:
@@ -1780,23 +1841,65 @@ def _parse_gradle_repos(block_body: str) -> List[Dict[str, str]]:
     if re.search(r"\bmavenLocal\s*\(\s*\)", block_body):
         entries.append({"name": "Maven Local", "url": _maven_local_url()})
 
+    # exclusiveContent { forRepository { maven {...} }; filter { includeGroup(...) } }
+    # — same net effect as `maven { content {...} }` (a repo + a group filter),
+    # different syntax shape. Handled BEFORE the bare `maven { ... }` scan below
+    # and its span excised from the content that scan sees — otherwise the
+    # `maven {}` nested inside `forRepository {}` would ALSO be picked up there
+    # as an unfiltered top-level repo, duplicating the entry and losing its
+    # group filter.
+    exclusive_spans: List[Tuple[int, int]] = []
+    pos = 0
+    while True:
+        found = _find_block(block_body, "exclusiveContent", pos)
+        if not found:
+            break
+        body, start, after = found
+        exclusive_spans.append((start, after))
+        pos = after
+        for_repo_body = _extract_block(body, "forRepository")
+        if for_repo_body is None:
+            continue
+        maven_found = _find_block(for_repo_body, "maven")
+        if not maven_found:
+            continue
+        maven_body, _mstart, _mafter = maven_found
+        um = re.search(r"\burl\b\s*(?:=\s*)?(?:uri\s*\(\s*)?[\"']([^\"']+)[\"']", maven_body)
+        if not um:
+            continue
+        entry = {"name": um.group(1), "url": um.group(1)}
+        filter_body = _extract_block(body, "filter")
+        if filter_body is not None:
+            filters = _parse_group_filters(filter_body)
+            if filters:
+                entry["group_filters"] = filters
+        entries.append(entry)
+    block_body_sans_exclusive = _excise_spans(block_body, exclusive_spans)
+
     # Explicit maven("url") and maven(url = "url") (optionally wrapped in uri()).
     for m in re.finditer(
         r"\bmaven\s*\(\s*(?:url\s*=\s*)?(?:uri\s*\(\s*)?[\"']([^\"']+)[\"']",
-        block_body,
+        block_body_sans_exclusive,
     ):
         entries.append({"name": m.group(1), "url": m.group(1)})
 
-    # maven { ... } blocks — extract each balanced body, then find its URL.
+    # maven { ... } blocks — extract each balanced body, then find its URL, plus
+    # an optional nested `content { includeGroup(...) }` group filter (#320).
     pos = 0
     while True:
-        found = _find_block(block_body, "maven", pos)
+        found = _find_block(block_body_sans_exclusive, "maven", pos)
         if not found:
             break
         body, _start, after = found
         um = re.search(r"\burl\b\s*(?:=\s*)?(?:uri\s*\(\s*)?[\"']([^\"']+)[\"']", body)
         if um:
-            entries.append({"name": um.group(1), "url": um.group(1)})
+            entry = {"name": um.group(1), "url": um.group(1)}
+            content_body = _extract_block(body, "content")
+            if content_body is not None:
+                filters = _parse_group_filters(content_body)
+                if filters:
+                    entry["group_filters"] = filters
+            entries.append(entry)
         pos = after
 
     return _dedup_repos(entries)

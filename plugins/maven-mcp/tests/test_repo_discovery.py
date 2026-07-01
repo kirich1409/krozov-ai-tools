@@ -114,6 +114,95 @@ class TestParseGradleRepos(unittest.TestCase):
         self.assertEqual(urls, ["https://a/r", "https://b/r"])
 
 
+class TestGroupContentFiltering(unittest.TestCase):
+    """#320 — `maven { content { includeGroup(...) } }` and the
+    `exclusiveContent { forRepository { maven {...} }; filter {...} }` shorthand
+    both parse into the same RepoEntry shape: a repo plus an OR-matched list of
+    group filters under `group_filters`."""
+
+    def test_maven_content_include_group_attaches_filter(self):
+        body = 'maven { url = uri("https://jitpack.io"); content { includeGroup("com.github.foo") } }'
+        entries = server._parse_gradle_repos(body)
+        self.assertEqual(len(entries), 1)
+        self.assertEqual(entries[0]["group_filters"], [{"type": "exact", "value": "com.github.foo"}])
+
+    def test_maven_content_include_group_by_regex(self):
+        body = r'maven { url = uri("https://jitpack.io"); content { includeGroupByRegex("com\.github\..*") } }'
+        entries = server._parse_gradle_repos(body)
+        self.assertEqual(entries[0]["group_filters"], [{"type": "regex", "value": r"com\.github\..*"}])
+
+    def test_maven_content_multiple_include_group_calls_or_matched(self):
+        body = (
+            'maven { url = uri("https://x/r"); content { '
+            'includeGroup("com.foo"); includeGroup("com.bar") } }'
+        )
+        entries = server._parse_gradle_repos(body)
+        self.assertEqual(
+            entries[0]["group_filters"],
+            [{"type": "exact", "value": "com.foo"}, {"type": "exact", "value": "com.bar"}],
+        )
+
+    def test_maven_block_without_content_has_no_filter(self):
+        # Regression guard: an unfiltered maven{} repo is unchanged.
+        body = 'maven { url = uri("https://x/r") }'
+        entries = server._parse_gradle_repos(body)
+        self.assertNotIn("group_filters", entries[0])
+
+    def test_exclusive_content_shorthand_parses_to_same_shape(self):
+        body = (
+            'exclusiveContent {\n'
+            '  forRepository { maven { url = uri("https://jitpack.io") } }\n'
+            '  filter { includeGroup("com.github.foo") }\n'
+            '}'
+        )
+        entries = server._parse_gradle_repos(body)
+        self.assertEqual(len(entries), 1)
+        self.assertEqual(entries[0]["url"], "https://jitpack.io")
+        self.assertEqual(entries[0]["group_filters"], [{"type": "exact", "value": "com.github.foo"}])
+
+    def test_exclusive_content_not_double_counted_by_bare_maven_scan(self):
+        # The maven{} nested inside forRepository{} must not ALSO surface as a
+        # second, unfiltered top-level entry.
+        body = (
+            'exclusiveContent {\n'
+            '  forRepository { maven { url = uri("https://jitpack.io") } }\n'
+            '  filter { includeGroup("com.github.foo") }\n'
+            '}'
+        )
+        entries = server._parse_gradle_repos(body)
+        self.assertEqual(len(entries), 1)
+
+
+class TestRepoMatchesGroup(unittest.TestCase):
+    def test_no_filter_matches_every_group(self):
+        entry = {"name": "x", "url": "https://x/r"}
+        self.assertTrue(server._repo_matches_group(entry, "com.anything"))
+
+    def test_exact_filter_matches_only_listed_group(self):
+        entry = {"group_filters": [{"type": "exact", "value": "com.github.foo"}]}
+        self.assertTrue(server._repo_matches_group(entry, "com.github.foo"))
+        self.assertFalse(server._repo_matches_group(entry, "com.google.guava"))
+
+    def test_regex_filter_fullmatch_semantics(self):
+        entry = {"group_filters": [{"type": "regex", "value": r"com\.github\..*"}]}
+        self.assertTrue(server._repo_matches_group(entry, "com.github.foo"))
+        self.assertFalse(server._repo_matches_group(entry, "com.google.guava"))
+        # Fullmatch, not search: a prefix-only partial match must not count.
+        self.assertFalse(server._repo_matches_group(entry, "xcom.github.foo"))
+
+    def test_multiple_filters_or_matched(self):
+        entry = {"group_filters": [
+            {"type": "exact", "value": "com.foo"},
+            {"type": "exact", "value": "com.bar"},
+        ]}
+        self.assertTrue(server._repo_matches_group(entry, "com.bar"))
+        self.assertFalse(server._repo_matches_group(entry, "com.baz"))
+
+    def test_invalid_regex_treated_as_non_matching(self):
+        entry = {"group_filters": [{"type": "regex", "value": "("}]}
+        self.assertFalse(server._repo_matches_group(entry, "com.foo"))
+
+
 class TestParseMavenRepos(unittest.TestCase):
     def test_dual_container_separation(self):
         pom = """
