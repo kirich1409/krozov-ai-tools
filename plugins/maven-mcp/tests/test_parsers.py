@@ -145,6 +145,21 @@ class TestExtractRelocationFromPom(unittest.TestCase):
         )
         self.assertIsNone(server.extract_relocation_from_pom(pom, "g", "a", "1.0"))
 
+    def test_shade_plugin_relocations_outside_distribution_management_ignored(self):
+        # Maven Shade Plugin's <configuration><relocations><relocation> is an
+        # unrelated concept (package relocation for shading, not artifact-
+        # coordinate relocation) — a POM using it with no
+        # <distributionManagement> block must not false-positive.
+        pom = (
+            "<project><build><plugins><plugin>"
+            "<artifactId>maven-shade-plugin</artifactId>"
+            "<configuration><relocations><relocation>"
+            "<pattern>org.old</pattern><shadedPattern>org.shaded.old</shadedPattern>"
+            "</relocation></relocations></configuration>"
+            "</plugin></plugins></build></project>"
+        )
+        self.assertIsNone(server.extract_relocation_from_pom(pom, "g", "a", "1.0"))
+
 
 # ---------------------------------------------------------------------------
 # _parse_gradle_deps

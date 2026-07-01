@@ -966,9 +966,20 @@ def extract_relocation_from_pom(
     that field — e.g. a relocation POM specifying only a new `<artifactId>`
     means the groupId/version carry over. The missing fields are filled in
     from the original coordinate here so callers get a complete, directly-usable
-    coordinate rather than a partial one they would have to merge themselves."""
+    coordinate rather than a partial one they would have to merge themselves.
+
+    The `<relocation>` search is scoped to inside `<distributionManagement>`
+    only — Maven Shade Plugin's `<configuration><relocations><relocation>`
+    (package relocation for shading, an unrelated concept) also uses the
+    `<relocation>` tag, so an unscoped search would false-positive on a POM
+    that shades dependencies but never relocates its own coordinates."""
     xml = _strip_xml_comments(pom_xml)
-    reloc_m = re.search(r"<relocation>([\s\S]*?)</relocation>", xml)
+    dm_m = re.search(
+        r"<distributionManagement>([\s\S]*?)</distributionManagement>", xml
+    )
+    if not dm_m:
+        return None
+    reloc_m = re.search(r"<relocation>([\s\S]*?)</relocation>", dm_m.group(1))
     if not reloc_m:
         return None
     block = reloc_m.group(1)
