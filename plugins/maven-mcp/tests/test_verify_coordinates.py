@@ -465,6 +465,13 @@ class TyposquatRiskTest(unittest.TestCase):
         # simultaneously satisfy low_version_count -> gated calls stop at the
         # cap; the excess coordinates still get typosquatRisk with ONLY
         # low_version_count in reasons (degrade, not error).
+        #
+        # The cap bounds actual outbound Solr HTTP CALLS, not gated-in
+        # coordinates: each gated-in coordinate issues UP TO TWO Solr calls
+        # (search_maven_central for group-mismatch + _fetch_gav_timestamp for
+        # recent-first-publish, since every fixture here has a non-empty
+        # `versions`) -- so the cap is split evenly (cap // 2 coordinates each
+        # get both calls) rather than `cap` coordinates each getting one.
         cap = server.MAX_GATED_SOLR_CALLS_PER_BATCH
         n = cap + 5
         deps = [{"groupId": "com.x", "artifactId": f"lib{i}"} for i in range(n)]
@@ -472,14 +479,16 @@ class TyposquatRiskTest(unittest.TestCase):
         responses = [_meta(["1.0.0"]) for _ in range(n)]
         with temp_project({}) as root, \
                 unittest.mock.patch.object(server, "search_maven_central", return_value=[]) as msearch, \
-                unittest.mock.patch.object(server, "_fetch_gav_timestamp", return_value=None), \
+                unittest.mock.patch.object(server, "_fetch_gav_timestamp", return_value=None) as mts, \
                 _patch_urlopen(responses):
             out = server.handle_verify_coordinates({
                 "dependencies": deps,
                 "projectPath": root,
             })
-        # Exactly `cap` coordinates got gated in (1 search_maven_central call each).
-        self.assertEqual(msearch.call_count, cap)
+        # Total actual Solr calls (msearch + mts combined) never exceeds the cap.
+        self.assertEqual(msearch.call_count + mts.call_count, cap)
+        self.assertEqual(msearch.call_count, cap // 2)
+        self.assertEqual(mts.call_count, cap // 2)
         gated_in = [r for r in out["results"] if len(r["typosquatRisk"]["reasons"]) > 1
                     or "group_mismatch" in r["typosquatRisk"]["reasons"]]
         # None of these fixtures produce group_mismatch (empty candidates), so
@@ -501,10 +510,10 @@ class TyposquatRiskTest(unittest.TestCase):
             responses = [_meta(["1.0.0"]) for _ in range(n)]
             with temp_project({}) as root, \
                     unittest.mock.patch.object(server, "search_maven_central", return_value=[]) as msearch, \
-                    unittest.mock.patch.object(server, "_fetch_gav_timestamp", return_value=None), \
+                    unittest.mock.patch.object(server, "_fetch_gav_timestamp", return_value=None) as mts, \
                     _patch_urlopen(responses):
                 server.handle_verify_coordinates({"dependencies": deps, "projectPath": root})
-            return msearch.call_count
+            return msearch.call_count + mts.call_count
 
         first_call_count = _run_one_batch()
         second_call_count = _run_one_batch()

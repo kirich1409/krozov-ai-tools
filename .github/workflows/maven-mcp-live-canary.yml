@@ -11,12 +11,18 @@ name: maven-mcp live canary
 # api.osv.dev endpoint on a schedule and fails loud on drift.
 #
 # "Fails loud" here means: a failed scheduled workflow run is a red run in the
-# Actions tab, and GitHub's default notification settings email repo
-# watchers/the workflow's actor on scheduled-workflow failure -- no extra
-# notification integration is added; that is enough for this plan's scope
-# (see plan.md's Risks & Mitigations: a live break between weekly canary runs
-# degrades Layer 1 silently for up to a week regardless of notification
-# channel, and no stronger real-time mitigation was proposed as proportionate).
+# Actions tab, and GitHub emails the user who last edited the workflow's
+# schedule on scheduled-workflow failure -- no extra notification integration
+# is added; that is enough for this plan's scope (see plan.md's Risks &
+# Mitigations: a live break between weekly canary runs degrades Layer 1
+# silently for up to a week regardless of notification channel, and no
+# stronger real-time mitigation was proposed as proportionate).
+#
+# Known caveat (accepted, not mitigated here): GitHub auto-disables scheduled
+# workflows after ~60 days of repository inactivity -- that failure mode is
+# itself silent (no run, no red, no email), which is the same "nobody
+# remembers" gap this canary exists to close. No auto-disable detection is
+# added; this is a residual gap, not an oversight.
 on:
   schedule:
     # Weekly, offset from codeql.yml's Monday 05:37 UTC schedule to avoid
@@ -30,6 +36,11 @@ permissions:
 jobs:
   live-canary:
     runs-on: ubuntu-latest
+    # Defensive bound: server.py's HTTP_TIMEOUT + retry/backoff already cap
+    # the actual network path today, so this isn't a live hang risk, but a
+    # future change to that retry logic should not be able to silently
+    # reintroduce a multi-hour-hang scheduled job.
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
 

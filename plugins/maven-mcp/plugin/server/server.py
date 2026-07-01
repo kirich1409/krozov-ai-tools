@@ -3025,33 +3025,44 @@ def _compute_typosquat_risk(
         reasons.append("low_version_count")
 
     popular_match: Optional[Dict[str, Any]] = None
-    # Group-mismatch and recent-first-publish share ONE gate: low_version_count
-    # must have already fired AND the per-batch cap must not yet be reached.
-    # GATED (not unconditional-per-`exists`-coordinate) because
-    # search.maven.org has a documented rate-limiting/403-lockout history under
-    # bulk load and _request_with_retry does not retry 403 -- an unconditional
-    # query on the dominant `exists` case in a real batch risked degrading the
-    # shared endpoint for the EXISTING did-you-mean/search_artifacts paths too.
-    if "low_version_count" in reasons and gated_calls[0] < MAX_GATED_SOLR_CALLS_PER_BATCH:
-        gated_calls[0] += 1
-        candidates = search_maven_central(_solr_escape(artifact_id), _SUGGEST_SEARCH_ROWS, use_cache=True)
-        for cand in candidates:
-            cand_g = cand.get("groupId", "")
-            cand_a = cand.get("artifactId", "")
-            if cand_g == group_id:
-                continue
-            if _similarity(artifact_id.lower(), cand_a.lower()) < GROUP_MISMATCH_SIMILARITY:
-                continue
-            cand_vc = cand.get("versionCount", 0) or 0
-            if popular_match is None or cand_vc > popular_match["versionCount"]:
-                popular_match = {"groupId": cand_g, "artifactId": cand_a, "versionCount": cand_vc}
-        if popular_match is not None and popular_match["versionCount"] > GROUP_MISMATCH_POPULARITY_RATIO * version_count:
-            reasons.append("group_mismatch")
-        else:
-            # A coincidentally-shared name with COMPARABLE popularity on both
-            # sides must not flag -- discard the candidate entirely (popularMatch
-            # is only ever emitted alongside a fired group_mismatch reason).
-            popular_match = None
+    # Group-mismatch and recent-first-publish share ONE precondition:
+    # low_version_count must have already fired. GATED (not
+    # unconditional-per-`exists`-coordinate) because search.maven.org has a
+    # documented rate-limiting/403-lockout history under bulk load and
+    # _request_with_retry does not retry 403 -- an unconditional query on the
+    # dominant `exists` case in a real batch risked degrading the shared
+    # endpoint for the EXISTING did-you-mean/search_artifacts paths too.
+    #
+    # MAX_GATED_SOLR_CALLS_PER_BATCH bounds the number of actual outbound Solr
+    # HTTP calls, not the number of gated-in coordinates -- each gated-in
+    # coordinate can issue up to TWO Solr calls (group-mismatch search +
+    # recent-first-publish timestamp fetch), so the cap is checked and the
+    # counter incremented separately before EACH call, not once per
+    # coordinate. Counting per-coordinate instead would silently allow up to
+    # 2x the named/documented call budget in exactly the cold-cache/
+    # large-batch scenario this cap exists to bound.
+    if "low_version_count" in reasons:
+        if gated_calls[0] < MAX_GATED_SOLR_CALLS_PER_BATCH:
+            gated_calls[0] += 1
+            candidates = search_maven_central(_solr_escape(artifact_id), _SUGGEST_SEARCH_ROWS, use_cache=True)
+            for cand in candidates:
+                cand_g = cand.get("groupId", "")
+                cand_a = cand.get("artifactId", "")
+                if cand_g == group_id:
+                    continue
+                if _similarity(artifact_id.lower(), cand_a.lower()) < GROUP_MISMATCH_SIMILARITY:
+                    continue
+                cand_vc = cand.get("versionCount", 0) or 0
+                if popular_match is None or cand_vc > popular_match["versionCount"]:
+                    popular_match = {"groupId": cand_g, "artifactId": cand_a, "versionCount": cand_vc}
+            if popular_match is not None and popular_match["versionCount"] > GROUP_MISMATCH_POPULARITY_RATIO * version_count:
+                reasons.append("group_mismatch")
+            else:
+                # A coincidentally-shared name with COMPARABLE popularity on
+                # both sides must not flag -- discard the candidate entirely
+                # (popularMatch is only ever emitted alongside a fired
+                # group_mismatch reason).
+                popular_match = None
 
         # Recent-first-publish: a gated, best-effort ENRICHMENT on top of an
         # already-fired signal, never a signal on its own -- it never turns
@@ -3061,8 +3072,10 @@ def _compute_typosquat_risk(
         # first-published version -- the two coincide only when version
         # numbers happen to increase monotonically with release time. A
         # reasonable, but imperfect, first-publish proxy under this
-        # <=LOW_VERSION_COUNT_THRESHOLD-version gate.
-        if versions:
+        # <=LOW_VERSION_COUNT_THRESHOLD-version gate. Cap checked
+        # independently of the group-mismatch call above (its own Solr call).
+        if versions and gated_calls[0] < MAX_GATED_SOLR_CALLS_PER_BATCH:
+            gated_calls[0] += 1
             ts = _fetch_gav_timestamp(group_id, artifact_id, versions[0])
             if ts is not None:
                 now_ms = time.time() * 1000
