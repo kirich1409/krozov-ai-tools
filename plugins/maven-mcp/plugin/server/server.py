@@ -686,6 +686,21 @@ def fetch_pom(group_id: str, artifact_id: str, version: str, ctx: "ResolutionCon
     return None
 
 
+def check_relocation(
+    group_id: str, artifact_id: str, version: str, ctx: "ResolutionContext"
+) -> Optional[Dict[str, str]]:
+    """Fetch a resolved coordinate's POM and report Maven relocation, if any
+    (#284). Returns None when the POM can't be fetched (repo miss, transport
+    failure — degrades silently, same as any other optional POM-derived field)
+    or carries no `<relocation>` block. Reuses `fetch_pom`'s cache (POM TTL 7
+    days), so this is one extra cached network call on top of whatever the
+    caller already made to resolve `version` — not a new resolution pass."""
+    pom = fetch_pom(group_id, artifact_id, version, ctx)
+    if pom is None:
+        return None
+    return extract_relocation_from_pom(pom, group_id, artifact_id, version)
+
+
 # ---------------------------------------------------------------------------
 # Version classification & comparison
 # ---------------------------------------------------------------------------
@@ -938,6 +953,33 @@ def extract_licenses_from_pom(pom_xml: str) -> List[str]:
         if name_m and name_m.group(1):
             names.append(name_m.group(1).strip())
     return names
+
+
+def extract_relocation_from_pom(
+    pom_xml: str, group_id: str, artifact_id: str, version: str
+) -> Optional[Dict[str, str]]:
+    """Extract Maven artifact relocation (`<distributionManagement><relocation>`)
+    from a POM (#284). Returns None when there is no `<relocation>` block.
+
+    Per Maven's relocation spec, any of groupId/artifactId/version absent
+    inside `<relocation>` means "unchanged from the original coordinate" for
+    that field — e.g. a relocation POM specifying only a new `<artifactId>`
+    means the groupId/version carry over. The missing fields are filled in
+    from the original coordinate here so callers get a complete, directly-usable
+    coordinate rather than a partial one they would have to merge themselves."""
+    xml = _strip_xml_comments(pom_xml)
+    reloc_m = re.search(r"<relocation>([\s\S]*?)</relocation>", xml)
+    if not reloc_m:
+        return None
+    block = reloc_m.group(1)
+    gid_m = re.search(r"<groupId>([^<]+)</groupId>", block)
+    aid_m = re.search(r"<artifactId>([^<]+)</artifactId>", block)
+    ver_m = re.search(r"<version>([^<]+)</version>", block)
+    return {
+        "groupId": gid_m.group(1).strip() if gid_m else group_id,
+        "artifactId": aid_m.group(1).strip() if aid_m else artifact_id,
+        "version": ver_m.group(1).strip() if ver_m else version,
+    }
 
 
 def _gradle_plugin_marker_plugin_id(group_id: str, artifact_id: str) -> Optional[str]:
@@ -2283,10 +2325,42 @@ def _module_path_to_dir(project_root: str, module_path: str) -> str:
     return os.path.join(project_root, *parts)
 
 
+# Known-dead Gradle repository shorthands (#284). jcenter() has been read-only
+# since 2021 and was fully sunset 15 Aug 2024 (blog.gradle.org/jcenter-shutdown)
+# — a project still declaring it can no longer resolve anything from it. This
+# is a standalone content scan, deliberately NOT wired into `_parse_gradle_repos`
+# / `discover_repositories`: those feed live repository resolution
+# (`_repos_for` / `fetch_metadata`), and adding a known-dead entry there would
+# require also teaching the declared-vs-public-fallback contract to treat it as
+# non-queryable — out of scope here. Flagging is purely informational, surfaced
+# only via `scan_project_dependencies`.
+_DEAD_GRADLE_REPO_SHORTHANDS = (
+    ("jcenter", "jcenter() is dead — JCenter has been read-only since 2021 and was fully sunset 15 Aug 2024. Migrate to mavenCentral() or google()."),
+)
+
+
+def _detect_dead_repo_hints(content: str, file_name: str, module: Optional[str]) -> List[Dict[str, Optional[str]]]:
+    """Scan a build/settings file's raw content for known-dead repository
+    shorthands. Not scoped to a parsed `repositories { }` block — the shorthand
+    call is unambiguous wherever it textually appears in a Gradle file, and a
+    simple regex keeps this a lightweight, independent signal (no XML/Kotlin
+    parser dependency, consistent with the rest of the project). Known gap:
+    unlike `extract_relocation_from_pom`, this does NOT strip `//`/`/* */`
+    comments first, so a commented-out `jcenter()` left over from a migration
+    still surfaces a hint — acceptable false-positive for a purely informational
+    signal, not worth a Kotlin/Groovy comment-stripping pass for."""
+    hints = []
+    for fn, message in _DEAD_GRADLE_REPO_SHORTHANDS:
+        if re.search(r"\b" + fn + r"\s*\(\s*\)", content):
+            hints.append({"repository": fn, "file": file_name, "module": module, "message": message})
+    return hints
+
+
 def scan_project(project_root: str) -> Dict:
-    """Returns {buildSystem, dependencies: [...ScannedDependency]}."""
+    """Returns {buildSystem, dependencies: [...ScannedDependency], deadRepositoryHints: [...]}."""
     build_system = _detect_build_system(project_root)
     dependencies: List[Dict] = []
+    dead_repo_hints: List[Dict] = []
 
     if build_system == "gradle":
         # Step 1: Read settings file
@@ -2296,6 +2370,7 @@ def scan_project(project_root: str) -> Dict:
             if os.path.exists(p):
                 with open(p, "r", encoding="utf-8", errors="replace") as fh:
                     settings_result = {"content": fh.read(), "file": f}
+                dead_repo_hints.extend(_detect_dead_repo_hints(settings_result["content"], f, None))
                 break
 
         # Step 2: Determine catalog descriptors
@@ -2436,6 +2511,7 @@ def scan_project(project_root: str) -> Dict:
                     content = f.read()
                 process_build_file_deps(content, build_file, module_path)
                 process_plugins_block(content, build_file, module_path, False)
+                dead_repo_hints.extend(_detect_dead_repo_hints(content, build_file, module_path))
                 break
 
         # Step 6: Scan root build file
@@ -2448,6 +2524,7 @@ def scan_project(project_root: str) -> Dict:
             process_build_file_deps(content, build_file, None)
             process_plugins_block(content, build_file, None, False)
             process_buildscript_classpath(content, build_file)
+            dead_repo_hints.extend(_detect_dead_repo_hints(content, build_file, None))
             break
 
         # Step 7: Scan settings for pluginManagement plugins {}
@@ -2515,7 +2592,7 @@ def scan_project(project_root: str) -> Dict:
     elif build_system == "maven":
         _scan_maven_recursive(project_root, None, dependencies, 0)
 
-    return {"buildSystem": build_system, "dependencies": dependencies}
+    return {"buildSystem": build_system, "dependencies": dependencies, "deadRepositoryHints": dead_repo_hints}
 
 
 def _source_file_path(source: Dict) -> str:
@@ -2552,7 +2629,11 @@ def flatten_scan_result(scan: Dict) -> Dict:
                     "source": source_file,
                     "sourceKind": source_kind,
                 })
-    return {"buildSystem": scan["buildSystem"], "dependencies": deps}
+    return {
+        "buildSystem": scan["buildSystem"],
+        "dependencies": deps,
+        "deadRepositoryHints": scan.get("deadRepositoryHints", []),
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -2568,7 +2649,7 @@ def handle_get_latest_version(args: Dict) -> Any:
     selected = find_latest_version(metadata["versions"], filter_mode)
     if not selected:
         raise ValueError(f"No stable version found for {group_id}:{artifact_id}")
-    return {
+    result = {
         "groupId": group_id,
         "artifactId": artifact_id,
         "latestVersion": selected,
@@ -2576,6 +2657,13 @@ def handle_get_latest_version(args: Dict) -> Any:
         "allVersionsCount": len(metadata["versions"]),
         "resolvedFrom": metadata.get("resolvedFrom"),
     }
+    # #284: the latest version of a relocated artifact is typically the
+    # relocation stub itself (Maven relocation POMs stop receiving further
+    # releases past that point), so this is the natural place to surface it.
+    relocated_to = check_relocation(group_id, artifact_id, selected, ctx)
+    if relocated_to:
+        result["relocatedTo"] = relocated_to
+    return result
 
 
 def handle_check_version_exists(args: Dict) -> Any:
@@ -2585,7 +2673,7 @@ def handle_check_version_exists(args: Dict) -> Any:
     ctx = build_resolution_context(args)
     entry = check_version_in_repos(group_id, artifact_id, version, ctx)
     if entry:
-        return {
+        result = {
             "groupId": group_id,
             "artifactId": artifact_id,
             "version": version,
@@ -2597,6 +2685,11 @@ def handle_check_version_exists(args: Dict) -> Any:
             "repository": _strip_userinfo(entry["name"]),
             "resolvedFrom": _to_resolved_from(entry),
         }
+        # #284: a specific version being checked may itself be a relocation stub.
+        relocated_to = check_relocation(group_id, artifact_id, version, ctx)
+        if relocated_to:
+            result["relocatedTo"] = relocated_to
+        return result
     return {
         "groupId": group_id,
         "artifactId": artifact_id,
