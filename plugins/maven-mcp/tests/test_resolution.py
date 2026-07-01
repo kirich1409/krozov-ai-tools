@@ -156,6 +156,133 @@ class TestProjectFirstRouting(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
+# #320 — repository content / group filtering
+# ---------------------------------------------------------------------------
+class TestContentGroupFiltering(unittest.TestCase):
+    JITPACK_URL = "https://jitpack.io"
+
+    def test_matching_group_includes_the_filtered_repo(self):
+        files = {"settings.gradle.kts": _settings(
+            'maven { url = uri("%s"); content { includeGroup("com.github.foo") } }' % self.JITPACK_URL
+        )}
+        with temp_project(files) as root:
+            ctx = server.build_resolution_context({"projectPath": root})
+        repos = server._repos_for("com.github.foo", "somelib", ctx)
+        self.assertEqual([r["url"] for r in repos], [self.JITPACK_URL])
+
+    def test_non_matching_group_excludes_the_filtered_repo(self):
+        # Core false-availability fix: a repo scoped to com.github.foo must NOT
+        # be consulted for an unrelated group, even though it is the only
+        # declared repo in scope.
+        files = {"settings.gradle.kts": _settings(
+            'maven { url = uri("%s"); content { includeGroup("com.github.foo") } }' % self.JITPACK_URL
+        )}
+        with temp_project(files) as root:
+            ctx = server.build_resolution_context({"projectPath": root})
+        repos = server._repos_for("com.google.guava", "guava", ctx)
+        self.assertEqual(repos, [])
+
+    def test_non_matching_group_fetch_metadata_never_queries_filtered_repo(self):
+        files = {"settings.gradle.kts": _settings(
+            'maven { url = uri("%s"); content { includeGroup("com.github.foo") } }' % self.JITPACK_URL
+        )}
+        with temp_project(files) as root:
+            ctx = server.build_resolution_context({"projectPath": root})
+        with unittest.mock.patch("urllib.request.urlopen") as m:
+            with self.assertRaises(ValueError) as cm:
+                server.fetch_metadata("com.google.guava", "guava", ctx)
+        m.assert_not_called()
+        # The error message must not degrade to the confusing "...: None"
+        # (there is no per-repo last_err to fall back on when _repos_for
+        # itself returns an empty list) — assert an explicit reason instead.
+        self.assertIn("content/group filtering", str(cm.exception))
+
+    def test_include_group_by_regex_matches_prefix_family(self):
+        files = {"settings.gradle.kts": _settings(
+            r'maven { url = uri("%s"); content { includeGroupByRegex("com\.github\..*") } }'
+            % self.JITPACK_URL
+        )}
+        with temp_project(files) as root:
+            ctx = server.build_resolution_context({"projectPath": root})
+        matching = server._repos_for("com.github.anyuser", "anylib", ctx)
+        self.assertEqual([r["url"] for r in matching], [self.JITPACK_URL])
+        non_matching = server._repos_for("com.other", "lib", ctx)
+        self.assertEqual(non_matching, [])
+
+    def test_include_group_by_regex_kotlin_double_backslash_form_matches(self):
+        # Regression for the idiomatic on-disk Kotlin/Groovy form (doubled
+        # backslash), matching Gradle's own JitPack docs example end-to-end
+        # through _repos_for, not just the parser unit test.
+        files = {"settings.gradle.kts": _settings(
+            r'maven { url = uri("%s"); content { includeGroupByRegex("com\\.github\\..*") } }'
+            % self.JITPACK_URL
+        )}
+        with temp_project(files) as root:
+            ctx = server.build_resolution_context({"projectPath": root})
+        matching = server._repos_for("com.github.anyuser", "anylib", ctx)
+        self.assertEqual([r["url"] for r in matching], [self.JITPACK_URL])
+
+    def test_exclusive_content_shorthand_behaves_like_content_filter(self):
+        body = (
+            'exclusiveContent {\n'
+            '  forRepository { maven { url = uri("%s") } }\n'
+            '  filter { includeGroup("com.github.foo") }\n'
+            '}' % self.JITPACK_URL
+        )
+        with temp_project({"settings.gradle.kts": _settings(body)}) as root:
+            ctx = server.build_resolution_context({"projectPath": root})
+        self.assertEqual(
+            [r["url"] for r in server._repos_for("com.github.foo", "lib", ctx)],
+            [self.JITPACK_URL],
+        )
+        self.assertEqual(server._repos_for("com.google.guava", "guava", ctx), [])
+
+    def test_unfiltered_repo_still_included_for_every_group(self):
+        # Regression guard: a maven{} repo with no content{} block is queried
+        # for every group, unchanged from pre-#320 behavior.
+        files = {"settings.gradle.kts": _settings('maven { url = uri("%s") }' % CUSTOM_URL)}
+        with temp_project(files) as root:
+            ctx = server.build_resolution_context({"projectPath": root})
+        self.assertEqual(
+            [r["url"] for r in server._repos_for("com.acme", "lib", ctx)], [CUSTOM_URL]
+        )
+        self.assertEqual(
+            [r["url"] for r in server._repos_for("com.other", "lib2", ctx)], [CUSTOM_URL]
+        )
+
+    def test_multiple_include_group_calls_or_matched(self):
+        files = {"settings.gradle.kts": _settings(
+            'maven { url = uri("%s"); content { '
+            'includeGroup("com.github.foo"); includeGroup("com.github.bar") } }' % self.JITPACK_URL
+        )}
+        with temp_project(files) as root:
+            ctx = server.build_resolution_context({"projectPath": root})
+        self.assertEqual(
+            [r["url"] for r in server._repos_for("com.github.foo", "lib", ctx)],
+            [self.JITPACK_URL],
+        )
+        self.assertEqual(
+            [r["url"] for r in server._repos_for("com.github.bar", "lib", ctx)],
+            [self.JITPACK_URL],
+        )
+        self.assertEqual(server._repos_for("com.github.baz", "lib", ctx), [])
+
+    def test_filtered_out_falls_back_to_public_when_toggle_on(self):
+        # ctx.public_fallback ON still appends public entries even when content
+        # filtering excludes every declared repo for this group — same opt-in
+        # escape hatch as the no-filter case.
+        files = {"settings.gradle.kts": _settings(
+            'maven { url = uri("%s"); content { includeGroup("com.github.foo") } }' % self.JITPACK_URL
+        )}
+        with temp_project(files) as root:
+            with unittest.mock.patch.dict(os.environ, {"MAVEN_MCP_PUBLIC_FALLBACK": "on"}):
+                ctx = server.build_resolution_context({"projectPath": root})
+        repos = server._repos_for("com.google.guava", "guava", ctx)
+        self.assertEqual([r["url"] for r in repos], [server.MAVEN_CENTRAL_URL])
+        self.assertTrue(repos[0]["is_public_fallback"])
+
+
+# ---------------------------------------------------------------------------
 # T-5 — cross-repo metadata merge (#311), raise-contract preserved
 # ---------------------------------------------------------------------------
 class TestMetadataMerge(unittest.TestCase):
