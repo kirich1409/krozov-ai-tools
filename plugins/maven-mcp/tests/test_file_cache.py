@@ -486,8 +486,8 @@ class TestHttpGetCached(unittest.TestCase):
             ]),
         ) as m:
             server.fetch_metadata("com.example", "artifact", ctx)  # cached after this
-            server._verify_one("com.ghost", "ghost-artifact", None, 3, ctx)
-            server._verify_one("com.ghost", "ghost-artifact", None, 3, ctx)
+            server._verify_one("com.ghost", "ghost-artifact", None, 3, ctx, [0])
+            server._verify_one("com.ghost", "ghost-artifact", None, 3, ctx, [0])
 
         # meta: 1; _verify_one x2: 4 (2 probes + 2 searches) = 5 total
         self.assertEqual(m.call_count, 5,
