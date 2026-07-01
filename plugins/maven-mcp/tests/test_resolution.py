@@ -603,12 +603,34 @@ class TestUserinfoRedaction(unittest.TestCase):
         # malformed bracketed-IPv6 host, and _strip_userinfo used to fail
         # open (return the input unchanged), which would leak a literal
         # password if such a URL ever reached a tool-facing error message.
-        # _strip_userinfo now falls back to a regex redaction on this path
-        # instead of returning the raw string.
+        # _strip_userinfo now falls back to a scheme/authority split on this
+        # path instead of returning the raw string.
         malformed = "https://user:pass@[::1"
         redacted = server._strip_userinfo(malformed)
         self.assertNotEqual(redacted, malformed)
         self.assertNotIn("pass", redacted)
+
+    def test_strip_userinfo_parse_failure_multi_at_fully_redacted(self):
+        # Follow-up Copilot review finding on #335: a first-`@`-only regex
+        # (`(://)[^/@]*@`) only strips up to the FIRST `@` in the authority.
+        # When the userinfo itself contains an unescaped `@` (e.g. a
+        # malformed URL with `pa@ss` as part of the password — exactly the
+        # kind of input that triggers this fallback), the remainder after
+        # the first `@` (`ss@host/path`) was left in place, still leaking a
+        # password fragment. The fix drops everything up to and including
+        # the LAST `@` in the authority instead.
+        malformed = "https://user:pa@ss@[::1/path"
+        redacted = server._strip_userinfo(malformed)
+        self.assertEqual(redacted, "https://[::1/path")
+        self.assertNotIn("user:pa", redacted)
+        self.assertNotIn("ss@", redacted)
+
+    def test_strip_userinfo_parse_failure_no_at_is_passthrough(self):
+        # No `@` anywhere in a malformed URL means there is no userinfo to
+        # redact — the fallback must return the input unchanged rather than
+        # mangling a credential-free malformed URL.
+        malformed = "https://[::1"
+        self.assertEqual(server._strip_userinfo(malformed), malformed)
 
     def test_fetch_metadata_transport_exception_with_credentials_does_not_leak_password(self):
         # /finalize Phase C (comment-analyzer + advisor): a userinfo URL

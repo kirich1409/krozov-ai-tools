@@ -539,10 +539,28 @@ def _strip_userinfo(url: str) -> str:
     except ValueError:
         # A malformed host (e.g. an unterminated bracketed IPv6 literal) can
         # still carry userinfo that urlsplit never gets to parse out — fail
-        # open would leak it verbatim. Fall back to a conservative regex that
-        # strips anything shaped like `user:pass@` right after `scheme://`,
-        # erring on the side of over-redacting rather than leaking a credential.
-        return re.sub(r"(://)[^/@]*@", r"\1", url)
+        # open would leak it verbatim. A first-`@`-only regex (the previous
+        # approach) under-redacts when the userinfo itself contains an
+        # unescaped `@` (e.g. `user:pa@ss@host` — malformed input exactly
+        # like what triggers this fallback): it would strip only up to the
+        # FIRST `@`, leaving a trailing password fragment (`ss@host`) in the
+        # output. Instead, locate the `scheme://` prefix, take the authority
+        # up to the next `/` (or end of string), and drop everything up to
+        # and including the LAST `@` in that authority — that reliably
+        # removes all userinfo regardless of how many `@` it contains.
+        scheme_match = re.match(r"^([a-zA-Z][a-zA-Z0-9+.-]*://)", url)
+        if not scheme_match:
+            # No identifiable scheme boundary — fall back to stripping
+            # everything up to the last `@` globally as a safety net.
+            return url.rsplit("@", 1)[-1] if "@" in url else url
+        scheme = scheme_match.group(1)
+        rest = url[len(scheme):]
+        slash_idx = rest.find("/")
+        authority = rest if slash_idx == -1 else rest[:slash_idx]
+        remainder = "" if slash_idx == -1 else rest[slash_idx:]
+        if "@" not in authority:
+            return url
+        return f"{scheme}{authority.rsplit('@', 1)[-1]}{remainder}"
     if "@" not in parsed.netloc:
         return url
     host = parsed.netloc.rsplit("@", 1)[-1]
