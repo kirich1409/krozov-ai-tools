@@ -537,7 +537,12 @@ def _strip_userinfo(url: str) -> str:
     try:
         parsed = urllib.parse.urlsplit(url)
     except ValueError:
-        return url
+        # A malformed host (e.g. an unterminated bracketed IPv6 literal) can
+        # still carry userinfo that urlsplit never gets to parse out — fail
+        # open would leak it verbatim. Fall back to a conservative regex that
+        # strips anything shaped like `user:pass@` right after `scheme://`,
+        # erring on the side of over-redacting rather than leaking a credential.
+        return re.sub(r"(://)[^/@]*@", r"\1", url)
     if "@" not in parsed.netloc:
         return url
     host = parsed.netloc.rsplit("@", 1)[-1]

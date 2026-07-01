@@ -598,15 +598,17 @@ class TestUserinfoRedaction(unittest.TestCase):
         self.assertIn(REDACTED_URL, entry["error"])
         self.assertNotIn("repopass", json.dumps(out))
 
-    def test_strip_userinfo_returns_input_unchanged_on_parse_failure(self):
-        # Pins the documented best-effort behavior: urlsplit raises ValueError
-        # on a malformed bracketed-IPv6 host, and _strip_userinfo fails open
-        # (returns the input unchanged) rather than raising. This input can
-        # never reach a successful HTTP fetch in this codebase (Request
-        # construction would fail the same way), so it never reaches the
-        # resolvedFrom/repository success-path output.
+    def test_strip_userinfo_redacts_on_parse_failure(self):
+        # Copilot review finding on #335: urlsplit raises ValueError on a
+        # malformed bracketed-IPv6 host, and _strip_userinfo used to fail
+        # open (return the input unchanged), which would leak a literal
+        # password if such a URL ever reached a tool-facing error message.
+        # _strip_userinfo now falls back to a regex redaction on this path
+        # instead of returning the raw string.
         malformed = "https://user:pass@[::1"
-        self.assertEqual(server._strip_userinfo(malformed), malformed)
+        redacted = server._strip_userinfo(malformed)
+        self.assertNotEqual(redacted, malformed)
+        self.assertNotIn("pass", redacted)
 
     def test_fetch_metadata_transport_exception_with_credentials_does_not_leak_password(self):
         # /finalize Phase C (comment-analyzer + advisor): a userinfo URL
