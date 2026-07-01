@@ -382,6 +382,51 @@ if [ -n "$VERIFY_RESULT" ]; then
         printf '%s\n' "$REASON_LINE" >> "$REASONS_FILE" || true
         DECISION="deny"
       fi
+    elif [ "$STATUS" = "exists" ]; then
+      # ── typosquatRisk heuristic (#322 Layer 2) — advisory `ask` only ───────
+      # Lives in the SAME per-coordinate loop as the absent+hallucination deny
+      # check above: the guard below is what prevents a LATER coordinate's
+      # heuristic ask from silently downgrading an EARLIER coordinate's deny
+      # within this same batch.
+      TR_SIGNAL=""
+      TR_SIGNAL=$(printf '%s' "$ITEM" | jq -r '.typosquatRisk.signal // "false"' 2>/dev/null) || TR_SIGNAL="false"
+
+      if [ "$TR_SIGNAL" = "true" ]; then
+        GA=""
+        GA=$(printf '%s' "$ITEM" | jq -r '"\(.groupId // ""):\(.artifactId // "")"' 2>/dev/null) || GA=""
+        GA=$(printf '%s' "$GA" | tr -cd 'A-Za-z0-9._:-') || GA=""
+
+        TR_REASONS=""
+        TR_REASONS=$(printf '%s' "$ITEM" | jq -r '(.typosquatRisk.reasons // []) | join(", ")' 2>/dev/null) || TR_REASONS=""
+        TR_REASONS=$(printf '%s' "$TR_REASONS" | tr -cd 'A-Za-z0-9._, ') || TR_REASONS=""
+
+        # popularMatch originates from the same Solr search results as
+        # `suggestions` and is equally attacker-influenceable in principle —
+        # REQUIRED identical charset filter before it enters the reason text.
+        POPULAR_TEXT=""
+        HAS_POPULAR=""
+        HAS_POPULAR=$(printf '%s' "$ITEM" | jq -r 'if .typosquatRisk.popularMatch then "yes" else empty end' 2>/dev/null) || HAS_POPULAR=""
+        if [ -n "$HAS_POPULAR" ]; then
+          POPULAR_TEXT=$(printf '%s' "$ITEM" | jq -r \
+            '"\(.typosquatRisk.popularMatch.groupId // ""):\(.typosquatRisk.popularMatch.artifactId // "")"' \
+            2>/dev/null) || POPULAR_TEXT=""
+          POPULAR_TEXT=$(printf '%s' "$POPULAR_TEXT" | tr -cd 'A-Za-z0-9._:-') || POPULAR_TEXT=""
+        fi
+
+        REASON_LINE=""
+        if [ -n "$POPULAR_TEXT" ]; then
+          REASON_LINE=$(printf '%s exists but shows a typosquat/popularity risk signal (%s); a more popular candidate under a different group is %s. Verify this is the package you intended before use.' \
+            "$GA" "$TR_REASONS" "$POPULAR_TEXT")
+        else
+          REASON_LINE=$(printf '%s exists but shows a typosquat/popularity risk signal (%s). Verify this is the package you intended before use.' \
+            "$GA" "$TR_REASONS")
+        fi
+        printf '%s\n' "$REASON_LINE" >> "$REASONS_FILE" || true
+
+        # deny wins over ask; only set ask if decision not already deny —
+        # SAME guard the existing CRITICAL/HIGH branch uses.
+        [ "$DECISION" = "deny" ] || DECISION="ask"
+      fi
     fi
     IDX=$((IDX+1))
   done
@@ -397,6 +442,39 @@ if [ -n "$VULN_RESULT" ]; then
     ITEM=""
     ITEM=$(printf '%s' "$VULN_RESULT" | jq -c ".results[$IDX]" 2>/dev/null) || ITEM=""
     [ -n "$ITEM" ] || { IDX=$((IDX+1)); continue; }
+
+    # ── Malicious-package check (#322 Layer 1) — UNCONDITIONAL deny ──────────
+    # Runs independent of, and regardless of ordering relative to, the
+    # severity-based CRITICAL/HIGH scan below: MAL- entries carry no CVSS
+    # severity (querybatch never hydrates it), so the severity branch alone
+    # would never catch this even once its own hydration gap is fixed.
+    # UNCONDITIONAL (never behind a `[ -z "$DECISION" ]`-style guard) is what
+    # correctly upgrades a prior `ask` (from the CRITICAL/HIGH branch below, or
+    # from the typosquatRisk branch above) to `deny` when both fire for the
+    # same coordinate.
+    MAL_COUNT=0
+    MAL_COUNT=$(printf '%s' "$ITEM" | jq -r \
+      '[.vulnerabilities[]? | select(.malicious == true)] | length' \
+      2>/dev/null) || MAL_COUNT=0
+
+    if [ "$MAL_COUNT" -gt 0 ] 2>/dev/null; then
+      GA=""
+      GA=$(printf '%s' "$ITEM" | jq -r '"\(.groupId // ""):\(.artifactId // ""):\(.version // "")"' 2>/dev/null) || GA=""
+      GA=$(printf '%s' "$GA" | tr -cd 'A-Za-z0-9._:-') || GA=""
+
+      MAL_ID=""
+      MAL_ID=$(printf '%s' "$ITEM" | jq -r \
+        '[.vulnerabilities[]? | select(.malicious == true)][0].id // ""' \
+        2>/dev/null) || MAL_ID=""
+      MAL_ID=$(printf '%s' "$MAL_ID" | tr -cd 'A-Za-z0-9._:-') || MAL_ID=""
+
+      REASON_LINE=""
+      REASON_LINE=$(printf '%s is flagged as a malicious package (%s) by OSSF Malicious Packages. Do not use this dependency.' \
+        "$GA" "$MAL_ID")
+      printf '%s\n' "$REASON_LINE" >> "$REASONS_FILE" || true
+
+      DECISION="deny"
+    fi
 
     # Find CRITICAL or HIGH vulns
     SEVS=""
