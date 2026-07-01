@@ -1,0 +1,43 @@
+name: maven-mcp live canary
+
+# Weekly live-network canary for the #322 Layer 1 malicious-package
+# detection (query_osv_batch's `malicious` flag / `_is_malicious_id`).
+#
+# A manually-invoked-only canary provides no ACTUAL ongoing protection -- the
+# exact convention-drift gap it exists to close persists until a human
+# remembers to run it. This workflow is what makes the mitigation real: it
+# re-queries the real, previously-confirmed-live coordinate
+# (io.github.leetcrunch:scribejava-core, MAL-2025-2552) against the live
+# api.osv.dev endpoint on a schedule and fails loud on drift.
+#
+# "Fails loud" here means: a failed scheduled workflow run is a red run in the
+# Actions tab, and GitHub's default notification settings email repo
+# watchers/the workflow's actor on scheduled-workflow failure -- no extra
+# notification integration is added; that is enough for this plan's scope
+# (see plan.md's Risks & Mitigations: a live break between weekly canary runs
+# degrades Layer 1 silently for up to a week regardless of notification
+# channel, and no stronger real-time mitigation was proposed as proportionate).
+on:
+  schedule:
+    # Weekly, offset from codeql.yml's Monday 05:37 UTC schedule to avoid
+    # both workflows landing in the same runner-queue window.
+    - cron: "22 4 * * 3"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  live-canary:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Query the live api.osv.dev endpoint for a known malicious coordinate
+        env:
+          MAVEN_MCP_LIVE_CANARY: "1"
+        run: python3 -m unittest discover -s plugins/maven-mcp/tests -p test_live_canary.py -v
