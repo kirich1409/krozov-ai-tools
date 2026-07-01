@@ -314,5 +314,216 @@ class TestDiscoverRepositories(unittest.TestCase):
         self.assertEqual(_urls(res["dependency"]), ["https://SETTINGS/r"])
 
 
+class TestParseMavenParent(unittest.TestCase):
+    """Tests for server._parse_maven_parent (#319)."""
+
+    def test_no_parent_returns_none(self):
+        self.assertIsNone(server._parse_maven_parent("<project></project>"))
+
+    def test_default_relative_path(self):
+        pom = (
+            "<project><parent><groupId>g</groupId><artifactId>a</artifactId>"
+            "<version>1.0</version></parent></project>"
+        )
+        parent = server._parse_maven_parent(pom)
+        self.assertEqual(parent["relativePath"], "../pom.xml")
+        self.assertEqual(parent["groupId"], "g")
+        self.assertEqual(parent["artifactId"], "a")
+        self.assertEqual(parent["version"], "1.0")
+
+    def test_explicit_relative_path(self):
+        pom = (
+            "<parent><groupId>g</groupId><artifactId>a</artifactId>"
+            "<relativePath>../../parent-pom</relativePath></parent>"
+        )
+        parent = server._parse_maven_parent(pom)
+        self.assertEqual(parent["relativePath"], "../../parent-pom")
+
+    def test_empty_relative_path_disables_local_lookup(self):
+        pom = (
+            "<parent><groupId>g</groupId><artifactId>a</artifactId>"
+            "<relativePath/></parent>"
+        )
+        parent = server._parse_maven_parent(pom)
+        self.assertIsNone(parent["relativePath"])
+
+    def test_missing_artifact_id_returns_none(self):
+        self.assertIsNone(server._parse_maven_parent("<parent><groupId>g</groupId></parent>"))
+
+
+class TestParseMavenActiveProfileRepos(unittest.TestCase):
+    """Tests for server._parse_maven_active_profile_repos (#319)."""
+
+    def test_active_by_default_profile_repos_included(self):
+        pom = (
+            "<project><profiles><profile>"
+            "<activation><activeByDefault>true</activeByDefault></activation>"
+            "<repositories><repository><url>https://active/r</url></repository></repositories>"
+            "</profile></profiles></project>"
+        )
+        deps, plugins = server._parse_maven_active_profile_repos(pom)
+        self.assertEqual(_urls(deps), ["https://active/r"])
+        self.assertEqual(plugins, [])
+
+    def test_non_active_profile_repos_excluded(self):
+        pom = (
+            "<project><profiles><profile>"
+            "<activation><activeByDefault>false</activeByDefault></activation>"
+            "<repositories><repository><url>https://inactive/r</url></repository></repositories>"
+            "</profile></profiles></project>"
+        )
+        deps, _plugins = server._parse_maven_active_profile_repos(pom)
+        self.assertEqual(deps, [])
+
+    def test_profile_without_activation_excluded(self):
+        pom = (
+            "<project><profiles><profile>"
+            "<repositories><repository><url>https://noact/r</url></repository></repositories>"
+            "</profile></profiles></project>"
+        )
+        deps, _plugins = server._parse_maven_active_profile_repos(pom)
+        self.assertEqual(deps, [])
+
+    def test_no_profiles_block(self):
+        deps, plugins = server._parse_maven_active_profile_repos("<project></project>")
+        self.assertEqual(deps, [])
+        self.assertEqual(plugins, [])
+
+
+class TestDiscoverRepositoriesParentAndProfiles(unittest.TestCase):
+    """Integration tests for server.discover_repositories' Maven parent-chain
+    and active-profile inheritance (#319)."""
+
+    def _write(self, root, rel_path, content):
+        full = os.path.join(root, rel_path)
+        os.makedirs(os.path.dirname(full), exist_ok=True)
+        with open(full, "w", encoding="utf-8") as fh:
+            fh.write(content)
+
+    def test_child_inherits_parent_repos_via_default_relative_path(self):
+        with tempfile.TemporaryDirectory() as root:
+            parent_pom = (
+                "<project><groupId>g</groupId><artifactId>parent</artifactId>"
+                "<version>1.0</version>"
+                "<repositories><repository><url>https://parent/r</url></repository></repositories>"
+                "</project>"
+            )
+            child_pom = (
+                "<project><parent><groupId>g</groupId><artifactId>parent</artifactId>"
+                "<version>1.0</version></parent>"
+                "<artifactId>child</artifactId></project>"
+            )
+            self._write(root, "pom.xml", parent_pom)
+            self._write(root, "child/pom.xml", child_pom)
+            res = server.discover_repositories(os.path.join(root, "child"))
+            self.assertIn("https://parent/r", _urls(res["dependency"]))
+
+    def test_two_level_parent_chain_grandparent_only(self):
+        with tempfile.TemporaryDirectory() as root:
+            grandparent_pom = (
+                "<project><groupId>g</groupId><artifactId>grandparent</artifactId>"
+                "<version>1.0</version>"
+                "<repositories><repository><url>https://grandparent/r</url></repository></repositories>"
+                "</project>"
+            )
+            parent_pom = (
+                "<project><parent><groupId>g</groupId><artifactId>grandparent</artifactId>"
+                "<version>1.0</version></parent>"
+                "<artifactId>parent</artifactId></project>"
+            )
+            child_pom = (
+                "<project><parent><groupId>g</groupId><artifactId>parent</artifactId>"
+                "<version>1.0</version></parent>"
+                "<artifactId>child</artifactId></project>"
+            )
+            self._write(root, "pom.xml", grandparent_pom)
+            self._write(root, "parent/pom.xml", parent_pom)
+            self._write(root, "parent/child/pom.xml", child_pom)
+            res = server.discover_repositories(os.path.join(root, "parent", "child"))
+            self.assertIn("https://grandparent/r", _urls(res["dependency"]))
+
+    def test_active_by_default_profile_repos_merged(self):
+        with tempfile.TemporaryDirectory() as root:
+            pom = (
+                "<project><groupId>g</groupId><artifactId>a</artifactId><version>1.0</version>"
+                "<profiles><profile>"
+                "<activation><activeByDefault>true</activeByDefault></activation>"
+                "<repositories><repository><url>https://profile/r</url></repository></repositories>"
+                "</profile></profiles>"
+                "</project>"
+            )
+            self._write(root, "pom.xml", pom)
+            res = server.discover_repositories(root)
+            self.assertIn("https://profile/r", _urls(res["dependency"]))
+
+    def test_non_active_profile_repos_not_discovered(self):
+        with tempfile.TemporaryDirectory() as root:
+            pom = (
+                "<project><groupId>g</groupId><artifactId>a</artifactId><version>1.0</version>"
+                "<profiles><profile>"
+                "<repositories><repository><url>https://profile/r</url></repository></repositories>"
+                "</profile></profiles>"
+                "</project>"
+            )
+            self._write(root, "pom.xml", pom)
+            res = server.discover_repositories(root)
+            self.assertNotIn("https://profile/r", _urls(res["dependency"]))
+
+    def test_parent_not_locally_resolvable_degrades_gracefully(self):
+        with tempfile.TemporaryDirectory() as root:
+            child_pom = (
+                "<project><parent><groupId>external.group</groupId>"
+                "<artifactId>external-parent</artifactId><version>2.0</version></parent>"
+                "<artifactId>child</artifactId></project>"
+            )
+            self._write(root, "pom.xml", child_pom)
+            res = server.discover_repositories(root)
+            self.assertEqual(res["dependency"], [])
+            self.assertEqual(res["plugin"], [])
+
+    def test_resolved_parent_coordinate_mismatch_is_rejected(self):
+        # A file sits exactly at the default relativePath ("../pom.xml"), but
+        # its own coordinate is a different artifact — e.g. an unrelated
+        # sibling module's leftover pom.xml. Its repos must NOT be trusted as
+        # the declared <parent>'s repos.
+        with tempfile.TemporaryDirectory() as root:
+            unrelated_pom = (
+                "<project><groupId>other.group</groupId><artifactId>unrelated</artifactId>"
+                "<version>9.9</version>"
+                "<repositories><repository><url>https://unrelated/r</url></repository></repositories>"
+                "</project>"
+            )
+            child_pom = (
+                "<project><parent><groupId>g</groupId><artifactId>parent</artifactId>"
+                "<version>1.0</version></parent>"
+                "<artifactId>child</artifactId></project>"
+            )
+            self._write(root, "pom.xml", unrelated_pom)
+            self._write(root, "child/pom.xml", child_pom)
+            res = server.discover_repositories(os.path.join(root, "child"))
+            self.assertNotIn("https://unrelated/r", _urls(res["dependency"]))
+
+    def test_cyclic_parent_chain_does_not_infinite_loop(self):
+        with tempfile.TemporaryDirectory() as root:
+            # a/pom.xml declares b/pom.xml as parent via relativePath, and
+            # b/pom.xml declares a/pom.xml as parent right back — a cycle.
+            a_pom = (
+                "<project><parent><groupId>g</groupId><artifactId>b</artifactId>"
+                "<version>1.0</version><relativePath>../b/pom.xml</relativePath></parent>"
+                "<groupId>g</groupId><artifactId>a</artifactId><version>1.0</version></project>"
+            )
+            b_pom = (
+                "<project><parent><groupId>g</groupId><artifactId>a</artifactId>"
+                "<version>1.0</version><relativePath>../a/pom.xml</relativePath></parent>"
+                "<groupId>g</groupId><artifactId>b</artifactId><version>1.0</version></project>"
+            )
+            self._write(root, "a/pom.xml", a_pom)
+            self._write(root, "b/pom.xml", b_pom)
+            # Must return promptly (depth-capped), not hang.
+            res = server.discover_repositories(os.path.join(root, "a"))
+            self.assertEqual(res["dependency"], [])
+            self.assertEqual(res["plugin"], [])
+
+
 if __name__ == "__main__":
     unittest.main()

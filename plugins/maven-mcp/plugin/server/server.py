@@ -1838,6 +1838,155 @@ def _read_build_file(path: str) -> str:
         return ""
 
 
+# Maven's own default when a <parent> declares no <relativePath> (#319).
+_DEFAULT_PARENT_RELATIVE_PATH = "../pom.xml"
+# Nesting depth cap for the local parent-POM chain — guards against a
+# cyclic/malformed <parent> reference looping forever (#319).
+_MAX_PARENT_CHAIN_DEPTH = 5
+
+
+def _parse_maven_parent(pom_xml: str) -> Optional[Dict[str, Optional[str]]]:
+    """Extract the `<parent>` coordinate (groupId/artifactId/version) and its
+    `relativePath` from a POM. Returns None when there is no `<parent>` block.
+    `relativePath` defaults to Maven's own `../pom.xml` when the tag is absent;
+    an explicit but EMPTY `<relativePath/>` means "do not resolve locally, look
+    the parent up in the repositories" (Maven convention) and is reported as
+    `relativePath: None`."""
+    xml = _strip_xml_comments(pom_xml)
+    m = re.search(r"<parent>([\s\S]*?)</parent>", xml)
+    if not m:
+        return None
+    block = m.group(1)
+    gid_m = re.search(r"<groupId>([^<]+)</groupId>", block)
+    aid_m = re.search(r"<artifactId>([^<]+)</artifactId>", block)
+    if not gid_m or not aid_m:
+        return None
+    ver_m = re.search(r"<version>([^<]+)</version>", block)
+    # Matches both the self-closing `<relativePath/>` form (no capture group
+    # participates -> group(1) is None) and `<relativePath>...</relativePath>`
+    # (possibly empty). Maven treats both an explicit empty value and a
+    # self-closed tag the same way: "skip local lookup".
+    rel_m = re.search(r"<relativePath\s*/>|<relativePath>([^<]*)</relativePath>", block)
+    if rel_m is None:
+        relative_path: Optional[str] = _DEFAULT_PARENT_RELATIVE_PATH
+    else:
+        relative_path = (rel_m.group(1) or "").strip() or None
+    return {
+        "groupId": gid_m.group(1).strip(),
+        "artifactId": aid_m.group(1).strip(),
+        "version": ver_m.group(1).strip() if ver_m else None,
+        "relativePath": relative_path,
+    }
+
+
+def _parse_maven_project_coords(pom_xml: str) -> Dict[str, Optional[str]]:
+    """Extract a POM's OWN groupId/artifactId/version — i.e. not its parent's,
+    and not one nested inside <dependencies>/<build>/<profiles> (which carry
+    their own groupId/artifactId/version tags that would otherwise be the
+    first match). Container blocks that can shadow the project's own
+    coordinate are stripped before searching. Used to verify a locally
+    resolved parent POM's identity actually matches the child's `<parent>`
+    declaration (#319)."""
+    xml = _strip_xml_comments(pom_xml)
+    for tag in ("parent", "dependencies", "dependencyManagement", "build", "profiles"):
+        xml = re.sub(r"<" + tag + r">[\s\S]*?</" + tag + r">", "", xml)
+    gid_m = re.search(r"<groupId>([^<]+)</groupId>", xml)
+    aid_m = re.search(r"<artifactId>([^<]+)</artifactId>", xml)
+    ver_m = re.search(r"<version>([^<]+)</version>", xml)
+    return {
+        "groupId": gid_m.group(1).strip() if gid_m else None,
+        "artifactId": aid_m.group(1).strip() if aid_m else None,
+        "version": ver_m.group(1).strip() if ver_m else None,
+    }
+
+
+def _parse_maven_active_profile_repos(
+    pom_xml: str,
+) -> Tuple[List[Dict[str, str]], List[Dict[str, str]]]:
+    """Extract `<repositories>`/`<pluginRepositories>` declared inside
+    `<profiles><profile>` blocks whose `<activation><activeByDefault>true</...>`
+    is set (#319). Only `activeByDefault` is evaluated — property/JDK/OS
+    activation conditions are a much larger scope and are deferred (see
+    plugins/maven-mcp/CLAUDE.md Documented limitations)."""
+    xml = _strip_xml_comments(pom_xml)
+    profiles_m = re.search(r"<profiles>([\s\S]*?)</profiles>", xml)
+    if not profiles_m:
+        return [], []
+    dep_entries: List[Dict[str, str]] = []
+    plugin_entries: List[Dict[str, str]] = []
+    for pm in re.finditer(r"<profile>([\s\S]*?)</profile>", profiles_m.group(1)):
+        block = pm.group(1)
+        activation_m = re.search(r"<activation>([\s\S]*?)</activation>", block)
+        if not activation_m:
+            continue
+        if not re.search(r"<activeByDefault>\s*true\s*</activeByDefault>", activation_m.group(1)):
+            continue
+        deps, plugins = _parse_maven_repos(block)
+        dep_entries.extend(deps)
+        plugin_entries.extend(plugins)
+    return dep_entries, plugin_entries
+
+
+def _resolve_parent_chain_repos(
+    pom_path: str,
+) -> Tuple[List[Dict[str, str]], List[Dict[str, str]]]:
+    """Walk the LOCAL parent-POM chain (child -> parent -> grandparent, ...)
+    starting from `pom_path`, merging `<repositories>`/`<pluginRepositories>`
+    declared in each locally-resolvable parent POM (#319). A parent is
+    resolved from the filesystem only — this is the common multi-module
+    reactor-build case and needs no network. Stops (gracefully, no raise) as
+    soon as a hop is not locally resolvable: no `<parent>`, no/empty
+    `relativePath`, the resolved path missing, or its own coordinate not
+    matching the child's `<parent>` declaration. Depth-capped at
+    `_MAX_PARENT_CHAIN_DEPTH` and cycle-guarded via realpath, so a
+    cyclic/malformed `<parent>` reference cannot loop forever."""
+    dep_entries: List[Dict[str, str]] = []
+    plugin_entries: List[Dict[str, str]] = []
+    current_path = pom_path
+    visited = set()
+    for _ in range(_MAX_PARENT_CHAIN_DEPTH):
+        real = os.path.realpath(current_path)
+        if real in visited:
+            break
+        visited.add(real)
+        content = _read_build_file(current_path)
+        if not content:
+            break
+        parent = _parse_maven_parent(content)
+        if not parent or not parent["relativePath"]:
+            break
+        parent_path = os.path.normpath(
+            os.path.join(os.path.dirname(current_path), parent["relativePath"])
+        )
+        if os.path.isdir(parent_path):
+            parent_path = os.path.join(parent_path, "pom.xml")
+        if not os.path.exists(parent_path):
+            break  # not locally resolvable — network fetch is out of scope here (#319)
+        parent_content = _read_build_file(parent_path)
+        if not parent_content:
+            break
+        coords = _parse_maven_project_coords(parent_content)
+        if coords["artifactId"] and coords["artifactId"] != parent["artifactId"]:
+            break  # resolved file's own identity doesn't match the <parent> reference
+        if coords["groupId"] and parent["groupId"] and coords["groupId"] != parent["groupId"]:
+            break
+        if coords["version"] and parent["version"] and coords["version"] != parent["version"]:
+            break
+        # Mirrors the local-pom guard in discover_repositories: _parse_maven_repos
+        # regex-searches for the FIRST <repositories>/<pluginRepositories> block
+        # anywhere in the content, unaware of <profiles> nesting, so a parent POM
+        # that also has profiles must have them stripped first — otherwise an
+        # (in)active profile's repos could leak in or shadow the parent's own
+        # top-level ones. A parent's own ACTIVE profile repos are not collected
+        # while walking the chain — documented as a residual gap (#319).
+        parent_content_sans_profiles = re.sub(r"<profiles>[\s\S]*?</profiles>", "", parent_content)
+        deps, plugins = _parse_maven_repos(parent_content_sans_profiles)
+        dep_entries.extend(deps)
+        plugin_entries.extend(plugins)
+        current_path = parent_path
+    return dep_entries, plugin_entries
+
+
 def discover_repositories(project_root: str) -> Dict[str, List[Dict[str, str]]]:
     """Discover project-declared repositories, scoped into plugin vs dependency.
 
@@ -1908,9 +2057,21 @@ def discover_repositories(project_root: str) -> Dict[str, List[Dict[str, str]]]:
     else:
         pom_path = os.path.join(project_root, "pom.xml")
         if os.path.exists(pom_path):
-            deps, plugins = _parse_maven_repos(_read_build_file(pom_path))
-            result["dependency"] = _dedup_repos(deps)
-            result["plugin"] = _dedup_repos(plugins)
+            content = _read_build_file(pom_path)
+            # `_parse_maven_repos` regex-searches for the FIRST `<repositories>`
+            # anywhere in the content, unaware of `<profiles>` nesting — strip
+            # `<profiles>` first so a profile's repos (active or not) are only
+            # ever picked up via `_parse_maven_active_profile_repos` below,
+            # never double-counted (or wrongly included when inactive) here.
+            content_sans_profiles = re.sub(r"<profiles>[\s\S]*?</profiles>", "", content)
+            deps, plugins = _parse_maven_repos(content_sans_profiles)
+            # Repos declared in the local pom.xml only are frequently empty for
+            # a child module — real Maven projects commonly declare them in the
+            # parent POM and/or an active profile instead (#319).
+            profile_deps, profile_plugins = _parse_maven_active_profile_repos(content)
+            parent_deps, parent_plugins = _resolve_parent_chain_repos(pom_path)
+            result["dependency"] = _dedup_repos(deps + profile_deps + parent_deps)
+            result["plugin"] = _dedup_repos(plugins + profile_plugins + parent_plugins)
 
     for scope, repos in result.items():
         for entry in repos:
