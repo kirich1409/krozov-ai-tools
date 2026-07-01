@@ -95,6 +95,73 @@ class TestParseMetadataXml(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
+# extract_relocation_from_pom (#284)
+# ---------------------------------------------------------------------------
+
+class TestExtractRelocationFromPom(unittest.TestCase):
+    """Tests for server.extract_relocation_from_pom."""
+
+    def test_no_relocation_block_returns_none(self):
+        pom = "<project><groupId>g</groupId><artifactId>a</artifactId><version>1.0</version></project>"
+        self.assertIsNone(server.extract_relocation_from_pom(pom, "g", "a", "1.0"))
+
+    def test_full_relocation_returns_new_gav(self):
+        pom = (
+            "<project><distributionManagement><relocation>"
+            "<groupId>new.group</groupId><artifactId>new-artifact</artifactId>"
+            "<version>2.0</version>"
+            "</relocation></distributionManagement></project>"
+        )
+        result = server.extract_relocation_from_pom(pom, "old.group", "old-artifact", "1.0")
+        self.assertEqual(result, {"groupId": "new.group", "artifactId": "new-artifact", "version": "2.0"})
+
+    def test_partial_relocation_fills_in_original_group_and_version(self):
+        # Only <artifactId> given — Maven's relocation spec treats the absent
+        # groupId/version as "unchanged from the original coordinate".
+        pom = (
+            "<project><distributionManagement><relocation>"
+            "<artifactId>new-artifact</artifactId>"
+            "</relocation></distributionManagement></project>"
+        )
+        result = server.extract_relocation_from_pom(pom, "old.group", "old-artifact", "1.0")
+        self.assertEqual(result, {"groupId": "old.group", "artifactId": "new-artifact", "version": "1.0"})
+
+    def test_relocation_with_only_message_reports_original_gav(self):
+        # A <relocation> block can carry only a human-readable <message> — all
+        # three coordinate fields fall back to the original.
+        pom = (
+            "<project><distributionManagement><relocation>"
+            "<message>moved permanently</message>"
+            "</relocation></distributionManagement></project>"
+        )
+        result = server.extract_relocation_from_pom(pom, "old.group", "old-artifact", "1.0")
+        self.assertEqual(result, {"groupId": "old.group", "artifactId": "old-artifact", "version": "1.0"})
+
+    def test_relocation_inside_xml_comment_ignored(self):
+        pom = (
+            "<project><distributionManagement>"
+            "<!-- <relocation><groupId>new.group</groupId></relocation> -->"
+            "</distributionManagement></project>"
+        )
+        self.assertIsNone(server.extract_relocation_from_pom(pom, "g", "a", "1.0"))
+
+    def test_shade_plugin_relocations_outside_distribution_management_ignored(self):
+        # Maven Shade Plugin's <configuration><relocations><relocation> is an
+        # unrelated concept (package relocation for shading, not artifact-
+        # coordinate relocation) — a POM using it with no
+        # <distributionManagement> block must not false-positive.
+        pom = (
+            "<project><build><plugins><plugin>"
+            "<artifactId>maven-shade-plugin</artifactId>"
+            "<configuration><relocations><relocation>"
+            "<pattern>org.old</pattern><shadedPattern>org.shaded.old</shadedPattern>"
+            "</relocation></relocations></configuration>"
+            "</plugin></plugins></build></project>"
+        )
+        self.assertIsNone(server.extract_relocation_from_pom(pom, "g", "a", "1.0"))
+
+
+# ---------------------------------------------------------------------------
 # _parse_gradle_deps
 # Mirrors: src/dependencies/__tests__/gradle-deps-parser.test.ts
 # NOTE: Python return dicts have no "source" key (TS includes it).
@@ -839,6 +906,58 @@ class TestDetectBuildSystem(unittest.TestCase):
 # scan_project — Gradle (end-to-end via temp_project)
 # Mirrors: src/dependencies/__tests__/scan.test.ts (Gradle sections)
 # ---------------------------------------------------------------------------
+
+class TestScanProjectDeadRepositoryHints(unittest.TestCase):
+    """Tests for server.scan_project()'s deadRepositoryHints signal (#284):
+    jcenter() has been read-only since 2021 and fully sunset 15 Aug 2024."""
+
+    def test_root_build_file_jcenter_flagged(self):
+        files = {"build.gradle.kts": "repositories {\n    jcenter()\n    mavenCentral()\n}"}
+        with temp_project(files) as root:
+            result = server.scan_project(root)
+        hints = result["deadRepositoryHints"]
+        self.assertEqual(len(hints), 1)
+        self.assertEqual(hints[0]["repository"], "jcenter")
+        self.assertEqual(hints[0]["file"], "build.gradle.kts")
+        self.assertIsNone(hints[0]["module"])
+
+    def test_settings_file_jcenter_flagged(self):
+        files = {
+            "settings.gradle.kts": (
+                "dependencyResolutionManagement { repositories { jcenter() } }"
+            ),
+        }
+        with temp_project(files) as root:
+            result = server.scan_project(root)
+        hints = result["deadRepositoryHints"]
+        self.assertEqual(len(hints), 1)
+        self.assertEqual(hints[0]["repository"], "jcenter")
+        self.assertEqual(hints[0]["file"], "settings.gradle.kts")
+
+    def test_module_build_file_jcenter_flagged_with_module_label(self):
+        files = {
+            "settings.gradle.kts": 'include(":app")',
+            "app/build.gradle.kts": "repositories {\n    jcenter()\n}",
+        }
+        with temp_project(files) as root:
+            result = server.scan_project(root)
+        hints = result["deadRepositoryHints"]
+        self.assertEqual(len(hints), 1)
+        self.assertEqual(hints[0]["module"], ":app")
+
+    def test_no_jcenter_not_flagged(self):
+        files = {"build.gradle.kts": "repositories {\n    mavenCentral()\n    google()\n}"}
+        with temp_project(files) as root:
+            result = server.scan_project(root)
+        self.assertEqual(result["deadRepositoryHints"], [])
+
+    def test_flatten_scan_result_preserves_dead_repository_hints(self):
+        files = {"build.gradle.kts": "repositories {\n    jcenter()\n}"}
+        with temp_project(files) as root:
+            flattened = server.flatten_scan_result(server.scan_project(root))
+        self.assertEqual(len(flattened["deadRepositoryHints"]), 1)
+        self.assertEqual(flattened["deadRepositoryHints"][0]["repository"], "jcenter")
+
 
 class TestScanProjectGradle(unittest.TestCase):
     """End-to-end tests for server.scan_project() on Gradle projects."""

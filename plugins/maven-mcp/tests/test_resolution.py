@@ -617,6 +617,91 @@ class TestProvenanceReporting(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
+# #284 — relocation detection wired onto handle_get_latest_version /
+# handle_check_version_exists. Both handlers now do ONE extra cached POM fetch
+# (TTL_POM, 7 days) after resolving the version, on top of the metadata fetch
+# they already made — so each test configures a project with a single declared
+# repo (no public-fallback append) and exactly two urlopen responses in order:
+# metadata, then POM.
+# ---------------------------------------------------------------------------
+def _pom(relocation_gav=None):
+    """A minimal POM, optionally carrying a <distributionManagement><relocation>
+    block. ``relocation_gav`` is a dict with any of groupId/artifactId/version."""
+    if relocation_gav is None:
+        return b"<project><groupId>g</groupId><artifactId>a</artifactId></project>"
+    fields = "".join(f"<{k}>{v}</{k}>" for k, v in relocation_gav.items())
+    return (
+        f"<project><distributionManagement><relocation>{fields}"
+        "</relocation></distributionManagement></project>"
+    ).encode("utf-8")
+
+
+class TestRelocationDetection(unittest.TestCase):
+    def test_get_latest_version_reports_relocated_to(self):
+        files = {"settings.gradle.kts": _settings('maven { url = uri("%s") }' % CUSTOM_URL)}
+        responses = [
+            (200, _meta(["1.0.0"])),
+            (200, _pom({"groupId": "new.group", "artifactId": "new-artifact", "version": "9.0.0"})),
+        ]
+        with temp_project(files) as root:
+            with unittest.mock.patch(
+                "urllib.request.urlopen", side_effect=mock_urlopen(responses)
+            ):
+                out = server.handle_get_latest_version({
+                    "groupId": "old.group", "artifactId": "old-artifact", "projectPath": root,
+                })
+        self.assertEqual(
+            out["relocatedTo"],
+            {"groupId": "new.group", "artifactId": "new-artifact", "version": "9.0.0"},
+        )
+
+    def test_get_latest_version_no_relocation_block_omits_field(self):
+        files = {"settings.gradle.kts": _settings('maven { url = uri("%s") }' % CUSTOM_URL)}
+        responses = [(200, _meta(["1.0.0"])), (200, _pom())]
+        with temp_project(files) as root:
+            with unittest.mock.patch(
+                "urllib.request.urlopen", side_effect=mock_urlopen(responses)
+            ):
+                out = server.handle_get_latest_version({
+                    "groupId": "com.acme", "artifactId": "lib", "projectPath": root,
+                })
+        self.assertNotIn("relocatedTo", out)
+
+    def test_check_version_exists_reports_relocated_to(self):
+        files = {"settings.gradle.kts": _settings('maven { url = uri("%s") }' % CUSTOM_URL)}
+        responses = [
+            (200, _meta(["1.0.0"])),
+            (200, _pom({"artifactId": "new-artifact"})),  # partial: groupId/version carry over
+        ]
+        with temp_project(files) as root:
+            with unittest.mock.patch(
+                "urllib.request.urlopen", side_effect=mock_urlopen(responses)
+            ):
+                out = server.handle_check_version_exists({
+                    "groupId": "old.group", "artifactId": "old-artifact", "version": "1.0.0",
+                    "projectPath": root,
+                })
+        self.assertEqual(
+            out["relocatedTo"],
+            {"groupId": "old.group", "artifactId": "new-artifact", "version": "1.0.0"},
+        )
+
+    def test_check_version_exists_no_relocation_block_omits_field(self):
+        files = {"settings.gradle.kts": _settings('maven { url = uri("%s") }' % CUSTOM_URL)}
+        responses = [(200, _meta(["1.0.0"])), (200, _pom())]
+        with temp_project(files) as root:
+            with unittest.mock.patch(
+                "urllib.request.urlopen", side_effect=mock_urlopen(responses)
+            ):
+                out = server.handle_check_version_exists({
+                    "groupId": "com.acme", "artifactId": "lib", "version": "1.0.0",
+                    "projectPath": root,
+                })
+        self.assertTrue(out["exists"])
+        self.assertNotIn("relocatedTo", out)
+
+
+# ---------------------------------------------------------------------------
 # Security review (#317 finding 2) — userinfo redaction
 # ---------------------------------------------------------------------------
 # A hardcoded `url = "https://user:pass@host/repo"` is a discouraged but real
