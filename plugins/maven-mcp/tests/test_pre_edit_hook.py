@@ -290,7 +290,8 @@ def _parse_decision(stdout_bytes):
 # Canned payload builders
 # ---------------------------------------------------------------------------
 
-def _verify_entry(status, group_id, artifact_id, hallucination=False, suggestions=None):
+def _verify_entry(status, group_id, artifact_id, hallucination=False, suggestions=None,
+                   typosquat_risk=None):
     """Build one verify_coordinates result entry."""
     entry = {
         "groupId": group_id,
@@ -301,6 +302,8 @@ def _verify_entry(status, group_id, artifact_id, hallucination=False, suggestion
     }
     if suggestions is not None:
         entry["suggestions"] = suggestions
+    if typosquat_risk is not None:
+        entry["typosquatRisk"] = typosquat_risk
     return entry
 
 
@@ -734,6 +737,169 @@ class AskCasesTest(unittest.TestCase):
         ])
         self.assertIsNotNone(decision)
         self.assertNotEqual(decision["hookSpecificOutput"]["permissionDecision"], "deny")
+
+
+@_require_jq_and_timeout()
+class TyposquatAndMaliciousTest(unittest.TestCase):
+    """#322: malicious-vuln deny + typosquatRisk ask + cross-coordinate/ordering
+    precedence guarantees."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def test_malicious_vuln_denies_no_severity_field(self):
+        """exists + malicious:true vuln (no severity) → deny."""
+        _make_fixture(self.tmp, {
+            1: {"results": [_verify_entry("exists", "io.github.leetcrunch", "scribejava-core")]},
+            2: {"results": [_vuln_entry("io.github.leetcrunch", "scribejava-core", "1.0.0", [
+                {"id": "MAL-2025-2552", "malicious": True},
+            ])]},
+        })
+        proc = _run_hook(self.tmp, _edit_stdin(
+            "build.gradle", 'implementation "io.github.leetcrunch:scribejava-core:1.0.0"'))
+        self.assertEqual(proc.returncode, 0)
+        decision = _parse_decision(proc.stdout)
+        self.assertIsNotNone(decision)
+        ho = decision["hookSpecificOutput"]
+        self.assertEqual(ho["permissionDecision"], "deny")
+        self.assertIn("MAL-2025-2552", ho["permissionDecisionReason"])
+
+    def test_typosquat_signal_asks_no_malicious_vuln(self):
+        """exists + typosquatRisk.signal:true (no malicious vuln) → ask."""
+        entry = _verify_entry(
+            "exists", "com.evil", "popularlib",
+            typosquat_risk={"signal": True, "reasons": ["low_version_count", "group_mismatch"],
+                            "versionCount": 1,
+                            "popularMatch": {"groupId": "com.real", "artifactId": "popularlib",
+                                             "versionCount": 200}},
+        )
+        _make_fixture(self.tmp, {
+            1: {"results": [entry]},
+            2: {"results": [_vuln_entry("com.evil", "popularlib", "1.0.0", [])]},
+        })
+        proc = _run_hook(self.tmp, _edit_stdin(
+            "build.gradle", 'implementation "com.evil:popularlib:1.0.0"'))
+        self.assertEqual(proc.returncode, 0)
+        decision = _parse_decision(proc.stdout)
+        self.assertIsNotNone(decision)
+        ho = decision["hookSpecificOutput"]
+        self.assertEqual(ho["permissionDecision"], "ask")
+        self.assertIn("com.evil:popularlib", ho["permissionDecisionReason"])
+        self.assertIn("com.real:popularlib", ho["permissionDecisionReason"])
+
+    def test_both_malicious_and_typosquat_on_same_coordinate_deny_wins(self):
+        """exists + malicious vuln AND typosquatRisk.signal on the SAME coordinate
+        → deny wins (single decision emitted)."""
+        entry = _verify_entry(
+            "exists", "com.evil", "popularlib",
+            typosquat_risk={"signal": True, "reasons": ["low_version_count"], "versionCount": 1},
+        )
+        _make_fixture(self.tmp, {
+            1: {"results": [entry]},
+            2: {"results": [_vuln_entry("com.evil", "popularlib", "1.0.0", [
+                {"id": "MAL-2025-9999", "malicious": True},
+            ])]},
+        })
+        proc = _run_hook(self.tmp, _edit_stdin(
+            "build.gradle", 'implementation "com.evil:popularlib:1.0.0"'))
+        self.assertEqual(proc.returncode, 0)
+        decision = _parse_decision(proc.stdout)
+        self.assertIsNotNone(decision)
+        self.assertEqual(decision["hookSpecificOutput"]["permissionDecision"], "deny")
+
+    def test_cross_coordinate_precedence_deny_beats_later_ask(self):
+        """Batch of TWO coordinates: A is absent+hallucination (deny), B (a
+        DIFFERENT coordinate in the same run) is exists+typosquatRisk.signal
+        (would-be ask) → overall decision stays deny."""
+        coord_a = _verify_entry("absent", "com.fake", "hallucinated", hallucination=True)
+        coord_b = _verify_entry(
+            "exists", "com.evil", "popularlib",
+            typosquat_risk={"signal": True, "reasons": ["low_version_count"], "versionCount": 1},
+        )
+        _make_fixture(self.tmp, {1: {"results": [coord_a, coord_b]}})
+        proc = _run_hook(
+            self.tmp,
+            _edit_stdin(
+                "build.gradle",
+                'implementation "com.fake:hallucinated:1.0"\n'
+                'implementation "com.evil:popularlib:2.0"\n',
+            ),
+        )
+        self.assertEqual(proc.returncode, 0)
+        decision = _parse_decision(proc.stdout)
+        self.assertIsNotNone(decision)
+        self.assertEqual(
+            decision["hookSpecificOutput"]["permissionDecision"], "deny",
+            "an earlier coordinate's deny must not be downgraded by a later coordinate's ask",
+        )
+
+    def test_fabricated_high_severity_processed_before_malicious_still_denies(self):
+        """A fabricated CRITICAL/HIGH severity (stub-injected -- unreachable live
+        today per the hydration gap, but exercisable via the stub), whatever
+        loop-order it's processed in relative to the malicious-vuln check,
+        still ends in deny (locks in the ordering guarantee ahead of a future
+        hydration-gap fix)."""
+        _make_fixture(self.tmp, {
+            1: {"results": [_verify_entry("exists", "org.vuln", "lib")]},
+            2: {"results": [_vuln_entry("org.vuln", "lib", "1.0", [
+                {"id": "CVE-2024-1111", "severity": "CRITICAL", "fixedVersion": "2.0.0"},
+                {"id": "MAL-2025-8888", "malicious": True},
+            ])]},
+        })
+        proc = _run_hook(self.tmp, _edit_stdin("build.gradle",
+                                               'implementation "org.vuln:lib:1.0"'))
+        self.assertEqual(proc.returncode, 0)
+        decision = _parse_decision(proc.stdout)
+        self.assertIsNotNone(decision)
+        self.assertEqual(decision["hookSpecificOutput"]["permissionDecision"], "deny")
+
+    def test_exists_neither_signal_allows(self):
+        """exists + neither malicious vuln nor typosquatRisk.signal → allow."""
+        entry = _verify_entry(
+            "exists", "com.example", "lib",
+            typosquat_risk={"signal": False, "reasons": [], "versionCount": 50},
+        )
+        _make_fixture(self.tmp, {
+            1: {"results": [entry]},
+            2: {"results": [_vuln_entry("com.example", "lib", "1.0", [])]},
+        })
+        proc = _run_hook(self.tmp, _edit_stdin("build.gradle",
+                                               'implementation "com.example:lib:1.0"'))
+        self.assertEqual(proc.returncode, 0)
+        self.assertIsNone(_parse_decision(proc.stdout))
+        self.assertGreaterEqual(len(_stub_args(self.tmp)), 1)
+
+    def test_popular_match_charset_filtered_in_reason(self):
+        """popularMatch.groupId/artifactId are charset-filtered identically to
+        suggestions before entering the reason text."""
+        entry = _verify_entry(
+            "exists", "com.evil", "popularlib",
+            typosquat_risk={
+                "signal": True, "reasons": ["low_version_count", "group_mismatch"],
+                "versionCount": 1,
+                "popularMatch": {"groupId": "com.real;rm -rf", "artifactId": "pop$(whoami)ular",
+                                 "versionCount": 200},
+            },
+        )
+        _make_fixture(self.tmp, {
+            1: {"results": [entry]},
+            2: {"results": [_vuln_entry("com.evil", "popularlib", "1.0.0", [])]},
+        })
+        proc = _run_hook(self.tmp, _edit_stdin(
+            "build.gradle", 'implementation "com.evil:popularlib:1.0.0"'))
+        decision = _parse_decision(proc.stdout)
+        self.assertIsNotNone(decision)
+        reason = decision["hookSpecificOutput"]["permissionDecisionReason"]
+        # The injected charset-invalid content must not survive into the
+        # reason verbatim (";" and "$(" here come from the crafted
+        # popularMatch fields, not from the hook's own static message text).
+        self.assertNotIn("com.real;rm -rf", reason)
+        self.assertNotIn("pop$(whoami)ular", reason)
+        self.assertNotIn("$(", reason)
+        self.assertNotIn("rm -rf", reason)
 
 
 @_require_jq()

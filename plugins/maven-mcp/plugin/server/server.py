@@ -1312,6 +1312,17 @@ def _extract_url(vuln: Dict) -> str:
     return f"https://osv.dev/vulnerability/{vuln['id']}"
 
 
+def _is_malicious_id(vuln_id: str) -> bool:
+    """OSSF Malicious Packages reports ingested into OSV.dev use the ``MAL-``
+    id prefix (documented OSSF/OSV convention, empirically confirmed live
+    against a real Maven typosquat report -- see plan.md#322 Verification &
+    Sources). This is a best-effort CONVENTION, not a schema-guaranteed
+    contract: ``False`` means "not currently flagged under this convention",
+    never "verified non-malicious" (mirrors how `likelyHallucination`'s "never
+    means safe" caveat travels with that field)."""
+    return vuln_id.startswith("MAL-")
+
+
 def query_osv_batch(deps: List[Dict]) -> List[Dict]:
     """deps: list of {groupId, artifactId, version}. Returns list of {groupId, artifactId, version, vulnerabilities}."""
     if not deps:
@@ -1337,6 +1348,7 @@ def query_osv_batch(deps: List[Dict]) -> List[Dict]:
                     "summary": v.get("summary", ""),
                     "url": _extract_url(v),
                 }
+                vuln_info["malicious"] = _is_malicious_id(v.get("id", ""))
                 sev = _extract_severity(v)
                 if sev:
                     vuln_info["severity"] = sev
@@ -1373,6 +1385,41 @@ def search_maven_central(query: str, limit: int = 10, use_cache: bool = True) ->
         ]
     except Exception:
         return []
+
+
+def _fetch_gav_timestamp(group_id: str, artifact_id: str, version: str) -> Optional[int]:
+    """Fetch the Solr ``gav``-core doc's ``timestamp`` (epoch millis) for one
+    exact (groupId, artifactId, version) -- used only as a gated, best-effort
+    "recent first-publish" enrichment for `typosquatRisk` (#322).
+
+    NOT a call site against `search_maven_central()`: that helper hard-codes an
+    implicit-default-core request and its response transform only extracts
+    g/a/latestVersion/versionCount -- it has no `core` param and would silently
+    drop `timestamp` even if Solr returned it. This is different request shape
+    against the same host, hence a new function.
+
+    All three interpolated values go through `_solr_escape` -- `verify_coordinates`
+    is a directly callable MCP tool (not gated by the hook's own charset
+    pre-filter), and Maven Central version strings are not guaranteed
+    alnum-only, so missing escaping here would be a Solr query-syntax
+    injection/match-broadening risk. Returns None on any non-200/parse failure
+    (silent degrade, never raise).
+    """
+    query = 'g:"%s" AND a:"%s" AND v:"%s"' % (
+        _solr_escape(group_id), _solr_escape(artifact_id), _solr_escape(version),
+    )
+    try:
+        url = f"{SEARCH_API}?q={urllib.parse.quote(query)}&core=gav&rows=1&wt=json"
+        status, body = http_get_cached(url, TTL_SEARCH)
+        if status != 200:
+            return None
+        data = json.loads(body)
+        docs = data.get("response", {}).get("docs", [])
+        if not docs:
+            return None
+        return docs[0].get("timestamp")
+    except Exception:
+        return None
 
 
 # ---------------------------------------------------------------------------
@@ -2966,7 +3013,16 @@ def handle_audit_project_dependencies(args: Dict) -> Any:
         for i, key in enumerate(unique_keys):
             targets = gav_map.get(key, [])
             mapped_vulns = [
-                {"id": v["id"], "severity": v.get("severity"), "fixedVersion": v.get("fixedVersion")}
+                {
+                    "id": v["id"],
+                    "severity": v.get("severity"),
+                    "fixedVersion": v.get("fixedVersion"),
+                    # Forwarded explicitly (#322): this dict is a narrower
+                    # reconstruction of query_osv_batch's vuln_info, not a
+                    # pass-through, so a new vuln_info field does not reach here
+                    # for free.
+                    "malicious": v.get("malicious", False),
+                }
                 for v in vuln_results[i].get("vulnerabilities", [])
             ]
             resolved = resolved_impls.get(key)
@@ -3023,17 +3079,153 @@ def _suggestion_rank(suggestion: Dict[str, Any]) -> float:
     return suggestion["score"] - _LOW_POPULARITY_PENALTY / (version_count + 1)
 
 
+# ---------------------------------------------------------------------------
+# typosquatRisk (heuristic layer 2 on top of an EXISTING coordinate, #322)
+# ---------------------------------------------------------------------------
+
+# Detection-calibration constants: proposed starting points, NOT proven against
+# a labeled dataset -- same caveat as HALLUCINATION_THRESHOLD above when it was
+# first introduced. Calibratable, not inlined.
+LOW_VERSION_COUNT_THRESHOLD = 2
+GROUP_MISMATCH_SIMILARITY = 0.95
+GROUP_MISMATCH_POPULARITY_RATIO = 5
+RECENT_PUBLISH_DAYS_THRESHOLD = 30
+
+# Operational load-bound (NOT a detection threshold, so it does not carry the
+# same labeled-dataset caveat as the four constants above). Caps gated Solr
+# calls (group-mismatch + recent-first-publish combined) across ONE
+# handle_verify_coordinates batch invocation: gating behind low_version_count
+# narrows AVERAGE load but a cold-cache/large-batch run where MANY coordinates
+# simultaneously qualify is not bounded by gating alone.
+MAX_GATED_SOLR_CALLS_PER_BATCH = 20
+
+
+def _compute_typosquat_risk(
+    group_id: str,
+    artifact_id: str,
+    version_count: int,
+    versions: List[str],
+    gated_calls: List[int],
+) -> Dict[str, Any]:
+    """Heuristic typosquat/popularity signal for an ``exists`` coordinate.
+
+    A candidate to verify, not a verdict -- false-positive-prone by
+    construction (a legitimately new/niche library also has a low version
+    count). Framed as cautiously as `suggestions`. Never folded into
+    `likelyHallucination`, which stays absent-only (separate field, separate
+    computation, no shared code path).
+
+    ``gated_calls`` is a per-batch counter (a 1-element list used as a mutable
+    cell) SHARED across every coordinate in one `handle_verify_coordinates`
+    call. Callers MUST pass a list created FRESH at the top of that call, never
+    a module-level global: server.py runs as a long-lived stdio process, so a
+    global counter would accumulate gated-call usage across the entire process
+    lifetime instead of resetting per batch.
+
+    Coverage boundary: `group_mismatch` targets identical/near-identical-name
+    impersonation (`GROUP_MISMATCH_SIMILARITY`, near-identical, not merely
+    similar). `low_version_count` alone is the fallback signal for an attacker
+    who ALSO edits the artifactId (a 1-edit-distance typo), which may score
+    below the similarity threshold.
+
+    Accepted residual risk: `group_mismatch` and `recent_first_publish` are
+    BOTH gated behind the same `low_version_count` precondition, so an attacker
+    can publish a few trivial version bumps immediately after a typosquat lands
+    (Central has no publish review gate) to push `version_count` above
+    `LOW_VERSION_COUNT_THRESHOLD` and suppress ALL of Layer 2 at once -- for
+    exactly the OSSF-reporting-lag window Layer 2 exists to cover. Accepted,
+    not re-architected: Layer 2 stays advisory-only (`ask`, never `deny`), so
+    Layer 1's authoritative `deny` path (independent of version count) is
+    unaffected.
+    """
+    reasons: List[str] = []
+    if version_count <= LOW_VERSION_COUNT_THRESHOLD:
+        reasons.append("low_version_count")
+
+    popular_match: Optional[Dict[str, Any]] = None
+    # Group-mismatch and recent-first-publish share ONE precondition:
+    # low_version_count must have already fired. GATED (not
+    # unconditional-per-`exists`-coordinate) because search.maven.org has a
+    # documented rate-limiting/403-lockout history under bulk load and
+    # _request_with_retry does not retry 403 -- an unconditional query on the
+    # dominant `exists` case in a real batch risked degrading the shared
+    # endpoint for the EXISTING did-you-mean/search_artifacts paths too.
+    #
+    # MAX_GATED_SOLR_CALLS_PER_BATCH bounds the number of actual outbound Solr
+    # HTTP calls, not the number of gated-in coordinates -- each gated-in
+    # coordinate can issue up to TWO Solr calls (group-mismatch search +
+    # recent-first-publish timestamp fetch), so the cap is checked and the
+    # counter incremented separately before EACH call, not once per
+    # coordinate. Counting per-coordinate instead would silently allow up to
+    # 2x the named/documented call budget in exactly the cold-cache/
+    # large-batch scenario this cap exists to bound.
+    if "low_version_count" in reasons:
+        if gated_calls[0] < MAX_GATED_SOLR_CALLS_PER_BATCH:
+            gated_calls[0] += 1
+            candidates = search_maven_central(_solr_escape(artifact_id), _SUGGEST_SEARCH_ROWS, use_cache=True)
+            for cand in candidates:
+                cand_g = cand.get("groupId", "")
+                cand_a = cand.get("artifactId", "")
+                if cand_g == group_id:
+                    continue
+                if _similarity(artifact_id.lower(), cand_a.lower()) < GROUP_MISMATCH_SIMILARITY:
+                    continue
+                cand_vc = cand.get("versionCount", 0) or 0
+                if popular_match is None or cand_vc > popular_match["versionCount"]:
+                    popular_match = {"groupId": cand_g, "artifactId": cand_a, "versionCount": cand_vc}
+            if popular_match is not None and popular_match["versionCount"] > GROUP_MISMATCH_POPULARITY_RATIO * version_count:
+                reasons.append("group_mismatch")
+            else:
+                # A coincidentally-shared name with COMPARABLE popularity on
+                # both sides must not flag -- discard the candidate entirely
+                # (popularMatch is only ever emitted alongside a fired
+                # group_mismatch reason).
+                popular_match = None
+
+        # Recent-first-publish: a gated, best-effort ENRICHMENT on top of an
+        # already-fired signal, never a signal on its own -- it never turns
+        # signal:false into signal:true by itself. versions[0] is the
+        # semver-MINIMUM of a deduplicated union across repos (`versions` is
+        # sorted by compare_versions), NOT necessarily the chronologically-
+        # first-published version -- the two coincide only when version
+        # numbers happen to increase monotonically with release time. A
+        # reasonable, but imperfect, first-publish proxy under this
+        # <=LOW_VERSION_COUNT_THRESHOLD-version gate. Cap checked
+        # independently of the group-mismatch call above (its own Solr call).
+        if versions and gated_calls[0] < MAX_GATED_SOLR_CALLS_PER_BATCH:
+            gated_calls[0] += 1
+            ts = _fetch_gav_timestamp(group_id, artifact_id, versions[0])
+            if ts is not None:
+                now_ms = time.time() * 1000
+                if now_ms - ts <= RECENT_PUBLISH_DAYS_THRESHOLD * 86400 * 1000:
+                    reasons.append("recent_first_publish")
+
+    risk: Dict[str, Any] = {
+        "signal": bool(reasons),
+        "reasons": reasons,
+        "versionCount": version_count,
+    }
+    if popular_match is not None:
+        risk["popularMatch"] = popular_match
+    return risk
+
+
 def _verify_one(
     group_id: str,
     artifact_id: str,
     version: Optional[str],
     suggest_limit: int,
     ctx: "ResolutionContext",
+    gated_calls: List[int],
 ) -> Dict[str, Any]:
     """Verify a single coordinate. Runs its OWN per-repo existence probe (not
     fetch_metadata's raise, which conflates absent vs unreachable and drops the
     answering repo). Classifies existence as a tri-state and, only when ABSENT,
-    queries Maven Central for popularity-aware did-you-mean candidates."""
+    queries Maven Central for popularity-aware did-you-mean candidates. When
+    EXISTS, additionally computes `typosquatRisk` (#322 Layer 2) -- see
+    `_compute_typosquat_risk`. ``gated_calls`` is the per-batch Solr-call
+    counter shared across the whole `handle_verify_coordinates` invocation;
+    callers must pass a list created fresh at the top of that call."""
     union_versions = set()
     first_answering_repo: Optional[str] = None
     any_200 = False
@@ -3105,6 +3297,14 @@ def _verify_one(
         # declarations set name == url) — same userinfo redaction as resolvedFrom.
         result["repository"] = _strip_userinfo(first_answering_repo)
 
+    if existence_status == "exists":
+        # Layer 2 (#322): only ever computed for EXISTS -- never for
+        # absent/unknown -- and a SEPARATE field from likelyHallucination,
+        # which stays absent-only with no shared code path or threshold.
+        result["typosquatRisk"] = _compute_typosquat_risk(
+            group_id, artifact_id, len(union_versions), versions, gated_calls
+        )
+
     if existence_status == "absent":
         req_ga = (group_id + ":" + artifact_id).lower()
         req_a = artifact_id.lower()
@@ -3157,13 +3357,19 @@ def handle_verify_coordinates(args: Dict) -> Any:
     suggest_limit = max(0, min(suggest_limit, 10))
 
     ctx = build_resolution_context(args)
+    # Per-batch gated-Solr-call counter (#322): a 1-element list used as a
+    # mutable cell, created FRESH here -- a LOCAL variable, NEVER module-level
+    # state. server.py is a long-lived stdio process; a global counter would
+    # accumulate across the entire process lifetime instead of resetting per
+    # batch. Shared across every coordinate in THIS call only.
+    gated_calls = [0]
     results = []
     for dep in dependencies:
         group_id = dep.get("groupId", "")
         artifact_id = dep.get("artifactId", "")
         version = dep.get("version")
         try:
-            results.append(_verify_one(group_id, artifact_id, version, suggest_limit, ctx))
+            results.append(_verify_one(group_id, artifact_id, version, suggest_limit, ctx, gated_calls))
         except Exception as e:
             # Per-item isolation for an UNEXPECTED failure (distinct from a probe
             # transport error, which _verify_one already folds into "unknown"):

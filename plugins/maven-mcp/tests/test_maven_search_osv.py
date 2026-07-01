@@ -25,7 +25,7 @@ import unittest
 import urllib.error
 import unittest.mock
 
-from _helpers import server, mock_urlopen, http_error, empty_ctx
+from _helpers import server, mock_urlopen, http_error, empty_ctx, temp_project
 
 
 def _metadata_xml(versions, latest=None, release=None, last_updated=None):
@@ -652,6 +652,95 @@ class TestQueryOsvBatch(unittest.TestCase):
             results[0]["vulnerabilities"][0]["url"],
             "https://osv.dev/vulnerability/OSV-NO-ADVISORY",
         )
+
+
+# ---------------------------------------------------------------------------
+# _is_malicious_id / `malicious` flag (#322 Layer 1 — OSSF malicious-package
+# tagging, reusing the existing OSV.dev querybatch integration).
+# ---------------------------------------------------------------------------
+class TestMaliciousFlag(unittest.TestCase):
+    def test_is_malicious_id_mal_prefix_true(self):
+        self.assertTrue(server._is_malicious_id("MAL-2025-2552"))
+
+    def test_is_malicious_id_non_mal_prefixes_false(self):
+        self.assertFalse(server._is_malicious_id("GHSA-xxxx-yyyy-zzzz"))
+        self.assertFalse(server._is_malicious_id("CVE-2024-1"))
+        self.assertFalse(server._is_malicious_id("PYSEC-2022-1"))
+
+    def test_is_malicious_id_empty_false(self):
+        self.assertFalse(server._is_malicious_id(""))
+
+    def test_query_osv_batch_flags_malicious_entry(self):
+        # A MAL- id (the real OSSF-reported Maven typosquat this plan verified
+        # live) -> malicious: true; ordinary GHSA id in the same batch response
+        # -> malicious: false. Mix preserved per-entry.
+        body = json.dumps({"results": [{"vulns": [
+            {"id": "MAL-2025-2552", "summary": "malicious package",
+             "affected": [], "references": []},
+            {"id": "GHSA-1234-abcd", "summary": "ordinary CVE",
+             "database_specific": {"severity": "HIGH"}, "affected": [], "references": []},
+        ]}]}).encode()
+        with unittest.mock.patch(
+            "urllib.request.urlopen", side_effect=mock_urlopen([(200, body)])
+        ):
+            results = server.query_osv_batch([
+                {"groupId": "io.github.leetcrunch", "artifactId": "scribejava-core", "version": "1.0.0"},
+            ])
+        vulns = results[0]["vulnerabilities"]
+        self.assertEqual(len(vulns), 2)
+        self.assertTrue(vulns[0]["malicious"])
+        self.assertFalse(vulns[1]["malicious"])
+
+    def test_query_osv_batch_missing_id_is_not_malicious(self):
+        # An empty "id" (never actually omitted by OSV -- id is always present
+        # on a real querybatch entry) must not be misread as malicious.
+        body = json.dumps({"results": [{"vulns": [
+            {"id": "", "summary": "no real id", "affected": [], "references": []},
+        ]}]}).encode()
+        with unittest.mock.patch(
+            "urllib.request.urlopen", side_effect=mock_urlopen([(200, body)])
+        ):
+            results = server.query_osv_batch([
+                {"groupId": "com.example", "artifactId": "lib", "version": "1.0.0"},
+            ])
+        self.assertFalse(results[0]["vulnerabilities"][0]["malicious"])
+
+    def test_get_dependency_vulnerabilities_surfaces_malicious_unchanged(self):
+        # handle_get_dependency_vulnerabilities consumes query_osv_batch output
+        # via `entry = dict(r)` -- malicious flows through with no handler change.
+        body = json.dumps({"results": [{"vulns": [
+            {"id": "MAL-2025-2552", "summary": "malicious", "affected": [], "references": []},
+        ]}]}).encode()
+        with unittest.mock.patch(
+            "urllib.request.urlopen", side_effect=mock_urlopen([(200, body)])
+        ):
+            out = server.handle_get_dependency_vulnerabilities({
+                "dependencies": [
+                    {"groupId": "io.github.leetcrunch", "artifactId": "scribejava-core", "version": "1.0.0"},
+                ],
+            })
+        self.assertTrue(out["results"][0]["vulnerabilities"][0]["malicious"])
+
+    def test_audit_project_dependencies_surfaces_malicious(self):
+        # handle_audit_project_dependencies reconstructs a NARROWER per-vuln
+        # dict (id/severity/fixedVersion) rather than forwarding query_osv_batch's
+        # vuln_info unchanged -- malicious must be explicitly threaded through.
+        gradle = "dependencies {\n    implementation 'io.github.leetcrunch:scribejava-core:1.0.0'\n}\n"
+        osv_body = json.dumps({"results": [{"vulns": [
+            {"id": "MAL-2025-2552", "summary": "malicious", "affected": [], "references": []},
+        ]}]}).encode()
+        with temp_project({"build.gradle": gradle}) as root, \
+                unittest.mock.patch.object(
+                    server, "fetch_metadata",
+                    return_value={"versions": ["1.0.0"], "resolvedFrom": None},
+                ), \
+                unittest.mock.patch(
+                    "urllib.request.urlopen", side_effect=mock_urlopen([(200, osv_body)])
+                ):
+            out = server.handle_audit_project_dependencies({"projectPath": root})
+        vulnerable = [d for d in out["dependencies"] if d.get("vulnerabilities")]
+        self.assertEqual(len(vulnerable), 1)
+        self.assertTrue(vulnerable[0]["vulnerabilities"][0]["malicious"])
 
 
 if __name__ == "__main__":
