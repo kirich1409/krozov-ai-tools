@@ -1632,6 +1632,26 @@ _GRADLE_PLUGIN_CONTAINERS = ("pluginManagement", "buildscript")
 # Container block whose nested repositories belong to the DEPENDENCY scope.
 _GRADLE_DEP_CONTAINER = "dependencyResolutionManagement"
 
+# Gradle's own default when `repositoriesMode` is not declared (#318).
+_DEFAULT_REPOSITORIES_MODE = "PREFER_PROJECT"
+# Matches `repositoriesMode.set(RepositoriesMode.X)` (Kotlin/Groovy DSL call
+# form, the only form Groovy supports) and `repositoriesMode = RepositoriesMode.X`
+# (Kotlin DSL property-assignment sugar), with or without the `RepositoriesMode.`
+# qualifier — mirrors the fully-qualified-vs-bare tolerance already used for
+# other enum-valued settings in this file.
+_REPOSITORIES_MODE_RE = re.compile(
+    r"\brepositoriesMode\s*(?:\.\s*set\s*\(|=)\s*(?:RepositoriesMode\.)?"
+    r"(PREFER_PROJECT|FAIL_ON_PROJECT_REPOS)\b"
+)
+
+
+def _parse_repositories_mode(block_body: str) -> Optional[str]:
+    """Extract `repositoriesMode` from a `dependencyResolutionManagement { }`
+    body. Returns None when not declared (caller applies Gradle's own default,
+    PREFER_PROJECT)."""
+    m = _REPOSITORIES_MODE_RE.search(block_body)
+    return m.group(1) if m else None
+
 
 def _maven_local_url() -> str:
     """file:// marker for mavenLocal(); never HTTP-queried, just recorded."""
@@ -1834,7 +1854,11 @@ def discover_repositories(project_root: str) -> Dict[str, List[Dict[str, str]]]:
 
     if gradle_present:
         plugin_entries: List[Dict[str, str]] = []
-        dep_entries: List[Dict[str, str]] = []
+        # Split by declaration site so repositoriesMode (#318) can decide which
+        # side wins instead of always unioning both into one dependency list.
+        settings_dep_entries: List[Dict[str, str]] = []  # dependencyResolutionManagement { repositories {} }
+        project_dep_entries: List[Dict[str, str]] = []  # bare top-level repositories {}
+        repos_mode = _DEFAULT_REPOSITORIES_MODE
         for fname in GRADLE_SETTINGS_FILES + GRADLE_BUILD_FILES:
             path = os.path.join(project_root, fname)
             if not os.path.exists(path):
@@ -1847,12 +1871,16 @@ def discover_repositories(project_root: str) -> Dict[str, List[Dict[str, str]]]:
                     continue
                 body, start, after = found
                 consumed.append((start, after))
+                if header == _GRADLE_DEP_CONTAINER:
+                    mode = _parse_repositories_mode(body)
+                    if mode is not None:
+                        repos_mode = mode
                 repos_body = _extract_block(body, "repositories")
                 if repos_body is None:
                     continue
                 parsed = _parse_gradle_repos(repos_body)
                 if header == _GRADLE_DEP_CONTAINER:
-                    dep_entries.extend(parsed)
+                    settings_dep_entries.extend(parsed)
                 else:
                     plugin_entries.extend(parsed)
             # Excise consumed container spans BEFORE the bare top-level
@@ -1861,8 +1889,21 @@ def discover_repositories(project_root: str) -> Dict[str, List[Dict[str, str]]]:
             stripped = _excise_spans(content, consumed)
             bare = _extract_block(stripped, "repositories")
             if bare is not None:
-                dep_entries.extend(_parse_gradle_repos(bare))
+                project_dep_entries.extend(_parse_gradle_repos(bare))
         result["plugin"] = _dedup_repos(plugin_entries)
+        if repos_mode == "FAIL_ON_PROJECT_REPOS":
+            # A real Gradle build would fail outright if the project also
+            # declared its own repositories{} under this mode — only
+            # settings-level repos are ever valid, so project repos are
+            # dropped here even when present, never unioned in.
+            dep_entries = settings_dep_entries
+        elif project_dep_entries:
+            # PREFER_PROJECT (Gradle's default): a module's own repositories{}
+            # supersedes dependencyResolutionManagement entirely for that
+            # module — settings repos are a fallback default, not an addition.
+            dep_entries = project_dep_entries
+        else:
+            dep_entries = settings_dep_entries
         result["dependency"] = _dedup_repos(dep_entries)
     else:
         pom_path = os.path.join(project_root, "pom.xml")
