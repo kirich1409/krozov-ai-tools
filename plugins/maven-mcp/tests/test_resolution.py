@@ -189,9 +189,13 @@ class TestContentGroupFiltering(unittest.TestCase):
         with temp_project(files) as root:
             ctx = server.build_resolution_context({"projectPath": root})
         with unittest.mock.patch("urllib.request.urlopen") as m:
-            with self.assertRaises(ValueError):
+            with self.assertRaises(ValueError) as cm:
                 server.fetch_metadata("com.google.guava", "guava", ctx)
         m.assert_not_called()
+        # The error message must not degrade to the confusing "...: None"
+        # (there is no per-repo last_err to fall back on when _repos_for
+        # itself returns an empty list) — assert an explicit reason instead.
+        self.assertIn("content/group filtering", str(cm.exception))
 
     def test_include_group_by_regex_matches_prefix_family(self):
         files = {"settings.gradle.kts": _settings(
@@ -204,6 +208,19 @@ class TestContentGroupFiltering(unittest.TestCase):
         self.assertEqual([r["url"] for r in matching], [self.JITPACK_URL])
         non_matching = server._repos_for("com.other", "lib", ctx)
         self.assertEqual(non_matching, [])
+
+    def test_include_group_by_regex_kotlin_double_backslash_form_matches(self):
+        # Regression for the idiomatic on-disk Kotlin/Groovy form (doubled
+        # backslash), matching Gradle's own JitPack docs example end-to-end
+        # through _repos_for, not just the parser unit test.
+        files = {"settings.gradle.kts": _settings(
+            r'maven { url = uri("%s"); content { includeGroupByRegex("com\\.github\\..*") } }'
+            % self.JITPACK_URL
+        )}
+        with temp_project(files) as root:
+            ctx = server.build_resolution_context({"projectPath": root})
+        matching = server._repos_for("com.github.anyuser", "anylib", ctx)
+        self.assertEqual([r["url"] for r in matching], [self.JITPACK_URL])
 
     def test_exclusive_content_shorthand_behaves_like_content_filter(self):
         body = (

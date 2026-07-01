@@ -131,6 +131,19 @@ class TestGroupContentFiltering(unittest.TestCase):
         entries = server._parse_gradle_repos(body)
         self.assertEqual(entries[0]["group_filters"], [{"type": "regex", "value": r"com\.github\..*"}])
 
+    def test_maven_content_include_group_by_regex_kotlin_double_backslash_form(self):
+        # The idiomatic on-disk form in a normal (non-raw) Kotlin/Groovy string
+        # literal requires a DOUBLED backslash to produce one literal
+        # backslash character — matching Gradle's own JitPack docs example.
+        # The doubled backslash must be collapsed to a single one so the
+        # resulting pattern behaves as the Java/Kotlin regex it decodes to,
+        # not as a literal-backslash-plus-wildcard pattern.
+        body = r'maven { url = uri("https://jitpack.io"); content { includeGroupByRegex("com\\.github\\..*") } }'
+        entries = server._parse_gradle_repos(body)
+        self.assertEqual(entries[0]["group_filters"], [{"type": "regex", "value": r"com\.github\..*"}])
+        self.assertTrue(server._repo_matches_group(entries[0], "com.github.foo"))
+        self.assertFalse(server._repo_matches_group(entries[0], "com.google.guava"))
+
     def test_maven_content_multiple_include_group_calls_or_matched(self):
         body = (
             'maven { url = uri("https://x/r"); content { '

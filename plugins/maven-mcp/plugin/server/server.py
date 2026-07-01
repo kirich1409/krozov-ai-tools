@@ -602,7 +602,12 @@ def fetch_metadata(group_id: str, artifact_id: str, ctx: "ResolutionContext") ->
     merged_versions: List[str] = []
     last_updated: Optional[str] = None
     answered = False
-    last_err = None
+    # An empty `repos` list (possible since #320: every declared repo in scope
+    # was excluded by content/group filtering) has no entry to set a last_err
+    # from — default to an explicit reason instead of leaving this None, which
+    # would otherwise surface as the confusing "...: None" in the raised
+    # message below.
+    last_err = "no repository in scope (declared repo(s) excluded by content/group filtering)" if not repos else None
     # First repo (in _repos_for order: declared repos before any public-fallback
     # append) that answers 200 — surfaced as resolvedFrom for #317 provenance.
     resolved_from: Optional[Dict[str, Any]] = None
@@ -1688,7 +1693,17 @@ def _parse_group_filters(block_body: str) -> List[Dict[str, str]]:
     for m in _INCLUDE_GROUP_RE.finditer(block_body):
         filters.append({"type": "exact", "value": m.group(1)})
     for m in _INCLUDE_GROUP_REGEX_RE.finditer(block_body):
-        filters.append({"type": "regex", "value": m.group(1)})
+        # A normal (non-raw) Kotlin/Groovy string literal requires a doubled
+        # backslash to produce one literal backslash character, so the
+        # idiomatic on-disk form of this call is
+        # includeGroupByRegex("com\\.github\\..*") (Gradle's own docs use
+        # exactly this shape for JitPack). Collapsing doubled backslashes here
+        # recovers the single-backslash Java/Kotlin regex the string decodes
+        # to at compile time; a pattern already written with single
+        # backslashes (e.g. inside a raw/triple-quoted string) has no `\\` to
+        # collapse and passes through unchanged.
+        pattern = m.group(1).replace("\\\\", "\\")
+        filters.append({"type": "regex", "value": pattern})
     return filters
 
 
