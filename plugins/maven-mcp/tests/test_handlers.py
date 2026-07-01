@@ -307,6 +307,116 @@ class TestGetDependencyVulnerabilities(unittest.TestCase):
             })
         self.assertEqual(out["results"][0]["vulnerabilityCount"], 0)
 
+    def test_resolves_plugin_marker_to_implementation_before_osv_query(self):
+        # #290: the marker POM (1) is fetched and resolved to the implementation
+        # GAV before the OSV batch query (2). Result keeps the ORIGINAL marker
+        # identity and surfaces the resolved implementation separately.
+        marker_pom = (
+            "<project><dependencies><dependency>"
+            "<groupId>com.example</groupId>"
+            "<artifactId>foo-impl</artifactId>"
+            "<version>1.2.3</version>"
+            "</dependency></dependencies></project>"
+        ).encode()
+        osv = {"results": [{"vulns": [{
+            "id": "GHSA-yyyy",
+            "summary": "bad bug in impl",
+            "severity": [{"type": "CVSS_V3", "score": "9.8"}],
+            "affected": [{"ranges": [{"type": "ECOSYSTEM", "events": [
+                {"introduced": "0"}, {"fixed": "1.2.4"},
+            ]}]}],
+            "references": [{"type": "ADVISORY", "url": "https://advisory/y"}],
+        }]}]}
+        with temp_project({"README.md": "no build files"}) as root:
+            with _patch_urlopen([(200, marker_pom), (200, _json(osv))]):
+                out = server.handle_get_dependency_vulnerabilities({
+                    "projectPath": root,
+                    "dependencies": [
+                        {
+                            "groupId": "com.example.foo",
+                            "artifactId": "com.example.foo.gradle.plugin",
+                            "version": "1.0.0",
+                        },
+                    ],
+                })
+        result = out["results"][0]
+        self.assertEqual(result["groupId"], "com.example.foo")
+        self.assertEqual(result["artifactId"], "com.example.foo.gradle.plugin")
+        self.assertEqual(result["version"], "1.0.0")
+        self.assertEqual(
+            result["resolvedImplementation"],
+            {"groupId": "com.example", "artifactId": "foo-impl", "version": "1.2.3"},
+        )
+        self.assertEqual(result["vulnerabilityCount"], 1)
+        self.assertEqual(result["vulnerabilities"][0]["fixedVersion"], "1.2.4")
+
+    def test_non_marker_dependency_shape_unchanged(self):
+        # Regression: a normal dependency makes exactly one network call (the
+        # OSV POST) — no POM fetch — and the result carries no
+        # resolvedImplementation key, mirroring test_reports_vulnerability.
+        osv = {"results": [{"vulns": [{
+            "id": "GHSA-xxxx",
+            "summary": "bad bug",
+            "severity": [{"type": "CVSS_V3", "score": "9.8"}],
+            "affected": [{"ranges": [{"type": "ECOSYSTEM", "events": [
+                {"introduced": "0"}, {"fixed": "1.2.3"},
+            ]}]}],
+            "references": [{"type": "ADVISORY", "url": "https://advisory/x"}],
+        }]}]}
+        with _patch_urlopen([(200, _json(osv))]) as m:
+            out = server.handle_get_dependency_vulnerabilities({
+                "dependencies": [
+                    {"groupId": "com.example", "artifactId": "lib", "version": "1.0.0"},
+                ],
+            })
+        result = out["results"][0]
+        self.assertEqual(m.call_count, 1)
+        self.assertNotIn("resolvedImplementation", result)
+        self.assertEqual(result["vulnerabilityCount"], 1)
+        self.assertEqual(result["vulnerabilities"][0]["fixedVersion"], "1.2.3")
+
+    def test_non_marker_request_skips_resolution_context(self):
+        # #290 purity fix: discover_repositories does filesystem I/O reading the
+        # project's build files. A request with no plugin-marker-shaped
+        # dependency must never trigger it — patch it to raise if called.
+        osv = {"results": [{"vulns": []}]}
+        with unittest.mock.patch(
+            "server.discover_repositories",
+            side_effect=AssertionError(
+                "discover_repositories must not be called for non-marker requests"
+            ),
+        ):
+            with _patch_urlopen([(200, _json(osv))]):
+                out = server.handle_get_dependency_vulnerabilities({
+                    "dependencies": [
+                        {"groupId": "com.example", "artifactId": "lib", "version": "1.0.0"},
+                    ],
+                })
+        self.assertEqual(out["results"][0]["vulnerabilityCount"], 0)
+
+    def test_resolution_context_failure_degrades_gracefully(self):
+        # A marker-shaped request whose resolution-context construction fails
+        # (e.g. an unreadable/malformed build file) must not raise — the marker
+        # is treated as unresolved and queried against OSV as-is.
+        osv = {"results": [{"vulns": []}]}
+        with unittest.mock.patch(
+            "server.discover_repositories", side_effect=OSError("malformed build file"),
+        ):
+            with _patch_urlopen([(200, _json(osv))]) as m:
+                out = server.handle_get_dependency_vulnerabilities({
+                    "dependencies": [
+                        {
+                            "groupId": "com.example.foo",
+                            "artifactId": "com.example.foo.gradle.plugin",
+                            "version": "1.0.0",
+                        },
+                    ],
+                })
+        result = out["results"][0]
+        self.assertNotIn("resolvedImplementation", result)
+        self.assertEqual(m.call_count, 1)  # only the OSV POST, no POM fetch attempted
+        self.assertEqual(result["vulnerabilityCount"], 0)
+
 
 # --- handle_get_dependency_health -------------------------------------------
 
@@ -421,6 +531,53 @@ class TestAuditProjectDependencies(unittest.TestCase):
         self.assertEqual(out["buildSystem"], "unknown")
         self.assertEqual(out["dependencies"], [])
         self.assertEqual(out["summary"]["total"], 0)
+
+    def test_gradle_plugin_marker_resolved_in_vuln_enrichment(self):
+        # #290: scan_project emits a plugins-DSL plugin as groupId == pluginId,
+        # artifactId == "{pluginId}.gradle.plugin" (server.py process_plugins_block).
+        # The vuln-enrichment block must resolve that marker to its implementation
+        # GAV before querying OSV, and attach resolvedImplementation to the entry.
+        build_file = 'plugins {\n    id("com.example.foo") version "1.0.0"\n}\n'
+        marker_pom = (
+            "<project><dependencies><dependency>"
+            "<groupId>com.example</groupId>"
+            "<artifactId>foo-impl</artifactId>"
+            "<version>1.2.3</version>"
+            "</dependency></dependencies></project>"
+        ).encode()
+        osv = {"results": [{"vulns": [{
+            "id": "GHSA-zzzz",
+            "summary": "bad plugin impl bug",
+            "severity": [{"type": "CVSS_V3", "score": "9.8"}],
+            "affected": [{"ranges": [{"type": "ECOSYSTEM", "events": [
+                {"introduced": "0"}, {"fixed": "1.2.4"},
+            ]}]}],
+            "references": [{"type": "ADVISORY", "url": "https://advisory/z"}],
+        }]}]}
+        # scan (local) -> fetch_metadata queries EVERY repo in the plugin-scope
+        # public fallback and merges (Gradle Plugin Portal, then Maven Central:
+        # 2 calls) -> resolve marker pom (first-hit, Gradle Plugin Portal: 1
+        # call) -> OSV POST (1 call).
+        responses = [
+            (200, _meta(["1.0.0"])),
+            http_error("https://repo1.maven.org/...", 404, "Not Found"),
+            (200, marker_pom),
+            (200, _json(osv)),
+        ]
+        with temp_project({"build.gradle.kts": build_file}) as root:
+            with _patch_urlopen(responses):
+                out = server.handle_audit_project_dependencies({"projectPath": root})
+        plugin_entries = [
+            d for d in out["dependencies"] if d["artifactId"] == "com.example.foo.gradle.plugin"
+        ]
+        self.assertEqual(len(plugin_entries), 1)
+        entry = plugin_entries[0]
+        self.assertEqual(
+            entry["resolvedImplementation"],
+            {"groupId": "com.example", "artifactId": "foo-impl", "version": "1.2.3"},
+        )
+        self.assertTrue(entry["vulnerabilities"])
+        self.assertEqual(entry["vulnerabilities"][0]["fixedVersion"], "1.2.4")
 
 
 # --- dependency-health stat/date helpers (P3 boundaries, direct) ------------
