@@ -899,6 +899,67 @@ def extract_licenses_from_pom(pom_xml: str) -> List[str]:
     return names
 
 
+def _gradle_plugin_marker_plugin_id(group_id: str, artifact_id: str) -> Optional[str]:
+    """Returns the plugin id if (group_id, artifact_id) is a Gradle plugin marker
+    coordinate (`{pluginId}:{pluginId}.gradle.plugin`), else None. Stricter than the
+    `.gradle.plugin`-suffix-only check used for repo-scope routing (_repos_for) —
+    that check stays suffix-only by design (see CLAUDE.md); this one additionally
+    requires group_id == pluginId, which is the actual marker shape, since it
+    drives POM-dependency resolution, not just repo routing."""
+    suffix = ".gradle.plugin"
+    if not artifact_id.endswith(suffix):
+        return None
+    plugin_id = artifact_id[: -len(suffix)]
+    if not plugin_id or group_id != plugin_id:
+        return None
+    return plugin_id
+
+
+def resolve_plugin_marker_implementation(
+    group_id: str, artifact_id: str, version: Optional[str], ctx: "ResolutionContext"
+) -> Optional[Dict[str, str]]:
+    """Gradle plugin marker artifacts are minimal POMs whose only purpose is a
+    single <dependency> pointing at the real implementation artifact — OSV indexes
+    the implementation, not the marker, so callers must resolve markers before
+    querying vulnerabilities (#290). Returns {groupId, artifactId, version} of the
+    resolved implementation, or None when the coordinate isn't a marker, or
+    resolution fails for any reason (missing version, POM fetch failure, no/
+    incomplete <dependency> block, unresolved ${...} property) — callers MUST
+    degrade gracefully on None, never raise."""
+    if not _gradle_plugin_marker_plugin_id(group_id, artifact_id):
+        return None
+    if not version:
+        return None
+    pom = fetch_pom(group_id, artifact_id, version, ctx)
+    if not pom:
+        return None
+    xml = _strip_xml_comments(pom)
+    # Drop any <dependencyManagement> block before searching: it holds version
+    # pins, not the marker's real implementation dependency, and an unscoped
+    # search would match a <dependency> inside it first if one is present.
+    # NOTE: duplicates _parse_maven_deps' dependency-block extraction (~1508)
+    # with slightly different field requirements; not unified to keep this fix
+    # minimal — candidate for a future shared single-dependency-block parser.
+    xml = re.sub(r"<dependencyManagement>[\s\S]*?</dependencyManagement>", "", xml)
+    dep_m = re.search(r"<dependency>([\s\S]*?)</dependency>", xml)
+    if not dep_m:
+        return None
+    block = dep_m.group(1)
+    gid_m = re.search(r"<groupId>([^<]+)</groupId>", block)
+    aid_m = re.search(r"<artifactId>([^<]+)</artifactId>", block)
+    ver_m = re.search(r"<version>([^<]+)</version>", block)
+    if not gid_m or not aid_m or not ver_m:
+        return None
+    impl_group_id = gid_m.group(1).strip()
+    impl_artifact_id = aid_m.group(1).strip()
+    impl_version = ver_m.group(1).strip()
+    if not impl_group_id or not impl_artifact_id or not impl_version:
+        return None
+    if impl_version.startswith("${"):
+        return None
+    return {"groupId": impl_group_id, "artifactId": impl_artifact_id, "version": impl_version}
+
+
 def guess_github_repo(group_id: str, artifact_id: str) -> Optional[Dict[str, str]]:
     for prefix in ("com.github.", "io.github."):
         if group_id.startswith(prefix) and len(group_id) > len(prefix):
@@ -2003,6 +2064,64 @@ def scan_project(project_root: str) -> Dict:
         if settings_result:
             process_plugins_block(settings_result["content"], settings_result["file"], None, True)
 
+        # Step 8: Discover buildSrc/ and build-logic/ convention-plugin builds.
+        # Neither directory is ever listed in settings.gradle include(...), so
+        # Step 5 never touches them — no double-scan risk. catalogRef entries
+        # are skipped: resolving them against the root catalog would be wrong
+        # provenance scope (accepted limitation, not a bug).
+        def emit_direct_deps(content: str, rel_file: str, kind: str) -> None:
+            for dep in _parse_gradle_deps(content, rel_file):
+                if dep["catalogRef"] or not (dep["groupId"] and dep["artifactId"]):
+                    continue
+                dependencies.append({
+                    "groupId": dep["groupId"],
+                    "artifactId": dep["artifactId"],
+                    "version": dep["version"],
+                    "source": {"kind": kind, "file": rel_file, "module": None},
+                    "usages": [{"module": None, "configuration": dep["configuration"]}],
+                })
+
+        def scan_convention_plugins(src_kotlin_dir: str) -> None:
+            if not os.path.isdir(src_kotlin_dir):
+                return
+            for dirpath, _dirnames, filenames in os.walk(src_kotlin_dir):
+                for name in sorted(filenames):
+                    if not name.endswith(".gradle.kts"):
+                        continue
+                    abs_path = os.path.join(dirpath, name)
+                    rel_file = os.path.relpath(abs_path, project_root).replace(os.sep, "/")
+                    with open(abs_path, "r", encoding="utf-8", errors="replace") as fh:
+                        content = fh.read()
+                    emit_direct_deps(content, rel_file, "convention-plugin")
+
+        buildsrc_dir = os.path.join(project_root, "buildSrc")
+        if os.path.isdir(buildsrc_dir):
+            for build_file in GRADLE_BUILD_FILES:
+                path = os.path.join(buildsrc_dir, build_file)
+                if not os.path.exists(path):
+                    continue
+                with open(path, "r", encoding="utf-8", errors="replace") as fh:
+                    content = fh.read()
+                emit_direct_deps(content, f"buildSrc/{build_file}", "buildsrc")
+                break
+            scan_convention_plugins(os.path.join(buildsrc_dir, "src", "main", "kotlin"))
+
+        build_logic_dir = os.path.join(project_root, "build-logic")
+        if os.path.isdir(build_logic_dir):
+            for sub in sorted(os.listdir(build_logic_dir)):
+                sub_dir = os.path.join(build_logic_dir, sub)
+                if not os.path.isdir(sub_dir):
+                    continue
+                for build_file in GRADLE_BUILD_FILES:
+                    path = os.path.join(sub_dir, build_file)
+                    if not os.path.exists(path):
+                        continue
+                    with open(path, "r", encoding="utf-8", errors="replace") as fh:
+                        content = fh.read()
+                    emit_direct_deps(content, f"build-logic/{sub}/{build_file}", "convention-plugin")
+                    break
+                scan_convention_plugins(os.path.join(sub_dir, "src", "main", "kotlin"))
+
     elif build_system == "maven":
         _scan_maven_recursive(project_root, None, dependencies, 0)
 
@@ -2198,13 +2317,52 @@ def handle_scan_project_dependencies(args: Dict) -> Any:
 
 
 def handle_get_dependency_vulnerabilities(args: Dict) -> Any:
-    raw = query_osv_batch(args["dependencies"])
-    return {
-        "results": [
-            {**r, "vulnerabilityCount": len(r["vulnerabilities"])}
-            for r in raw
-        ]
-    }
+    original_deps = args["dependencies"]
+    # Only build a ResolutionContext (filesystem read of the project's build
+    # files, see discover_repositories) when at least one requested dependency
+    # is actually a plugin-marker shape — preserves the original zero-FS-I/O,
+    # single-network-call contract for ordinary (non-marker) requests (#290
+    # purity fix: this used to run unconditionally for every caller).
+    has_marker = any(
+        _gradle_plugin_marker_plugin_id(dep["groupId"], dep["artifactId"])
+        for dep in original_deps
+    )
+    ctx: Optional["ResolutionContext"] = None
+    if has_marker:
+        try:
+            ctx = build_resolution_context(args)
+        except Exception:
+            ctx = None  # degrade: markers stay unresolved, queried as-is below
+
+    query_deps = []
+    resolutions = []
+    for dep in original_deps:
+        resolved = (
+            resolve_plugin_marker_implementation(
+                dep["groupId"], dep["artifactId"], dep.get("version"), ctx
+            )
+            if ctx is not None
+            else None
+        )
+        resolutions.append(resolved)
+        query_deps.append(resolved if resolved else dep)
+
+    # NOTE: unlike handle_audit_project_dependencies, this does not dedupe
+    # identical (groupId, artifactId, version) requests before querying OSV —
+    # known minor inefficiency, left as a follow-up rather than risking a
+    # larger restructure here.
+    raw = query_osv_batch(query_deps)
+    results = []
+    for i, r in enumerate(raw):
+        entry = dict(r)
+        if resolutions[i]:
+            entry["groupId"] = original_deps[i]["groupId"]
+            entry["artifactId"] = original_deps[i]["artifactId"]
+            entry["version"] = original_deps[i]["version"]
+            entry["resolvedImplementation"] = resolutions[i]
+        entry["vulnerabilityCount"] = len(entry["vulnerabilities"])
+        results.append(entry)
+    return {"results": results}
 
 
 def handle_get_dependency_health(args: Dict) -> Any:
@@ -2447,9 +2605,14 @@ def handle_audit_project_dependencies(args: Dict) -> Any:
 
         unique_gavs = []
         unique_keys = []
+        resolved_impls: Dict[str, Optional[Dict]] = {}
         for key, entries in gav_map.items():
             first = entries[0]
-            unique_gavs.append({
+            resolved = resolve_plugin_marker_implementation(
+                first["groupId"], first["artifactId"], first["currentVersion"], ctx
+            )
+            resolved_impls[key] = resolved
+            unique_gavs.append(resolved if resolved else {
                 "groupId": first["groupId"],
                 "artifactId": first["artifactId"],
                 "version": first["currentVersion"],
@@ -2463,8 +2626,11 @@ def handle_audit_project_dependencies(args: Dict) -> Any:
                 {"id": v["id"], "severity": v.get("severity"), "fixedVersion": v.get("fixedVersion")}
                 for v in vuln_results[i].get("vulnerabilities", [])
             ]
+            resolved = resolved_impls.get(key)
             for target in targets:
                 target["vulnerabilities"] = mapped_vulns
+                if resolved:
+                    target["resolvedImplementation"] = resolved
 
     summary = {
         "total": len(audit_deps),
@@ -2793,7 +2959,8 @@ TOOLS = [
                         },
                         "required": ["groupId", "artifactId", "version"],
                     },
-                }
+                },
+                "projectPath": {"type": "string", "description": "Project root used to resolve declared repositories. Defaults to the current working directory."},
             },
             "required": ["dependencies"],
         },
@@ -2839,7 +3006,7 @@ TOOLS = [
         "inputSchema": {
             "type": "object",
             "properties": {
-                "projectPath": {"type": "string"},
+                "projectPath": {"type": "string", "description": "Project root used to resolve declared repositories. Defaults to the current working directory."},
                 "includeVulnerabilities": {"type": "boolean", "description": "Include OSV vulnerability check (default true)"},
                 "productionOnly": {"type": "boolean", "description": "Exclude test-scope dependencies (default true)"},
             },
