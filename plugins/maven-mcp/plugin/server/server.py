@@ -9,6 +9,7 @@ import datetime
 import email.utils
 import functools
 import hashlib
+import http.client
 import json
 import logging
 import os
@@ -206,6 +207,11 @@ def _request_with_retry(req: urllib.request.Request) -> Tuple[int, bytes]:
             retry_after = _parse_retry_after(e.headers)
         except (urllib.error.URLError, socket.timeout) as e:
             last_exc = e
+        # http.client.InvalidURL (e.g. a malformed userinfo URL) is deliberately
+        # NOT caught here — it is a request-construction failure, not a transport
+        # failure, so it is not retryable and propagates to the caller. Both
+        # known callers (fetch_metadata and _verify_one) handle it explicitly at
+        # their own layer rather than relying on a generic retry-and-swallow here.
         if attempt >= HTTP_MAX_ATTEMPTS - 1:
             break
         delay = retry_after if retry_after is not None else _backoff_delay(attempt)
@@ -520,6 +526,56 @@ def _parse_metadata_xml(xml: str, group_id: str, artifact_id: str) -> Dict[str, 
     }
 
 
+def _strip_userinfo(url: str) -> str:
+    """Redact ``user:pass@`` userinfo from a repo URL before it reaches
+    tool-facing JSON (#317 security review). Repo URLs are captured verbatim
+    from build files, so a discouraged hardcoded
+    ``url = "https://user:pass@host/repo"`` would otherwise echo the literal
+    credential into MCP output. Output-boundary only — the raw, credentialed
+    URL is still what actually gets HTTP-fetched; this never touches the
+    fetch path, only what is reported back."""
+    try:
+        parsed = urllib.parse.urlsplit(url)
+    except ValueError:
+        # A malformed host (e.g. an unterminated bracketed IPv6 literal) can
+        # still carry userinfo that urlsplit never gets to parse out — fail
+        # open would leak it verbatim. A first-`@`-only regex (the previous
+        # approach) under-redacts when the userinfo itself contains an
+        # unescaped `@` (e.g. `user:pa@ss@host` — malformed input exactly
+        # like what triggers this fallback): it would strip only up to the
+        # FIRST `@`, leaving a trailing password fragment (`ss@host`) in the
+        # output. Instead, locate the `scheme://` prefix, take the authority
+        # up to the next `/` (or end of string), and drop everything up to
+        # and including the LAST `@` in that authority — that reliably
+        # removes all userinfo regardless of how many `@` it contains.
+        scheme_match = re.match(r"^([a-zA-Z][a-zA-Z0-9+.-]*://)", url)
+        if not scheme_match:
+            # No identifiable scheme boundary — fall back to stripping
+            # everything up to the last `@` globally as a safety net.
+            return url.rsplit("@", 1)[-1] if "@" in url else url
+        scheme = scheme_match.group(1)
+        rest = url[len(scheme):]
+        slash_idx = rest.find("/")
+        authority = rest if slash_idx == -1 else rest[:slash_idx]
+        remainder = "" if slash_idx == -1 else rest[slash_idx:]
+        if "@" not in authority:
+            return url
+        return f"{scheme}{authority.rsplit('@', 1)[-1]}{remainder}"
+    if "@" not in parsed.netloc:
+        return url
+    host = parsed.netloc.rsplit("@", 1)[-1]
+    return urllib.parse.urlunsplit((parsed.scheme, f"***@{host}", parsed.path, parsed.query, parsed.fragment))
+
+
+def _to_resolved_from(entry: Dict[str, Any]) -> Dict[str, Any]:
+    """Project a repo entry (from _repos_for/_public_repos) into the public resolvedFrom shape."""
+    return {
+        "url": _strip_userinfo(entry["url"]),
+        "scope": entry["scope"],
+        "viaPublicFallback": entry["is_public_fallback"],
+    }
+
+
 def fetch_metadata(group_id: str, artifact_id: str, ctx: "ResolutionContext") -> Dict[str, Any]:
     """Query every repo in ``ctx`` and MERGE results across those answering 200:
     version sets are unioned, deduped and sorted ascending so a private repo's
@@ -534,6 +590,9 @@ def fetch_metadata(group_id: str, artifact_id: str, ctx: "ResolutionContext") ->
     last_updated: Optional[str] = None
     answered = False
     last_err = None
+    # First repo (in _repos_for order: declared repos before any public-fallback
+    # append) that answers 200 — surfaced as resolvedFrom for #317 provenance.
+    resolved_from: Optional[Dict[str, Any]] = None
     for entry in repos:
         url = _metadata_url(entry["url"], group_id, artifact_id)
         try:
@@ -543,15 +602,28 @@ def fetch_metadata(group_id: str, artifact_id: str, ctx: "ResolutionContext") ->
                 # version list — a 200 with empty <versions> still counts as a
                 # reachable repo, matching the legacy first-hit contract.
                 answered = True
+                if resolved_from is None:
+                    resolved_from = _to_resolved_from(entry)
                 parsed = _parse_metadata_xml(body.decode("utf-8", errors="replace"), group_id, artifact_id)
                 merged_versions.extend(parsed["versions"])
                 lu = parsed.get("lastUpdated")
                 if lu and (last_updated is None or lu > last_updated):
                     last_updated = lu
             else:
-                last_err = f"HTTP {status} from {entry['name']}"
+                # entry["name"] can be the literal repo URL for maven("url")
+                # declarations (name == url); redact before it reaches the
+                # exception message, which flows into tool-facing "error" fields.
+                last_err = f"HTTP {status} from {_strip_userinfo(entry['name'])}"
         except Exception as e:
-            last_err = str(e)
+            # Never interpolate str(e) here: a userinfo URL (https://user:pass@host)
+            # makes urlopen raise http.client.InvalidURL — NOT a urllib.error.URLError,
+            # so it lands in this generic branch — whose message embeds the raw
+            # password (e.g. "nonnumeric port: 'pass@host'"), a string shape
+            # _strip_userinfo cannot redact (it only redacts a value that IS a bare
+            # scheme://user:pass@host URL, not a credential fragment embedded in
+            # free text). Build the message from known-safe components instead:
+            # the exception type name plus the already-redacted repo name.
+            last_err = f"{type(e).__name__} from {_strip_userinfo(entry['name'])}"
     if not answered:
         raise ValueError(f"Could not fetch metadata for {group_id}:{artifact_id}: {last_err}")
     versions = sorted(set(merged_versions), key=functools.cmp_to_key(compare_versions))
@@ -562,11 +634,12 @@ def fetch_metadata(group_id: str, artifact_id: str, ctx: "ResolutionContext") ->
         "latest": find_latest_version(versions, "PREFER_STABLE"),
         "release": find_latest_version(versions, "STABLE_ONLY"),
         "lastUpdated": last_updated,
+        "resolvedFrom": resolved_from,
     }
 
 
-def check_version_in_repos(group_id: str, artifact_id: str, version: str, ctx: "ResolutionContext") -> Optional[str]:
-    """Returns repo name if version exists, else None."""
+def check_version_in_repos(group_id: str, artifact_id: str, version: str, ctx: "ResolutionContext") -> Optional[Dict[str, Any]]:
+    """Returns the matching repo entry (name/url/scope/is_public_fallback) if version exists, else None."""
     repos = _repos_for(group_id, artifact_id, ctx)
     for entry in repos:
         url = _metadata_url(entry["url"], group_id, artifact_id)
@@ -576,7 +649,7 @@ def check_version_in_repos(group_id: str, artifact_id: str, version: str, ctx: "
                 xml = body.decode("utf-8", errors="replace")
                 versions = re.findall(r"<version>([^<]+)</version>", xml)
                 if version in versions:
-                    return entry["name"]
+                    return entry
         except Exception:
             continue
     return None
@@ -1128,6 +1201,7 @@ def _get_dependency_changes_impl(group_id: str, artifact_id: str, from_version: 
         metadata = fetch_metadata(group_id, artifact_id, ctx)
     except Exception as e:
         return {**base, "error": str(e)}
+    base["resolvedFrom"] = metadata.get("resolvedFrom")
 
     versions_in_range = _filter_version_range(metadata["versions"], from_version, to_version)
     if not versions_in_range:
@@ -2133,6 +2207,7 @@ def handle_get_latest_version(args: Dict) -> Any:
         "latestVersion": selected,
         "stability": classify_version(selected),
         "allVersionsCount": len(metadata["versions"]),
+        "resolvedFrom": metadata.get("resolvedFrom"),
     }
 
 
@@ -2141,15 +2216,19 @@ def handle_check_version_exists(args: Dict) -> Any:
     artifact_id = args["artifactId"]
     version = args["version"]
     ctx = build_resolution_context(args)
-    repo_name = check_version_in_repos(group_id, artifact_id, version, ctx)
-    if repo_name:
+    entry = check_version_in_repos(group_id, artifact_id, version, ctx)
+    if entry:
         return {
             "groupId": group_id,
             "artifactId": artifact_id,
             "version": version,
             "exists": True,
             "stability": classify_version(version),
-            "repository": repo_name,
+            # entry["name"] can be the literal repo URL (maven("url") declarations
+            # set name == url), so it goes through the same userinfo redaction as
+            # resolvedFrom.url.
+            "repository": _strip_userinfo(entry["name"]),
+            "resolvedFrom": _to_resolved_from(entry),
         }
     return {
         "groupId": group_id,
@@ -2163,8 +2242,13 @@ def handle_check_multiple_dependencies(args: Dict) -> Any:
     ctx = build_resolution_context(args)
     results = []
     for dep in args["dependencies"]:
+        # resolved_from is captured as soon as fetch_metadata succeeds, so a
+        # downstream "no version found" still carries provenance (#317 finding 1:
+        # a repo did answer, so resolvedFrom is known even on a not-found result).
+        resolved_from = None
         try:
             metadata = fetch_metadata(dep["groupId"], dep["artifactId"], ctx)
+            resolved_from = metadata.get("resolvedFrom")
             latest = find_latest_version(metadata["versions"], "PREFER_STABLE")
             if not latest:
                 raise ValueError("No version found")
@@ -2173,15 +2257,19 @@ def handle_check_multiple_dependencies(args: Dict) -> Any:
                 "artifactId": dep["artifactId"],
                 "latestVersion": latest,
                 "stability": classify_version(latest),
+                "resolvedFrom": resolved_from,
             })
         except Exception as e:
-            results.append({
+            error_entry = {
                 "groupId": dep["groupId"],
                 "artifactId": dep["artifactId"],
                 "latestVersion": "",
                 "stability": "",
                 "error": str(e),
-            })
+            }
+            if resolved_from is not None:
+                error_entry["resolvedFrom"] = resolved_from
+            results.append(error_entry)
     return {"results": results}
 
 
@@ -2189,8 +2277,13 @@ def handle_compare_dependency_versions(args: Dict) -> Any:
     ctx = build_resolution_context(args)
     results = []
     for dep in args["dependencies"]:
+        # resolved_from is captured as soon as fetch_metadata succeeds, so a
+        # downstream "no matching version" still carries provenance (#317 finding 1:
+        # a repo did answer, so resolvedFrom is known even on a not-found result).
+        resolved_from = None
         try:
             metadata = fetch_metadata(dep["groupId"], dep["artifactId"], ctx)
+            resolved_from = metadata.get("resolvedFrom")
             latest = find_latest_version_for_current(metadata["versions"], dep["currentVersion"])
             if not latest:
                 raise ValueError("No matching version found")
@@ -2203,9 +2296,10 @@ def handle_compare_dependency_versions(args: Dict) -> Any:
                 "latestStability": classify_version(latest),
                 "upgradeType": upgrade_type,
                 "upgradeAvailable": upgrade_type != "none",
+                "resolvedFrom": resolved_from,
             })
         except Exception as e:
-            results.append({
+            error_entry = {
                 "groupId": dep["groupId"],
                 "artifactId": dep["artifactId"],
                 "currentVersion": dep.get("currentVersion", ""),
@@ -2214,7 +2308,10 @@ def handle_compare_dependency_versions(args: Dict) -> Any:
                 "upgradeType": "none",
                 "upgradeAvailable": False,
                 "error": str(e),
-            })
+            }
+            if resolved_from is not None:
+                error_entry["resolvedFrom"] = resolved_from
+            results.append(error_entry)
     summary = {
         "total": len(results),
         "upgradeable": sum(1 for r in results if r.get("upgradeAvailable")),
@@ -2313,6 +2410,7 @@ def handle_get_dependency_health(args: Dict) -> Any:
             result["healthError"] = str(e)
             results.append(result)
             continue
+        result["resolvedFrom"] = metadata.get("resolvedFrom")
 
         versions = metadata["versions"]
         result["versionCount"] = len(versions)
@@ -2466,10 +2564,16 @@ def handle_audit_project_dependencies(args: Dict) -> Any:
 
     for dep in deps_with_version:
         ga_key = f"{dep['groupId']}:{dep['artifactId']}"
+        # resolved_from is captured as soon as fetch_metadata succeeds, so an
+        # unexpected downstream failure still carries provenance — mirrors the
+        # #317 finding 1 fix applied to handle_check_multiple_dependencies /
+        # handle_compare_dependency_versions.
+        resolved_from = None
         try:
             if ga_key not in metadata_cache:
                 metadata_cache[ga_key] = fetch_metadata(dep["groupId"], dep["artifactId"], ctx)
             metadata = metadata_cache[ga_key]
+            resolved_from = metadata.get("resolvedFrom")
             latest = find_latest_version_for_current(metadata["versions"], dep["version"])
             upgrade_type = get_upgrade_type(dep["version"], latest) if latest else "none"
             audit_deps.append({
@@ -2482,9 +2586,14 @@ def handle_audit_project_dependencies(args: Dict) -> Any:
                 "usages": dep.get("usages", []),
                 "module": (dep.get("usages") or [{}])[0].get("module"),
                 "configuration": (dep.get("usages") or [{}])[0].get("configuration"),
+                "resolvedFrom": resolved_from,
             })
-        except Exception:
-            audit_deps.append({
+        except Exception as e:
+            # str(e) is safe here: fetch_metadata's own messages are redacted
+            # at the source (see fetch_metadata), and find_latest_version_for_
+            # current/get_upgrade_type are pure version-string functions that
+            # never embed a repo URL.
+            error_entry = {
                 "groupId": dep["groupId"],
                 "artifactId": dep["artifactId"],
                 "currentVersion": dep["version"],
@@ -2492,7 +2601,11 @@ def handle_audit_project_dependencies(args: Dict) -> Any:
                 "usages": dep.get("usages", []),
                 "module": (dep.get("usages") or [{}])[0].get("module"),
                 "configuration": (dep.get("usages") or [{}])[0].get("configuration"),
-            })
+                "error": str(e),
+            }
+            if resolved_from is not None:
+                error_entry["resolvedFrom"] = resolved_from
+            audit_deps.append(error_entry)
 
     for dep in deps_without_version:
         audit_deps.append({
@@ -2612,9 +2725,16 @@ def _verify_one(
         url = _metadata_url(entry["url"], group_id, artifact_id)
         try:
             status, body = http_get(url)
-        except (urllib.error.URLError, socket.timeout):
+        except (urllib.error.URLError, socket.timeout, http.client.InvalidURL):
             # Transport failure (offline / DNS / read timeout) — verification
             # unavailable for THIS repo; contributes "unknown", never "absent".
+            # http.client.InvalidURL (NOT a urllib.error.URLError subclass) is
+            # what a userinfo repo URL (https://user:pass@host) raises during
+            # request construction — same fetch_metadata credential-leak class
+            # (#317 security review): without this clause it would escape to
+            # handle_verify_coordinates's outer `except Exception as e: str(e)`
+            # and embed the raw password in the "error" field. Treated as an
+            # ordinary unverifiable-repo transport failure, never stringified.
             saw_unverifiable = True
             continue
         if status == 200:
@@ -2661,7 +2781,9 @@ def _verify_one(
     if latest:
         result["stability"] = classify_version(latest)
     if first_answering_repo is not None:
-        result["repository"] = first_answering_repo
+        # first_answering_repo can be the literal repo URL (maven("url")
+        # declarations set name == url) — same userinfo redaction as resolvedFrom.
+        result["repository"] = _strip_userinfo(first_answering_repo)
 
     if existence_status == "absent":
         req_ga = (group_id + ":" + artifact_id).lower()

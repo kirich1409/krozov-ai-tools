@@ -12,6 +12,8 @@ falsifiable: it asserts which repo URLs reach urlopen (and, for #310, that Maven
 Central is ABSENT) or the exact merged version set / raised message.
 """
 
+import http.client
+import json
 import os
 import unittest
 import unittest.mock
@@ -263,6 +265,8 @@ class TestHandlerThreading(unittest.TestCase):
                 })
         self.assertTrue(out["exists"])
         self.assertEqual(out["repository"], CUSTOM_URL)
+        self.assertEqual(out["resolvedFrom"]["url"], CUSTOM_URL)
+        self.assertIs(out["resolvedFrom"]["viaPublicFallback"], False)
         self.assertFalse(any(u.startswith(server.MAVEN_CENTRAL_URL) for u in _urls(m)))
 
     def test_get_dependency_health_single_repo_preserves_last_published(self):
@@ -284,6 +288,405 @@ class TestHandlerThreading(unittest.TestCase):
                 })
         result = out["results"][0]
         self.assertEqual(result["lastPublishedToMaven"], "20240515000000")
+
+
+# ---------------------------------------------------------------------------
+# T-7 — #317 provenance reporting (resolvedFrom / viaPublicFallback)
+# ---------------------------------------------------------------------------
+class TestProvenanceReporting(unittest.TestCase):
+    def test_public_fallback_answers_reports_via_public_fallback(self):
+        # #317 AC: a Central-only coordinate in an internal-repo-only project,
+        # with MAVEN_MCP_PUBLIC_FALLBACK=on, must report viaPublicFallback=true
+        # (a project-first false-negative made visible) rather than a plain
+        # not-found. CUSTOM_URL 404s first; the appended public Central 200s.
+        files = {"settings.gradle.kts": _settings('maven { url = uri("%s") }' % CUSTOM_URL)}
+        responses = [
+            http_error(CUSTOM_URL, 404, "Not Found"),
+            (200, _meta(["1.0.0", "2.0.0"])),
+        ]
+        with temp_project(files) as root:
+            with unittest.mock.patch.dict(
+                os.environ, {"MAVEN_MCP_PUBLIC_FALLBACK": "on"}
+            ), unittest.mock.patch(
+                "urllib.request.urlopen", side_effect=mock_urlopen(responses)
+            ):
+                out = server.handle_get_latest_version({
+                    "groupId": "com.acme", "artifactId": "lib", "projectPath": root,
+                })
+        self.assertEqual(out["resolvedFrom"]["url"], server.MAVEN_CENTRAL_URL)
+        self.assertIs(out["resolvedFrom"]["viaPublicFallback"], True)
+
+    def test_declared_repo_answers_reports_no_public_fallback(self):
+        # Normal case: the project's own declared repo answers directly, no
+        # fallback involved -> viaPublicFallback=false.
+        files = {"settings.gradle.kts": _settings('maven { url = uri("%s") }' % CUSTOM_URL)}
+        with temp_project(files) as root:
+            with unittest.mock.patch(
+                "urllib.request.urlopen",
+                side_effect=mock_urlopen([(200, _meta(["1.0.0"]))]),
+            ):
+                out = server.handle_get_latest_version({
+                    "groupId": "com.acme", "artifactId": "lib", "projectPath": root,
+                })
+        self.assertEqual(out["resolvedFrom"]["url"], CUSTOM_URL)
+        self.assertIs(out["resolvedFrom"]["viaPublicFallback"], False)
+
+    # --- resolvedFrom is wired onto the OTHER handlers touched by #317 --------
+    # The two tests above pin viaPublicFallback semantics through
+    # get_latest_version; these smoke-tests confirm the field is actually
+    # present (and correctly shaped) on every other success path. A
+    # custom-repo-only project where that repo answers 200 must surface
+    # resolvedFrom={url=CUSTOM_URL, scope="dependency", viaPublicFallback=False}.
+    def _assert_declared(self, rf):
+        self.assertIsNotNone(rf)
+        self.assertEqual(rf["url"], CUSTOM_URL)
+        self.assertEqual(rf["scope"], "dependency")
+        self.assertIs(rf["viaPublicFallback"], False)
+
+    def test_check_multiple_dependencies_includes_resolved_from(self):
+        files = {"settings.gradle.kts": _settings('maven { url = uri("%s") }' % CUSTOM_URL)}
+        with temp_project(files) as root:
+            with unittest.mock.patch(
+                "urllib.request.urlopen",
+                side_effect=mock_urlopen([(200, _meta(["1.0.0", "2.0.0"]))]),
+            ):
+                out = server.handle_check_multiple_dependencies({
+                    "dependencies": [{"groupId": "com.acme", "artifactId": "lib"}],
+                    "projectPath": root,
+                })
+        self._assert_declared(out["results"][0]["resolvedFrom"])
+
+    def test_compare_dependency_versions_includes_resolved_from(self):
+        files = {"settings.gradle.kts": _settings('maven { url = uri("%s") }' % CUSTOM_URL)}
+        with temp_project(files) as root:
+            with unittest.mock.patch(
+                "urllib.request.urlopen",
+                side_effect=mock_urlopen([(200, _meta(["1.0.0", "2.0.0"]))]),
+            ):
+                out = server.handle_compare_dependency_versions({
+                    "dependencies": [{
+                        "groupId": "com.acme", "artifactId": "lib",
+                        "currentVersion": "1.0.0",
+                    }],
+                    "projectPath": root,
+                })
+        self._assert_declared(out["results"][0]["resolvedFrom"])
+
+    def test_get_dependency_health_includes_resolved_from(self):
+        # resolvedFrom is set right after the metadata fetch, before the POM
+        # probe; com.acme is not GitHub-guessable so the chain stops after
+        # metadata + POM-404 with no further network.
+        files = {"settings.gradle.kts": _settings('maven { url = uri("%s") }' % CUSTOM_URL)}
+        responses = [
+            (200, _meta(["1.0.0"], "20240515000000")),
+            http_error(CUSTOM_URL, 404, "Not Found"),  # POM
+        ]
+        with temp_project(files) as root:
+            with unittest.mock.patch(
+                "urllib.request.urlopen", side_effect=mock_urlopen(responses)
+            ):
+                out = server.handle_get_dependency_health({
+                    "dependencies": [{"groupId": "com.acme", "artifactId": "lib"}],
+                    "projectPath": root,
+                })
+        self._assert_declared(out["results"][0]["resolvedFrom"])
+
+    def test_audit_project_dependencies_includes_resolved_from(self):
+        # Gradle project with a declared dependency; vulnerabilities disabled so
+        # the only network call is the metadata fetch against the custom repo.
+        files = {
+            "settings.gradle.kts": _settings('maven { url = uri("%s") }' % CUSTOM_URL),
+            "build.gradle.kts": 'dependencies { implementation("com.acme:lib:1.0.0") }',
+        }
+        with temp_project(files) as root:
+            with unittest.mock.patch(
+                "urllib.request.urlopen",
+                side_effect=mock_urlopen([(200, _meta(["1.0.0", "2.0.0"]))]),
+            ):
+                out = server.handle_audit_project_dependencies({
+                    "projectPath": root, "includeVulnerabilities": False,
+                })
+        self._assert_declared(out["dependencies"][0]["resolvedFrom"])
+
+    def test_get_dependency_changes_impl_includes_resolved_from(self):
+        # Downstream no-versions-in-range still carries resolvedFrom: the repo
+        # answered, so provenance is known even though the result is an error.
+        files = {"settings.gradle.kts": _settings('maven { url = uri("%s") }' % CUSTOM_URL)}
+        with temp_project(files) as root:
+            ctx = server.build_resolution_context({"projectPath": root})
+            with unittest.mock.patch(
+                "urllib.request.urlopen",
+                side_effect=mock_urlopen([(200, _meta(["1.0.0", "2.0.0"]))]),
+            ):
+                out = server._get_dependency_changes_impl(
+                    "com.acme", "lib", "2.0.0", "3.0.0", ctx,
+                )
+        self.assertIn("error", out)  # no versions in (2.0.0, 3.0.0]
+        self._assert_declared(out["resolvedFrom"])
+
+    # --- finding #1 (code-reviewer, /finalize Phase A): the two handlers below
+    # used to build their error entry from a single try/except wrapping BOTH
+    # fetch_metadata AND downstream selection, so a downstream "no version"
+    # error dropped resolvedFrom even though a repo had actually answered. Fixed
+    # by capturing resolved_from right after fetch_metadata succeeds and
+    # threading it into the except-branch error entry too.
+    def test_check_multiple_dependencies_downstream_error_includes_resolved_from(self):
+        # The repo answers 200 but with an empty version list, so
+        # find_latest_version returns None and the handler raises "No version
+        # found" downstream of a successful fetch_metadata.
+        files = {"settings.gradle.kts": _settings('maven { url = uri("%s") }' % CUSTOM_URL)}
+        with temp_project(files) as root:
+            with unittest.mock.patch(
+                "urllib.request.urlopen",
+                side_effect=mock_urlopen([(200, _meta([]))]),
+            ):
+                out = server.handle_check_multiple_dependencies({
+                    "dependencies": [{"groupId": "com.acme", "artifactId": "lib"}],
+                    "projectPath": root,
+                })
+        entry = out["results"][0]
+        self.assertIn("error", entry)
+        self._assert_declared(entry["resolvedFrom"])
+
+    def test_compare_dependency_versions_downstream_error_includes_resolved_from(self):
+        # Same shape as above: empty version list -> find_latest_version_for_current
+        # returns None -> "No matching version found", downstream of a
+        # successful fetch_metadata.
+        files = {"settings.gradle.kts": _settings('maven { url = uri("%s") }' % CUSTOM_URL)}
+        with temp_project(files) as root:
+            with unittest.mock.patch(
+                "urllib.request.urlopen",
+                side_effect=mock_urlopen([(200, _meta([]))]),
+            ):
+                out = server.handle_compare_dependency_versions({
+                    "dependencies": [{
+                        "groupId": "com.acme", "artifactId": "lib",
+                        "currentVersion": "1.0.0",
+                    }],
+                    "projectPath": root,
+                })
+        entry = out["results"][0]
+        self.assertIn("error", entry)
+        self._assert_declared(entry["resolvedFrom"])
+
+    def test_check_multiple_dependencies_fetch_failure_omits_resolved_from(self):
+        # Mirror image of the downstream-error test above: when fetch_metadata
+        # itself raises (every repo in scope 404s), there is genuinely no
+        # provenance to report, so resolvedFrom must be ABSENT from the error
+        # entry (not present-as-None).
+        files = {"settings.gradle.kts": _settings('maven { url = uri("%s") }' % CUSTOM_URL)}
+        with temp_project(files) as root:
+            with unittest.mock.patch(
+                "urllib.request.urlopen",
+                side_effect=mock_urlopen([http_error(CUSTOM_URL, 404, "Not Found")]),
+            ):
+                out = server.handle_check_multiple_dependencies({
+                    "dependencies": [{"groupId": "com.acme", "artifactId": "lib"}],
+                    "projectPath": root,
+                })
+        entry = out["results"][0]
+        self.assertIn("error", entry)
+        self.assertNotIn("resolvedFrom", entry)
+
+
+# ---------------------------------------------------------------------------
+# Security review (#317 finding 2) — userinfo redaction
+# ---------------------------------------------------------------------------
+# A hardcoded `url = "https://user:pass@host/repo"` is a discouraged but real
+# pattern; repo URLs are captured verbatim from build files (no expansion), so
+# without redaction the literal credential would flow into MCP tool-facing
+# JSON (resolvedFrom.url, the check_version_exists/verify_coordinates
+# "repository" field). _strip_userinfo is applied at the output boundary only
+# — the raw, credentialed URL is still what is actually HTTP-fetched.
+CREDENTIALED_URL = "https://repouser:repopass@nexus.example.com/m2"
+REDACTED_URL = "https://***@nexus.example.com/m2"
+
+
+class TestUserinfoRedaction(unittest.TestCase):
+    def test_strip_userinfo_redacts_credentials(self):
+        self.assertEqual(server._strip_userinfo(CREDENTIALED_URL), REDACTED_URL)
+
+    def test_strip_userinfo_no_op_when_no_credentials(self):
+        self.assertEqual(server._strip_userinfo(CUSTOM_URL), CUSTOM_URL)
+
+    def test_get_latest_version_resolved_from_url_redacted(self):
+        files = {"settings.gradle.kts": _settings('maven { url = uri("%s") }' % CREDENTIALED_URL)}
+        with temp_project(files) as root:
+            with unittest.mock.patch(
+                "urllib.request.urlopen",
+                side_effect=mock_urlopen([(200, _meta(["1.0.0"]))]),
+            ):
+                out = server.handle_get_latest_version({
+                    "groupId": "com.acme", "artifactId": "lib", "projectPath": root,
+                })
+        self.assertEqual(out["resolvedFrom"]["url"], REDACTED_URL)
+        self.assertNotIn("repopass", json.dumps(out))
+
+    def test_check_version_exists_repository_field_redacted(self):
+        # maven("url")/maven { url = ... } declarations set name == url (see
+        # discover_repositories), so the "repository" field carries the same
+        # credentialed string and needs the same redaction as resolvedFrom.url.
+        files = {"settings.gradle.kts": _settings('maven { url = uri("%s") }' % CREDENTIALED_URL)}
+        with temp_project(files) as root:
+            with unittest.mock.patch(
+                "urllib.request.urlopen",
+                side_effect=mock_urlopen([(200, _meta(["1.0.0"]))]),
+            ):
+                out = server.handle_check_version_exists({
+                    "groupId": "com.acme", "artifactId": "lib", "version": "1.0.0",
+                    "projectPath": root,
+                })
+        self.assertEqual(out["repository"], REDACTED_URL)
+        self.assertEqual(out["resolvedFrom"]["url"], REDACTED_URL)
+        self.assertNotIn("repopass", json.dumps(out))
+
+    def test_verify_coordinates_repository_field_redacted(self):
+        files = {"settings.gradle.kts": _settings('maven { url = uri("%s") }' % CREDENTIALED_URL)}
+        with temp_project(files) as root:
+            with unittest.mock.patch(
+                "urllib.request.urlopen",
+                side_effect=mock_urlopen([(200, _meta(["1.0.0"]))]),
+            ):
+                out = server.handle_verify_coordinates({
+                    "dependencies": [{"groupId": "com.acme", "artifactId": "lib"}],
+                    "projectPath": root,
+                })
+        result = out["results"][0]
+        self.assertEqual(result["repository"], REDACTED_URL)
+        self.assertNotIn("repopass", json.dumps(out))
+
+    def test_verify_coordinates_transport_exception_with_credentials_does_not_leak_password(self):
+        # /finalize Phase D (security-expert, follow-up to the fetch_metadata
+        # fix below): _verify_one runs its OWN per-repo probe (not
+        # fetch_metadata), with the same urlopen-raises-InvalidURL-on-userinfo-
+        # URL hazard. Without an explicit catch it escapes to
+        # handle_verify_coordinates's outer `except Exception as e: str(e)` and
+        # leaks the password. Must degrade to "unknown" (an ordinary
+        # unverifiable-repo outcome), never an error entry with a raw message.
+        files = {"settings.gradle.kts": _settings('maven { url = uri("%s") }' % CREDENTIALED_URL)}
+        leak = http.client.InvalidURL("nonnumeric port: 'repopass@nexus.example.com'")
+        with temp_project(files) as root:
+            with unittest.mock.patch(
+                "urllib.request.urlopen", side_effect=mock_urlopen([leak]),
+            ):
+                out = server.handle_verify_coordinates({
+                    "dependencies": [{"groupId": "com.acme", "artifactId": "lib"}],
+                    "projectPath": root,
+                })
+        result = out["results"][0]
+        self.assertEqual(result["existenceStatus"], "unknown")
+        self.assertNotIn("repopass", json.dumps(out))
+
+    def test_fetch_metadata_failure_message_does_not_leak_credentials(self):
+        # /finalize Phase 0 (cross-file tracer) + advisor finding: fetch_metadata's
+        # non-200 last_err embeds entry["name"], which can be the literal
+        # credentialed URL (maven("url") declarations set name == url). That
+        # message flows into handle_check_multiple_dependencies's "error" field —
+        # confirm the credential does not leak there either.
+        files = {"settings.gradle.kts": _settings('maven { url = uri("%s") }' % CREDENTIALED_URL)}
+        with temp_project(files) as root:
+            with unittest.mock.patch(
+                "urllib.request.urlopen",
+                side_effect=mock_urlopen([http_error(CREDENTIALED_URL, 404, "Not Found")]),
+            ):
+                out = server.handle_check_multiple_dependencies({
+                    "dependencies": [{"groupId": "com.acme", "artifactId": "lib"}],
+                    "projectPath": root,
+                })
+        entry = out["results"][0]
+        self.assertIn("error", entry)
+        self.assertIn(REDACTED_URL, entry["error"])
+        self.assertNotIn("repopass", json.dumps(out))
+
+    def test_strip_userinfo_redacts_on_parse_failure(self):
+        # Copilot review finding on #335: urlsplit raises ValueError on a
+        # malformed bracketed-IPv6 host, and _strip_userinfo used to fail
+        # open (return the input unchanged), which would leak a literal
+        # password if such a URL ever reached a tool-facing error message.
+        # _strip_userinfo now falls back to a scheme/authority split on this
+        # path instead of returning the raw string.
+        malformed = "https://user:pass@[::1"
+        redacted = server._strip_userinfo(malformed)
+        self.assertNotEqual(redacted, malformed)
+        self.assertNotIn("pass", redacted)
+
+    def test_strip_userinfo_parse_failure_multi_at_fully_redacted(self):
+        # Follow-up Copilot review finding on #335: a first-`@`-only regex
+        # (`(://)[^/@]*@`) only strips up to the FIRST `@` in the authority.
+        # When the userinfo itself contains an unescaped `@` (e.g. a
+        # malformed URL with `pa@ss` as part of the password — exactly the
+        # kind of input that triggers this fallback), the remainder after
+        # the first `@` (`ss@host/path`) was left in place, still leaking a
+        # password fragment. The fix drops everything up to and including
+        # the LAST `@` in the authority instead.
+        malformed = "https://user:pa@ss@[::1/path"
+        redacted = server._strip_userinfo(malformed)
+        self.assertEqual(redacted, "https://[::1/path")
+        self.assertNotIn("user:pa", redacted)
+        self.assertNotIn("ss@", redacted)
+
+    def test_strip_userinfo_parse_failure_no_at_is_passthrough(self):
+        # No `@` anywhere in a malformed URL means there is no userinfo to
+        # redact — the fallback must return the input unchanged rather than
+        # mangling a credential-free malformed URL.
+        malformed = "https://[::1"
+        self.assertEqual(server._strip_userinfo(malformed), malformed)
+
+    def test_fetch_metadata_transport_exception_with_credentials_does_not_leak_password(self):
+        # /finalize Phase C (comment-analyzer + advisor): a userinfo URL
+        # (https://user:pass@host) makes urlopen raise http.client.InvalidURL,
+        # NOT urllib.error.URLError — it lands in fetch_metadata's generic
+        # `except Exception` branch, whose message historically embedded the
+        # raw password (e.g. "nonnumeric port: 'repopass@host'"), a shape
+        # _strip_userinfo's bare-URL check cannot redact. The fix builds the
+        # message from known-safe components (exception type name + the
+        # already-redacted repo name) instead of interpolating str(e).
+        files = {"settings.gradle.kts": _settings('maven { url = uri("%s") }' % CREDENTIALED_URL)}
+        leak = http.client.InvalidURL("nonnumeric port: 'repopass@nexus.example.com'")
+        with temp_project(files) as root:
+            with unittest.mock.patch(
+                "urllib.request.urlopen", side_effect=mock_urlopen([leak]),
+            ):
+                out = server.handle_check_multiple_dependencies({
+                    "dependencies": [{"groupId": "com.acme", "artifactId": "lib"}],
+                    "projectPath": root,
+                })
+        entry = out["results"][0]
+        self.assertIn("error", entry)
+        self.assertIn("InvalidURL", entry["error"])
+        self.assertNotIn("repopass", json.dumps(out))
+
+
+class TestAuditDownstreamErrorResolvedFrom(unittest.TestCase):
+    # /finalize Phase 0 (removed-behavior auditor) finding: handle_audit_project_
+    # dependencies shares the #317 finding-1 shape (fetch_metadata + downstream
+    # selection in one try/except) but wasn't covered by the original fix. An
+    # unexpected exception from get_upgrade_type (after a successful fetch) must
+    # still carry resolvedFrom in the degraded entry, like the other handlers.
+    def test_downstream_exception_after_successful_fetch_preserves_resolved_from(self):
+        files = {
+            "settings.gradle.kts": _settings('maven { url = uri("%s") }' % CUSTOM_URL),
+            "build.gradle.kts": 'dependencies { implementation("com.acme:lib:1.0.0") }',
+        }
+        with temp_project(files) as root:
+            with unittest.mock.patch(
+                "urllib.request.urlopen",
+                side_effect=mock_urlopen([(200, _meta(["1.0.0", "2.0.0"]))]),
+            ):
+                with unittest.mock.patch(
+                    "server.get_upgrade_type", side_effect=RuntimeError("boom")
+                ):
+                    out = server.handle_audit_project_dependencies({
+                        "projectPath": root, "includeVulnerabilities": False,
+                    })
+        entry = out["dependencies"][0]
+        self.assertNotIn("latestVersion", entry)  # degraded entry, same as before
+        self.assertIsNotNone(entry.get("resolvedFrom"))
+        self.assertEqual(entry["resolvedFrom"]["url"], CUSTOM_URL)
+        # silent-failure-hunter (/finalize Phase C): the degraded entry used to
+        # carry no "error" key at all (bare `except Exception:`), unlike its
+        # sibling handlers — fixed alongside the resolvedFrom threading above.
+        self.assertEqual(entry.get("error"), "boom")
 
 
 if __name__ == "__main__":
