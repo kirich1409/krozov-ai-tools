@@ -520,6 +520,40 @@ class TyposquatRiskTest(unittest.TestCase):
         self.assertEqual(first_call_count, cap)
         self.assertEqual(second_call_count, cap)  # NOT 0 -- a fresh budget, not a depleted global
 
+    def test_single_coordinate_triggering_both_gated_calls_consumes_two_budget_units(self):
+        # Regression for the undercounting bug: a coordinate with low_version_count
+        # AND a non-empty `versions` list triggers BOTH search_maven_central
+        # (group-mismatch) and _fetch_gav_timestamp (recent-first-publish) --
+        # that is 2 ACTUAL Solr calls for ONE coordinate, so the shared
+        # per-batch counter must advance by 2, never 1.
+        gated_calls = [0]
+        with unittest.mock.patch.object(server, "search_maven_central", return_value=[]) as msearch, \
+                unittest.mock.patch.object(server, "_fetch_gav_timestamp", return_value=None) as mts:
+            server._compute_typosquat_risk("com.x", "lib", 1, ["1.0.0"], gated_calls)
+        msearch.assert_called_once()
+        mts.assert_called_once()
+        self.assertEqual(gated_calls[0], 2)
+
+    def test_cap_boundary_enforced_per_call_not_per_coordinate(self):
+        # Cap sized to exactly 3: the first coordinate consumes both its calls
+        # (search + timestamp = 2 units, budget now at 2/3). The second
+        # coordinate's group-mismatch search gets the ONE remaining unit (budget
+        # now at 3/3, exactly at the cap), but its recent-first-publish
+        # timestamp fetch must be DENIED -- proving the cap is enforced per
+        # INDIVIDUAL call, not rounded up to let a coordinate finish both of its
+        # calls once it has started (which would silently allow the effective
+        # ceiling to reach cap+1, drifting back toward the original 2x-cap bug).
+        with unittest.mock.patch.object(server, "MAX_GATED_SOLR_CALLS_PER_BATCH", 3), \
+                unittest.mock.patch.object(server, "search_maven_central", return_value=[]) as msearch, \
+                unittest.mock.patch.object(server, "_fetch_gav_timestamp", return_value=None) as mts:
+            gated_calls = [0]
+            server._compute_typosquat_risk("com.x", "lib0", 1, ["1.0.0"], gated_calls)
+            server._compute_typosquat_risk("com.x", "lib1", 1, ["1.0.0"], gated_calls)
+        self.assertEqual(gated_calls[0], 3)
+        self.assertEqual(msearch.call_count, 2)  # both coordinates got their group-mismatch search
+        self.assertEqual(mts.call_count, 1)  # only the first coordinate got the timestamp fetch
+        self.assertEqual(msearch.call_count + mts.call_count, 3)  # exactly the cap, never 4
+
 
 class IsolationAndCapsTest(unittest.TestCase):
     def test_per_item_isolation_unexpected_error(self):
