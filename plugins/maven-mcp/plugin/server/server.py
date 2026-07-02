@@ -3771,9 +3771,11 @@ def _handle_ping(msg_id: Any, params: Dict) -> Dict:
 def _dispatch_message(msg: Any) -> Optional[Dict]:
     """Dispatch one JSON-RPC message; return the response object, or None.
 
-    None means "no response" (a notification). A non-dict message (array,
-    string, number, boolean, null) gets a -32600 Invalid Request response
-    instead of crashing the server (#343).
+    None means "no response" (a notification). A non-dict message (string,
+    number, boolean, null, or an array — top-level arrays are batches and
+    are routed to _dispatch_batch by dispatch()/main() before reaching
+    here, so an array HERE is a nested one inside a batch) gets a -32600
+    Invalid Request response instead of crashing the server (#343).
     """
     if not isinstance(msg, dict):
         return {
@@ -3789,6 +3791,13 @@ def _dispatch_message(msg: Any) -> Optional[Dict]:
     # Notifications — no response
     if msg_id is None:
         return None
+
+    if not isinstance(params, dict):
+        return {
+            "jsonrpc": "2.0",
+            "id": msg_id,
+            "error": {"code": -32602, "message": "Invalid params: expected an object"},
+        }
 
     if method == "initialize":
         return _handle_initialize(msg_id, params)
@@ -3806,6 +3815,9 @@ def _dispatch_message(msg: Any) -> Optional[Dict]:
 
 
 def dispatch(msg: Any) -> None:
+    if isinstance(msg, list):
+        _dispatch_batch(msg)
+        return
     response = _dispatch_message(msg)
     if response is not None:
         _write_response(response)
@@ -3855,11 +3867,8 @@ def main() -> None:
                 "error": {"code": -32700, "message": f"Parse error: {e}"},
             })
             continue
-        if isinstance(msg, list):
-            _dispatch_batch(msg)
-            continue
         try:
-            dispatch(msg)
+            dispatch(msg)  # routes top-level arrays to _dispatch_batch
         except Exception as e:
             msg_id = msg.get("id") if isinstance(msg, dict) else None
             if msg_id is not None:

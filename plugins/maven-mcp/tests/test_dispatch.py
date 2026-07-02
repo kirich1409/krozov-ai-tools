@@ -128,12 +128,51 @@ class DispatchBackCompatTest(unittest.TestCase):
             server.dispatch({"jsonrpc": "2.0", "method": "notifications/initialized"})
         self.assertEqual(stdout.getvalue(), "")
 
-    def test_dispatch_non_dict_writes_invalid_request(self):
+    def test_dispatch_non_dict_scalar_writes_invalid_request(self):
         stdout = io.StringIO()
         with contextlib.redirect_stdout(stdout):
-            server.dispatch([1, 2, 3])
+            server.dispatch("not a request")
         resp = json.loads(stdout.getvalue())
         self.assertEqual(resp["error"]["code"], -32600)
+
+    def test_dispatch_list_delegates_to_batch(self):
+        # Batch support must not be entrypoint-dependent: dispatch() routes
+        # top-level arrays through _dispatch_batch, same as main().
+        stdout = io.StringIO()
+        with contextlib.redirect_stdout(stdout):
+            server.dispatch([_ping(1), _ping(2)])
+        resp = json.loads(stdout.getvalue())
+        self.assertEqual(
+            resp,
+            [
+                {"jsonrpc": "2.0", "id": 1, "result": {}},
+                {"jsonrpc": "2.0", "id": 2, "result": {}},
+            ],
+        )
+
+
+class InvalidParamsTest(unittest.TestCase):
+    """A non-object `params` is a client error: -32602, not -32603."""
+
+    def test_list_params_get_invalid_params(self):
+        out = _run_main(
+            [json.dumps({"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": [1, 2]})]
+        )
+        self.assertEqual(out[0]["error"]["code"], -32602)
+        self.assertEqual(out[0]["id"], 1)
+
+    def test_scalar_params_get_invalid_params(self):
+        out = _run_main(
+            [json.dumps({"jsonrpc": "2.0", "id": 2, "method": "ping", "params": "nope"})]
+        )
+        self.assertEqual(out[0]["error"]["code"], -32602)
+
+    def test_notification_with_bad_params_gets_no_response(self):
+        out = _run_main(
+            [json.dumps({"jsonrpc": "2.0", "method": "ping", "params": [1]}), json.dumps(_ping(3))]
+        )
+        self.assertEqual(len(out), 1)
+        self.assertEqual(out[0]["id"], 3)
 
 
 if __name__ == "__main__":
