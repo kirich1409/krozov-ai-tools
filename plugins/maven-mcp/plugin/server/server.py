@@ -3711,13 +3711,14 @@ TOOL_HANDLERS = {
 # MCP JSON-RPC 2.0 dispatcher
 # ---------------------------------------------------------------------------
 
-def _write_response(response: Dict) -> None:
+def _write_response(response: Any) -> None:
+    # `response` is a single response object, or a list of them for a batch.
     sys.stdout.write(json.dumps(response) + "\n")
     sys.stdout.flush()
 
 
-def _handle_initialize(msg_id: Any, params: Dict) -> None:
-    _write_response({
+def _handle_initialize(msg_id: Any, params: Dict) -> Dict:
+    return {
         "jsonrpc": "2.0",
         "id": msg_id,
         "result": {
@@ -3725,72 +3726,131 @@ def _handle_initialize(msg_id: Any, params: Dict) -> None:
             "capabilities": {"tools": {}},
             "serverInfo": {"name": SERVER_NAME, "version": SERVER_VERSION},
         },
-    })
+    }
 
 
-def _handle_tools_list(msg_id: Any, params: Dict) -> None:
-    _write_response({
+def _handle_tools_list(msg_id: Any, params: Dict) -> Dict:
+    return {
         "jsonrpc": "2.0",
         "id": msg_id,
         "result": {"tools": TOOLS},
-    })
+    }
 
 
-def _handle_tools_call(msg_id: Any, params: Dict) -> None:
+def _handle_tools_call(msg_id: Any, params: Dict) -> Dict:
     tool_name = params.get("name", "")
     arguments = params.get("arguments", {})
     handler = TOOL_HANDLERS.get(tool_name)
     if not handler:
-        _write_response({
+        return {
             "jsonrpc": "2.0",
             "id": msg_id,
             "error": {"code": -32601, "message": f"Unknown tool: {tool_name}"},
-        })
-        return
+        }
     try:
         result = handler(arguments)
-        _write_response({
+        return {
             "jsonrpc": "2.0",
             "id": msg_id,
             "result": {
                 "content": [{"type": "text", "text": json.dumps(result)}],
             },
-        })
+        }
     except Exception as e:
-        _write_response({
+        return {
             "jsonrpc": "2.0",
             "id": msg_id,
             "error": {"code": -32603, "message": str(e)},
-        })
+        }
 
 
-def _handle_ping(msg_id: Any, params: Dict) -> None:
-    _write_response({"jsonrpc": "2.0", "id": msg_id, "result": {}})
+def _handle_ping(msg_id: Any, params: Dict) -> Dict:
+    return {"jsonrpc": "2.0", "id": msg_id, "result": {}}
 
 
-def dispatch(msg: Dict) -> None:
+def _dispatch_message(msg: Any) -> Optional[Dict]:
+    """Dispatch one JSON-RPC message; return the response object, or None.
+
+    None means "no response" (a notification). A non-dict message (string,
+    number, boolean, null, or an array — top-level arrays are batches and
+    are routed to _dispatch_batch by dispatch()/main() before reaching
+    here, so an array HERE is a nested one inside a batch) gets a -32600
+    Invalid Request response instead of crashing the server (#343).
+    """
+    if not isinstance(msg, dict):
+        return {
+            "jsonrpc": "2.0",
+            "id": None,
+            "error": {"code": -32600, "message": "Invalid Request: expected a JSON object"},
+        }
+
     method = msg.get("method", "")
     msg_id = msg.get("id")  # None for notifications
     params = msg.get("params") or {}
 
     # Notifications — no response
     if msg_id is None:
-        return
+        return None
 
-    if method == "initialize":
-        _handle_initialize(msg_id, params)
-    elif method == "tools/list":
-        _handle_tools_list(msg_id, params)
-    elif method == "tools/call":
-        _handle_tools_call(msg_id, params)
-    elif method == "ping":
-        _handle_ping(msg_id, params)
-    else:
-        _write_response({
+    if not isinstance(params, dict):
+        return {
             "jsonrpc": "2.0",
             "id": msg_id,
-            "error": {"code": -32601, "message": f"Method not found: {method}"},
+            "error": {"code": -32602, "message": "Invalid params: expected an object"},
+        }
+
+    if method == "initialize":
+        return _handle_initialize(msg_id, params)
+    if method == "tools/list":
+        return _handle_tools_list(msg_id, params)
+    if method == "tools/call":
+        return _handle_tools_call(msg_id, params)
+    if method == "ping":
+        return _handle_ping(msg_id, params)
+    return {
+        "jsonrpc": "2.0",
+        "id": msg_id,
+        "error": {"code": -32601, "message": f"Method not found: {method}"},
+    }
+
+
+def dispatch(msg: Any) -> None:
+    if isinstance(msg, list):
+        _dispatch_batch(msg)
+        return
+    response = _dispatch_message(msg)
+    if response is not None:
+        _write_response(response)
+
+
+def _dispatch_batch(batch: List[Any]) -> None:
+    """Handle a JSON-RPC 2.0 batch request (a JSON array of messages)."""
+    if not batch:
+        # Per JSON-RPC 2.0, an empty batch gets a single error object, not an array.
+        _write_response({
+            "jsonrpc": "2.0",
+            "id": None,
+            "error": {"code": -32600, "message": "Invalid Request: empty batch"},
         })
+        return
+    responses = []
+    for item in batch:
+        try:
+            response = _dispatch_message(item)
+        except Exception as e:
+            item_id = item.get("id") if isinstance(item, dict) else None
+            response = None
+            if item_id is not None:
+                response = {
+                    "jsonrpc": "2.0",
+                    "id": item_id,
+                    "error": {"code": -32603, "message": f"Internal error: {e}"},
+                }
+        if response is not None:
+            responses.append(response)
+    # An all-notifications batch gets no response at all, per spec.
+    if responses:
+        _write_response(responses)
 
 
 def main() -> None:
@@ -3808,9 +3868,9 @@ def main() -> None:
             })
             continue
         try:
-            dispatch(msg)
+            dispatch(msg)  # routes top-level arrays to _dispatch_batch
         except Exception as e:
-            msg_id = msg.get("id")
+            msg_id = msg.get("id") if isinstance(msg, dict) else None
             if msg_id is not None:
                 _write_response({
                     "jsonrpc": "2.0",
