@@ -254,6 +254,26 @@ class TestParseGradleDeps(unittest.TestCase):
         self.assertIn("ksp", configs)
         self.assertIn("annotationProcessor", configs)
 
+    # #347: classifier / @ext must not be folded into version
+    def test_string_notation_strips_classifier_and_extension(self):
+        content = (
+            'implementation("com.example:lib:1.0:sources")\n'
+            'api("com.x:y:2.0@aar")\n'
+            'implementation("io.netty:netty-transport-native-epoll:4.1.100.Final:linux-x86_64")\n'
+            'api("com.x:y:2.0:sources@aar")\n'
+        )
+        deps = server._parse_gradle_deps(content, "build.gradle.kts")
+        by_ga = {(d["groupId"], d["artifactId"]): d["version"] for d in deps}
+        self.assertEqual(by_ga[("com.example", "lib")], "1.0")
+        self.assertEqual(by_ga[("com.x", "y")], "2.0")
+        self.assertEqual(
+            by_ga[("io.netty", "netty-transport-native-epoll")],
+            "4.1.100.Final",
+        )
+        # classifier@ext: same G:A appears twice with clean version
+        versions = [d["version"] for d in deps if d["groupId"] == "com.x"]
+        self.assertEqual(versions, ["2.0", "2.0"])
+
 
 # ---------------------------------------------------------------------------
 # _parse_gradle_plugins_block
@@ -472,6 +492,21 @@ class TestParseBuildscriptClasspath(unittest.TestCase):
         self.assertEqual(result[0]["groupId"], "com.android.tools.build")
         self.assertEqual(result[0]["artifactId"], "gradle")
         self.assertEqual(result[0]["version"], "8.5.0")
+
+    # #347: classifier / @ext must not be folded into classpath version
+    def test_classpath_strips_classifier_and_extension(self):
+        content = (
+            'buildscript {\n'
+            '    dependencies {\n'
+            '        classpath("com.example:plugin:1.0:sources")\n'
+            '        classpath("com.x:y:2.0@jar")\n'
+            '    }\n'
+            '}'
+        )
+        result = server._parse_buildscript_classpath(content)
+        by_ga = {(d["groupId"], d["artifactId"]): d["version"] for d in result}
+        self.assertEqual(by_ga[("com.example", "plugin")], "1.0")
+        self.assertEqual(by_ga[("com.x", "y")], "2.0")
 
     # #344: nested credentials {} inside repositories still reaches classpath
     def test_deeply_nested_braces_before_classpath(self):
