@@ -15,7 +15,7 @@ import sys
 import tempfile
 import unittest.mock
 import urllib.error
-from typing import Any, Callable, Dict, List, Union
+from typing import Any, Callable, Dict, List, Optional, Union
 
 # --- sys.path shim ----------------------------------------------------------
 # Resolve plugin/server/ relative to THIS file, never the process cwd, so the
@@ -52,20 +52,45 @@ def empty_ctx(public_fallback: bool = False) -> "server.ResolutionContext":
 ResponseSpec = Union["_MockResponse", BaseException, Any]
 
 
+class _MockHeaders(dict):
+    """Minimal headers mapping with case-insensitive ``.get`` for Content-Length."""
+
+    def get(self, key: str, default: Any = None) -> Any:  # type: ignore[override]
+        key_l = key.lower()
+        for k, v in self.items():
+            if str(k).lower() == key_l:
+                return v
+        return default
+
+
 class _MockResponse:
     """Stand-in for the object returned by urllib.request.urlopen.
 
     server.py uses it as ``with urllib.request.urlopen(...) as resp:`` and reads
-    ``resp.status`` / ``resp.read()`` — so this is both a context manager and
-    exposes those two members.
+    ``resp.status`` / ``resp.read(n)`` / ``resp.headers`` — so this is both a
+    context manager and exposes those members. ``read(n)`` honors a size cap
+    like a real file-like body (#350).
     """
 
-    def __init__(self, status: int, body: bytes) -> None:
+    def __init__(
+        self,
+        status: int,
+        body: bytes,
+        headers: Optional[Dict[str, str]] = None,
+    ) -> None:
         self.status = status
         self._body = body
+        self._pos = 0
+        self.headers = _MockHeaders(headers or {})
 
-    def read(self) -> bytes:
-        return self._body
+    def read(self, n: int = -1) -> bytes:
+        if n is None or n < 0:
+            chunk = self._body[self._pos :]
+            self._pos = len(self._body)
+            return chunk
+        chunk = self._body[self._pos : self._pos + n]
+        self._pos += len(chunk)
+        return chunk
 
     def __enter__(self) -> "_MockResponse":
         return self
@@ -81,6 +106,8 @@ def mock_urlopen(responses: Union[ResponseSpec, List[ResponseSpec]]) -> Callable
     across consecutive urlopen calls. Each item is one of:
       - ``(status: int, body: bytes)`` -> returned as a context manager exposing
         ``.status`` and ``.read()``
+      - ``(status: int, body: bytes, headers: dict)`` -> same, with headers
+        (e.g. ``Content-Length`` for #350 size-cap tests)
       - an ``Exception`` instance (e.g. ``http_error(...)``) -> raised
       - a ``_MockResponse`` -> returned as-is
 
@@ -105,6 +132,9 @@ def mock_urlopen(responses: Union[ResponseSpec, List[ResponseSpec]]) -> Callable
             raise spec
         if isinstance(spec, _MockResponse):
             return spec
+        if len(spec) == 3:
+            status, body, headers = spec
+            return _MockResponse(status, body, headers)
         status, body = spec
         return _MockResponse(status, body)
 
