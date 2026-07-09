@@ -487,6 +487,27 @@ class TestParseSettingsModules(unittest.TestCase):
         result = server._parse_settings_modules("include(':feature')")
         self.assertEqual(result, [":feature"])
 
+    # #345: Groovy space-form (no parentheses)
+    def test_groovy_space_form(self):
+        content = "include ':app'\ninclude ':core'"
+        result = server._parse_settings_modules(content)
+        self.assertEqual(result, [":app", ":core"])
+
+    # #345: multi-module parenthesised statement
+    def test_multi_module_parenthesised(self):
+        result = server._parse_settings_modules('include(":app", ":core", ":data")')
+        self.assertEqual(result, [":app", ":core", ":data"])
+
+    # #345: multi-module Groovy space-form
+    def test_multi_module_groovy_space_form(self):
+        result = server._parse_settings_modules("include ':app', ':core'")
+        self.assertEqual(result, [":app", ":core"])
+
+    # #345: includeBuild must not be treated as include
+    def test_include_build_not_matched(self):
+        result = server._parse_settings_modules('includeBuild("composite")\ninclude(":app")')
+        self.assertEqual(result, [":app"])
+
 
 # ---------------------------------------------------------------------------
 # _parse_settings_catalogs
