@@ -24,6 +24,8 @@ The server registers tools that Claude can call during a conversation. It querie
 | `check_version_compatibility` | Check Spring Boot / AGP / Kotlin / javax→jakarta compatibility |
 | `get_dependency_vulnerabilities` | Check for known CVEs via OSV.dev |
 | `get_dependency_health` | Assess adoption-worthiness: version/stability, GitHub activity, issue dynamics, license, owner — raw signals for a verdict |
+| `get_dependency_license` | SPDX / category license intelligence for direct dependencies |
+| `check_license_compliance` | Aggregate transitive licenses via deps.dev; flag copyleft/risky vs project policy |
 | `search_artifacts` | Search Maven Central |
 | `audit_project_dependencies` | Full audit: scan + version compare + vulnerability check |
 | `catalog_entry` | Generate/validate Gradle version-catalog entries (`libs.versions.toml`) with rule-correct aliases and minimal diffs |
