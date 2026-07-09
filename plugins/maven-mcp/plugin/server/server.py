@@ -812,10 +812,47 @@ def classify_version(version: str) -> str:
     return "stable"
 
 
+# Digits attached to known prerelease tokens only — free-text qualifier digits
+# (e.g. "0.6.x-compat") must not be treated as ordinal prerelease numbers (#331).
+_PRERELEASE_ORDINAL_RE = re.compile(
+    r"(?:alpha|a(?=\d)|beta|b(?=\d)|milestone|m(?=\d)|rc|cr|snapshot)[-.]?(\d+)",
+    re.IGNORECASE,
+)
+
+
+def _split_core_and_qualifier(version: str) -> Tuple[str, str]:
+    """Split a version into numeric core and qualifier suffix.
+
+    Qualifier begins at the earliest of: ``-`` / ``+``, a ``.`` whose next
+    segment is non-numeric (``.Final`` / ``.RELEASE``), or a non-digit glued
+    onto the core (``1.0.0legacy`` / ``1.0.0_legacy``). Pure numeric dotted
+    tails (``1.0.0.1``) stay in the core.
+    """
+    if not version:
+        return "", ""
+    i = 0
+    n = len(version)
+    while i < n and version[i].isdigit():
+        i += 1
+    while i < n and version[i] == ".":
+        j = i + 1
+        while j < n and version[j].isdigit():
+            j += 1
+        if j == i + 1:
+            # Non-numeric segment after '.' — qualifier boundary (#331).
+            return version[:i], version[i:]
+        i = j
+    if i < n:
+        return version[:i], version[i:]
+    return version, ""
+
+
 def _parse_segments(version: str) -> List[int]:
-    core = re.split(r"[-+]", version, maxsplit=1)[0]
+    core, _qual = _split_core_and_qualifier(version)
     parts = []
     for p in core.split("."):
+        if not p:
+            continue
         try:
             parts.append(int(p))
         except ValueError:
@@ -824,15 +861,10 @@ def _parse_segments(version: str) -> List[int]:
 
 
 def _extract_prerelease_numbers(version: str) -> List[int]:
-    cut = -1
-    for ch in ("-", "+"):
-        idx = version.find(ch)
-        if idx != -1 and (cut == -1 or idx < cut):
-            cut = idx
-    if cut == -1:
+    _core, qual = _split_core_and_qualifier(version)
+    if not qual:
         return []
-    suffix = version[cut + 1:]
-    return [int(m) for m in re.findall(r"\d+", suffix)]
+    return [int(m.group(1)) for m in _PRERELEASE_ORDINAL_RE.finditer(qual)]
 
 
 def _compare_int_lists(a: List[int], b: List[int]) -> int:
@@ -853,11 +885,11 @@ def compare_versions(a: str, b: str) -> int:
     weight_diff = PRERELEASE_WEIGHT.get(classify_version(a), 5) - PRERELEASE_WEIGHT.get(classify_version(b), 5)
     if weight_diff != 0:
         return weight_diff
-    has_suffix_a = "-" in a or "+" in a
-    has_suffix_b = "-" in b or "+" in b
+    has_suffix_a = bool(_split_core_and_qualifier(a)[1])
+    has_suffix_b = bool(_split_core_and_qualifier(b)[1])
     if has_suffix_a != has_suffix_b:
-        # #325: same core, same stability class, but only one side carries a
-        # qualifier suffix at all — the bare version always ranks higher.
+        # #325/#331: same core, same stability class, but only one side carries
+        # a qualifier at all — the bare version always ranks higher.
         return 1 if not has_suffix_a else -1
     tail_diff = _compare_int_lists(_extract_prerelease_numbers(a), _extract_prerelease_numbers(b))
     if tail_diff != 0:
