@@ -48,7 +48,15 @@ python3 -m unittest discover -s plugins/maven-mcp/tests -p test_handlers.py
 - **Vulnerabilities** — OSV.dev batch query (`api.osv.dev/v1/querybatch`).
 - **Tool handlers** — `handle_*`, one per MCP tool, plus the stdio JSON-RPC dispatch loop.
 
-**Tools:** `get_latest_version`, `check_version_exists`, `check_multiple_dependencies`, `compare_dependency_versions`, `get_dependency_changes`, `scan_project_dependencies`, `expand_bom`, `get_transitive_graph`, `detect_dependency_conflicts`, `check_version_compatibility`, `get_dependency_vulnerabilities`, `get_dependency_health`, `search_artifacts`, `audit_project_dependencies`, `verify_coordinates` (see *`verify_coordinates`* below).
+**Tools:** `get_latest_version`, `check_version_exists`, `check_multiple_dependencies`, `compare_dependency_versions`, `get_dependency_changes`, `scan_project_dependencies`, `expand_bom`, `get_transitive_graph`, `detect_dependency_conflicts`, `check_version_compatibility`, `get_dependency_vulnerabilities`, `get_dependency_health`, `get_dependency_license`, `search_artifacts`, `audit_project_dependencies`, `verify_coordinates` (see *`verify_coordinates`* below).
+
+## License intelligence (`get_dependency_license`, #300)
+
+License data is actionable intelligence, not only a raw GitHub string on `get_dependency_health`.
+
+**`get_dependency_license({dependencies: [{groupId, artifactId, version?}], projectPath?})`.** Resolves license for a batch (capped at `MAX_LICENSE_DEPENDENCIES`, enforced in-handler). Per dependency returns `spdxId`, `name`, `url`, `category` (`permissive` / `weak-copyleft` / `strong-copyleft` / `network-copyleft` / `proprietary` / `unknown`), plain-English `notes`, and `source` (`pom` / `github` / `spdx-normalized`). Resolution reuses the health path: `fetch_metadata` → `fetch_pom` → `extract_licenses_from_pom` (now `{name, url}`) → optional GitHub `license.spdx_id`. SPDX normalization and category mapping are **static lookup tables** — no external license API. GitHub SPDX wins over POM name when both exist.
+
+**`audit_project_dependencies` + `includeLicenses`.** Optional flag (default `false` to avoid extra POM fetches). When true, adds a top-level `licenses` section (`summary.byCategory` / `uniqueSpdxIds` / `hasUnknown` / `hasProprietaryOrCopyleft` + per-dep rows) and `newLicenseCategories` — categories that appear exactly once in the scanned set (per-category comparison, not per SPDX id). Flags `unknown license` / `proprietary license` on each dependency's `signals` array. Does **not** expand into full transitive license compliance (#289).
 
 ## Repository resolution
 
