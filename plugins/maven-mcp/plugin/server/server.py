@@ -795,6 +795,298 @@ def _auth_required_message(entry: Dict[str, Any], status: int) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Maven mirrors + closed/offline mode (#294)
+# ---------------------------------------------------------------------------
+# Closed-perimeter builds redirect mavenCentral()/google()/gradlePluginPortal()
+# via settings.xml <mirror><mirrorOf>…</mirrorOf> (and optionally
+# MAVEN_MCP_REPOSITORY_BASE / MAVEN_MCP_OFFLINE). Without this, every lookup
+# hits unreachable public hosts and hangs on timeouts.
+
+# Well-known public repo URL → Maven-style repository id(s) used by mirrorOf.
+_PUBLIC_REPO_MIRROR_IDS = {
+    MAVEN_CENTRAL_URL.rstrip("/"): ("central", "Maven Central"),
+    GOOGLE_MAVEN_URL.rstrip("/"): ("google", "Google Maven"),
+    GRADLE_PLUGIN_PORTAL_URL.rstrip("/"): ("gradle-plugins", "Gradle Plugin Portal"),
+}
+
+
+def _env_flag(name: str) -> bool:
+    """True when env ``name`` is a truthy toggle (1/true/on/yes)."""
+    return os.environ.get(name, "").strip().lower() in ("1", "true", "on", "yes")
+
+
+def _offline_enabled() -> bool:
+    """``MAVEN_MCP_OFFLINE`` — disable all public well-known repo contact (#294)."""
+    return _env_flag("MAVEN_MCP_OFFLINE")
+
+
+def _repository_base() -> Optional[str]:
+    """``MAVEN_MCP_REPOSITORY_BASE`` — replace public well-known URLs with this
+    base (trailing slash normalised away for storage; callers re-rstrip)."""
+    raw = (os.environ.get("MAVEN_MCP_REPOSITORY_BASE") or "").strip()
+    return raw.rstrip("/") if raw else None
+
+
+def _parse_settings_xml_mirrors(xml: str) -> List[Dict[str, str]]:
+    """Parse ``<mirrors><mirror>`` entries into
+    ``[{id, url, mirrorOf}]`` (declaration order). Regex-only. Comment-stripped
+    so a commented-out mirror cannot contribute."""
+    mirrors: List[Dict[str, str]] = []
+    xml = re.sub(r"<!--.*?-->", "", xml, flags=re.DOTALL)
+    for mm in re.finditer(r"<mirror>([\s\S]*?)</mirror>", xml):
+        block = mm.group(1)
+        idm = re.search(r"<id>([^<]+)</id>", block)
+        urlm = re.search(r"<url>([^<]+)</url>", block)
+        ofm = re.search(r"<mirrorOf>([^<]+)</mirrorOf>", block)
+        if not urlm or not ofm:
+            continue
+        url = urlm.group(1).strip()
+        mirror_of = ofm.group(1).strip()
+        if not url or not mirror_of:
+            continue
+        mid = idm.group(1).strip() if idm else url
+        mirrors.append({"id": mid or url, "url": url.rstrip("/"), "mirrorOf": mirror_of})
+    return mirrors
+
+
+def _settings_xml_paths() -> List[str]:
+    """Candidate settings.xml paths in Maven precedence order for #294:
+    ``MAVEN_MCP_SETTINGS`` (-s override) → ``~/.m2/settings.xml`` →
+    ``$M2_HOME/conf/settings.xml`` / ``$MAVEN_HOME/conf/settings.xml``.
+    First readable file wins (user override replaces global, not merges — MVP)."""
+    paths: List[str] = []
+    override = (os.environ.get("MAVEN_MCP_SETTINGS") or "").strip()
+    if override:
+        paths.append(os.path.expanduser(override))
+        return paths
+    paths.append(os.path.join(os.path.expanduser("~"), ".m2", "settings.xml"))
+    for home_var in ("M2_HOME", "MAVEN_HOME"):
+        home = (os.environ.get(home_var) or "").strip()
+        if home:
+            paths.append(os.path.join(home, "conf", "settings.xml"))
+    return paths
+
+
+def _load_settings_xml_mirrors() -> List[Dict[str, str]]:
+    """Load mirrors from the first readable settings.xml (see ``_settings_xml_paths``)."""
+    for path in _settings_xml_paths():
+        try:
+            with open(path, "r", encoding="utf-8", errors="ignore") as fh:
+                return _parse_settings_xml_mirrors(fh.read())
+        except OSError:
+            continue
+    return []
+
+
+def _repo_mirror_ids(entry: Dict[str, Any]) -> List[str]:
+    """Ids that ``mirrorOf`` may match for ``entry``: declared name (when not a
+    URL), plus well-known aliases derived from the URL (``central`` for Maven
+    Central, etc.)."""
+    ids: List[str] = []
+    name = (entry.get("name") or "").strip()
+    url = (entry.get("url") or "").strip().rstrip("/")
+    if name and "://" not in name:
+        ids.append(name)
+    aliases = _PUBLIC_REPO_MIRROR_IDS.get(url)
+    if aliases:
+        for a in aliases:
+            if a not in ids:
+                ids.append(a)
+    # Host-only fallback so a custom name still matches mirrorOf=hostname.
+    host = _repo_host(url)
+    if host and host not in ids:
+        ids.append(host)
+    return ids
+
+
+def _is_external_repo_url(url: str) -> bool:
+    """Maven ``external:*``: not localhost / loopback and not a ``file:`` URL."""
+    if _is_file_url(url):
+        return False
+    host = _repo_host(url)
+    if not host:
+        return False
+    if host in ("localhost", "127.0.0.1", "::1") or host.endswith(".localhost"):
+        return False
+    return True
+
+
+def _mirror_of_matches(mirror_of: str, entry: Dict[str, Any]) -> bool:
+    """Maven ``mirrorOf`` pattern matching: comma-separated tokens, ``*``,
+    ``external:*``, ``external:http:*``, explicit ids, and ``!id`` exclusions.
+    A pattern matches when at least one positive token matches and no exclusion
+    token matches (Maven DefaultMirrorSelector semantics, simplified)."""
+    tokens = [t.strip() for t in (mirror_of or "").split(",") if t.strip()]
+    if not tokens:
+        return False
+    repo_ids = {i.lower() for i in _repo_mirror_ids(entry)}
+    url = (entry.get("url") or "").strip()
+    scheme = ""
+    try:
+        scheme = (urllib.parse.urlsplit(url).scheme or "").lower()
+    except ValueError:
+        scheme = ""
+
+    excluded = False
+    positive_match = False
+    has_positive = False
+    for tok in tokens:
+        if tok.startswith("!"):
+            excl = tok[1:].strip().lower()
+            if excl == "*":
+                excluded = True
+            elif excl in repo_ids:
+                excluded = True
+            continue
+        has_positive = True
+        low = tok.lower()
+        if tok == "*":
+            positive_match = True
+        elif low == "external:*":
+            if _is_external_repo_url(url):
+                positive_match = True
+        elif low == "external:http:*":
+            if scheme == "http" and _is_external_repo_url(url):
+                positive_match = True
+        elif low in repo_ids:
+            positive_match = True
+    if excluded:
+        return False
+    if not has_positive:
+        # Only exclusions → nothing is mirrored (degenerate pattern).
+        return False
+    return positive_match
+
+
+def _select_mirror(
+    entry: Dict[str, Any], mirrors: List[Dict[str, str]]
+) -> Optional[Dict[str, str]]:
+    """First settings.xml mirror whose ``mirrorOf`` matches ``entry``, or None."""
+    for mirror in mirrors:
+        if _mirror_of_matches(mirror.get("mirrorOf", ""), entry):
+            return mirror
+    return None
+
+
+def _apply_mirror_to_entry(
+    entry: Dict[str, Any], mirrors: List[Dict[str, str]]
+) -> Dict[str, Any]:
+    """Rewrite ``entry`` URL/name to the matching mirror. Mirror ``id`` becomes
+    ``name`` so #291 credential lookup hits ``<servers><server><id>`` for the
+    mirror. Unmatched entries are returned unchanged (shallow copy)."""
+    out = dict(entry)
+    if not mirrors or _is_file_url(out.get("url") or ""):
+        return out
+    mirror = _select_mirror(out, mirrors)
+    if not mirror:
+        return out
+    out["url"] = mirror["url"]
+    out["name"] = mirror["id"]
+    out["mirrored"] = True
+    return out
+
+
+def _is_well_known_public_url(url: str) -> bool:
+    """True when ``url`` is one of the static public well-known bases."""
+    return url.rstrip("/") in _PUBLIC_REPO_MIRROR_IDS
+
+
+def _rewrite_public_url(url: str, repository_base: Optional[str]) -> str:
+    """Replace a well-known public URL with ``repository_base`` when set."""
+    if repository_base and _is_well_known_public_url(url):
+        return repository_base
+    return url
+
+
+def _gradle_init_script_paths() -> List[str]:
+    """``~/.gradle/init.gradle[.kts]`` and ``~/.gradle/init.d/*`` scripts."""
+    root = os.path.join(os.path.expanduser("~"), ".gradle")
+    paths: List[str] = []
+    for name in ("init.gradle", "init.gradle.kts"):
+        paths.append(os.path.join(root, name))
+    init_d = os.path.join(root, "init.d")
+    try:
+        for fn in sorted(os.listdir(init_d)):
+            if fn.endswith((".gradle", ".gradle.kts")):
+                paths.append(os.path.join(init_d, fn))
+    except OSError:
+        pass  # init.d missing or unreadable — no init-script mirrors to load
+    return paths
+
+
+_INIT_MAVEN_URL_RE = re.compile(
+    r"""(?x)
+    (?:
+        # maven\s*\(\s*(?:url\s*=\s*)?["'](https?://[^"']+)["']
+        maven\s*\(\s*(?:url\s*=\s*)?["'](https?://[^"']+)["']
+      |
+        # url\s*=\s*(?:uri\s*\(\s*)?["'](https?://[^"']+)["']
+        \burl\s*=\s*(?:uri\s*\(\s*)?["'](https?://[^"']+)["']
+      |
+        # Groovy: url\s+["'](https?://[^"']+)["']
+        \burl\s+["'](https?://[^"']+)["']
+    )
+    """
+)
+
+
+def _parse_gradle_init_mirror_urls(text: str) -> List[str]:
+    """Extract http(s) Maven repo URLs from a Gradle init script. Used only when
+    the script also references a well-known shorthand (mavenCentral/google/
+    gradlePluginPortal) — a heuristic for closed-contour redirect init scripts
+    (#294, "where feasible")."""
+    if not re.search(
+        r"\b(?:mavenCentral|google|gradlePluginPortal)\s*\(", text
+    ):
+        # Also accept scripts that clear/replace repositories without naming
+        # the shorthand — require at least one maven { url } style URL then.
+        if "maven" not in text:
+            return []
+    urls: List[str] = []
+    seen = set()
+    for m in _INIT_MAVEN_URL_RE.finditer(text):
+        url = next(g for g in m.groups() if g).rstrip("/")
+        if url not in seen and not _is_well_known_public_url(url):
+            seen.add(url)
+            urls.append(url)
+    return urls
+
+
+def _load_gradle_init_mirrors() -> List[Dict[str, str]]:
+    """Feasible Gradle init-script mirror detection (#294): when an init script
+    declares exactly one non-public maven URL (typical Nexus/Artifactory
+    redirect), treat it as a catch-all ``mirrorOf=*`` mirror. Multi-URL scripts
+    are left alone — too ambiguous for a regex MVP."""
+    found: List[str] = []
+    for path in _gradle_init_script_paths():
+        try:
+            with open(path, "r", encoding="utf-8", errors="ignore") as fh:
+                found.extend(_parse_gradle_init_mirror_urls(fh.read()))
+        except OSError:
+            continue
+    # Dedup preserving order.
+    uniq: List[str] = []
+    seen = set()
+    for u in found:
+        if u not in seen:
+            seen.add(u)
+            uniq.append(u)
+    if len(uniq) != 1:
+        return []
+    return [{"id": "gradle-init-mirror", "url": uniq[0], "mirrorOf": "*"}]
+
+
+def _load_mirrors() -> List[Dict[str, str]]:
+    """settings.xml mirrors first; if none, fall back to a single Gradle init
+    catch-all mirror when detectable. settings.xml wins entirely when present
+    so a corporate Maven mirror is not diluted by init-script heuristics."""
+    mirrors = _load_settings_xml_mirrors()
+    if mirrors:
+        return mirrors
+    return _load_gradle_init_mirrors()
+
+
+# ---------------------------------------------------------------------------
 # Repository resolution
 # ---------------------------------------------------------------------------
 
@@ -815,36 +1107,46 @@ class ResolutionContext:
     """Repository-resolution context built ONCE at the handler boundary and
     threaded down to every resolver. ``scoped_repos`` is the
     ``discover_repositories`` result and doubles as the per-invocation memo (no
-    separate cache map); ``public_fallback`` is read from
-    MAVEN_MCP_PUBLIC_FALLBACK at construction, never sniffed in leaf functions."""
+    separate cache map). Closed-mode fields (#294) — ``offline``,
+    ``repository_base``, ``mirrors`` — and ``public_fallback`` are read from
+    the environment at construction, never sniffed in leaf functions."""
 
     def __init__(
         self,
         project_path: str,
         scoped_repos: Dict[str, List[Dict[str, str]]],
         public_fallback: bool,
+        offline: bool = False,
+        repository_base: Optional[str] = None,
+        mirrors: Optional[List[Dict[str, str]]] = None,
     ) -> None:
         self.project_path = project_path
         self.scoped_repos = scoped_repos
         self.public_fallback = public_fallback
+        self.offline = offline
+        self.repository_base = repository_base
+        self.mirrors = list(mirrors) if mirrors else []
 
 
 def _public_fallback_enabled() -> bool:
     """MAVEN_MCP_PUBLIC_FALLBACK toggle. Default OFF (closed-mode #294 wants it
     off); when ON, public repos are appended even for projects that declare
     their own repositories (escape hatch for implicit/inherited-repo builds)."""
-    return os.environ.get("MAVEN_MCP_PUBLIC_FALLBACK", "").strip().lower() in (
-        "1", "true", "on", "yes",
-    )
+    return _env_flag("MAVEN_MCP_PUBLIC_FALLBACK")
 
 
 def build_resolution_context(args: Dict) -> "ResolutionContext":
     """Build a ResolutionContext from a tool-call args dict at the handler
-    boundary. project_path defaults to the current working directory; the toggle
-    is read here once, not in the leaf resolvers."""
+    boundary. project_path defaults to the current working directory; closed-
+    mode toggles and mirrors are read here once, not in the leaf resolvers."""
     project_path = args.get("projectPath") or os.getcwd()
     return ResolutionContext(
-        project_path, discover_repositories(project_path), _public_fallback_enabled()
+        project_path,
+        discover_repositories(project_path),
+        _public_fallback_enabled(),
+        offline=_offline_enabled(),
+        repository_base=_repository_base(),
+        mirrors=_load_mirrors(),
     )
 
 
@@ -862,6 +1164,28 @@ def _public_repos(group_id: str, artifact_id: str) -> List[Tuple[str, str]]:
     return repos
 
 
+def _finalize_repo_entries(
+    entries: List[Dict[str, Any]], ctx: "ResolutionContext"
+) -> List[Dict[str, Any]]:
+    """Apply ``MAVEN_MCP_REPOSITORY_BASE`` rewrite, settings.xml / init-script
+    mirrors, then drop remaining well-known public URLs when ``offline`` (#294).
+    Dedupes by URL (first-seen wins) so a catch-all mirror collapsing several
+    public shorthands does not probe the same host repeatedly."""
+    out: List[Dict[str, Any]] = []
+    for entry in entries:
+        e = dict(entry)
+        e["url"] = _rewrite_public_url(e["url"], ctx.repository_base)
+        if ctx.repository_base and _is_well_known_public_url(entry["url"]):
+            # Name becomes the base host so #291 cred lookup can match it.
+            host = _repo_host(ctx.repository_base) or ctx.repository_base
+            e["name"] = host
+        e = _apply_mirror_to_entry(e, ctx.mirrors)
+        if ctx.offline and _is_well_known_public_url(e["url"]):
+            continue
+        out.append(e)
+    return _dedup_repos(out)
+
+
 def _repos_for(
     group_id: str, artifact_id: str, ctx: "ResolutionContext"
 ) -> List[Dict[str, Any]]:
@@ -875,20 +1199,29 @@ def _repos_for(
     declared repos are returned EXACTLY, with no implicit public append — the
     #299/#310 core. Otherwise the static public routing is the fallback. When
     ``ctx.public_fallback`` is ON the public repos are appended even for a
-    declared scope (deduped by URL)."""
+    declared scope (deduped by URL).
+
+    Closed mode (#294): ``ctx.mirrors`` rewrite matched repo URLs (settings.xml
+    ``mirrorOf`` / Gradle init heuristic); ``ctx.repository_base`` replaces
+    well-known public URLs; ``ctx.offline`` drops any remaining public hosts so
+    they are never contacted."""
     scope = "plugin" if artifact_id.endswith(".gradle.plugin") else "dependency"
     declared = ctx.scoped_repos.get(scope, [])
     # mavenLocal / file:// markers are non-queryable; scheme check is
     # case-insensitive so ``FILE://`` cannot bypass the guard (#348).
     queryable = [r for r in declared if not _is_file_url(r["url"])]
 
-    public_entries = [
-        {"name": name, "url": url, "scope": scope, "is_public_fallback": True}
-        for name, url in _public_repos(group_id, artifact_id)
-    ]
+    # When offline with no repository_base and no mirrors, public fallbacks are
+    # suppressed entirely — contacting repo1.maven.org would only hang.
+    public_entries: List[Dict[str, Any]] = []
+    if (not ctx.offline) or ctx.repository_base or ctx.mirrors:
+        public_entries = [
+            {"name": name, "url": url, "scope": scope, "is_public_fallback": True}
+            for name, url in _public_repos(group_id, artifact_id)
+        ]
 
     if not queryable:
-        return public_entries
+        return _finalize_repo_entries(public_entries, ctx)
 
     # Content/group filtering (#320): a repo with an attached `includeGroup` /
     # `includeGroupByRegex` filter is only consulted for a coordinate whose
@@ -906,10 +1239,10 @@ def _repos_for(
         {"name": r["name"], "url": r["url"], "scope": scope, "is_public_fallback": False}
         for r in matched
     ]
-    if ctx.public_fallback:
+    if ctx.public_fallback and public_entries:
         entries.extend(public_entries)
-        return _dedup_repos(entries)
-    return entries
+        return _finalize_repo_entries(_dedup_repos(entries), ctx)
+    return _finalize_repo_entries(entries, ctx)
 
 
 def _parse_metadata_xml(xml: str, group_id: str, artifact_id: str) -> Dict[str, Any]:
@@ -990,12 +1323,24 @@ def fetch_metadata(group_id: str, artifact_id: str, ctx: "ResolutionContext") ->
     merged_versions: List[str] = []
     last_updated: Optional[str] = None
     answered = False
-    # An empty `repos` list (possible since #320: every declared repo in scope
-    # was excluded by content/group filtering) has no entry to set a last_err
-    # from — default to an explicit reason instead of leaving this None, which
-    # would otherwise surface as the confusing "...: None" in the raised
-    # message below.
-    last_err = "no repository in scope (declared repo(s) excluded by content/group filtering)" if not repos else None
+    # An empty `repos` list has no entry to set a last_err from — default to an
+    # explicit reason instead of leaving this None (which would surface as the
+    # confusing "...: None"). Two causes since #320/#294: content/group filtering
+    # excluded every declared repo, or offline/closed mode dropped all public
+    # hosts with no mirror / REPOSITORY_BASE replacement.
+    if not repos:
+        if ctx.offline and not ctx.repository_base and not ctx.mirrors:
+            last_err = (
+                "no queryable repositories (offline/closed mode with no mirror "
+                "or MAVEN_MCP_REPOSITORY_BASE)"
+            )
+        else:
+            last_err = (
+                "no repository in scope (declared repo(s) excluded by "
+                "content/group filtering)"
+            )
+    else:
+        last_err = None
     # First repo (in _repos_for order: declared repos before any public-fallback
     # append) that answers 200 — surfaced as resolvedFrom for #317 provenance.
     resolved_from: Optional[Dict[str, Any]] = None
