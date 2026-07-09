@@ -1010,7 +1010,7 @@ def _gradle_init_script_paths() -> List[str]:
             if fn.endswith((".gradle", ".gradle.kts")):
                 paths.append(os.path.join(init_d, fn))
     except OSError:
-        pass
+        pass  # init.d missing or unreadable — no init-script mirrors to load
     return paths
 
 
@@ -1213,8 +1213,10 @@ def _repos_for(
 
     # When offline with no repository_base and no mirrors, public fallbacks are
     # suppressed entirely — contacting repo1.maven.org would only hang.
-    allow_public = not (
-        ctx.offline and not ctx.repository_base and not ctx.mirrors
+    # De Morgan form (not nested ``not (...)``) keeps the intent clear and
+    # avoids a CodeQL false-positive on the local.
+    allow_public = (
+        (not ctx.offline) or bool(ctx.repository_base) or bool(ctx.mirrors)
     )
     public_entries: List[Dict[str, Any]] = []
     if allow_public:
