@@ -8,7 +8,8 @@ description: >-
 
 # Latest Version
 
-Find the latest version of a specific Maven artifact by querying Maven Central directly.
+Find the latest version of a Maven artifact via the plugin MCP server (project-aware
+repository resolution, cache, relocation detection).
 
 ## Arguments
 
@@ -22,65 +23,36 @@ The user provides `groupId:artifactId`, for example:
 1. Parse the user's input to extract `groupId` and `artifactId` (split by `:`).
    If the input has no `:`, ask the user to provide it in `groupId:artifactId` form.
 
-2. Convert `groupId` to a URL path by replacing every `.` with `/`.
-   Example: `io.ktor` → `io/ktor`.
+2. **Call `get_latest_version`** with:
+   - `groupId`, `artifactId`
+   - optional `stabilityFilter`: `PREFER_STABLE` (default), `STABLE_ONLY`, or `ALL`
+   - optional `projectPath` when the user is inside a project (uses declared repos)
 
-3. Fetch metadata from Maven repositories. Use WebFetch in order:
+3. Present the tool result:
+   - `latestVersion` and `stability`
+   - `allVersionsCount` when useful
+   - `resolvedFrom` (which repo answered; note `viaPublicFallback` if true)
+   - `relocatedTo` when present — surface the new coordinates clearly
 
-   **a. Maven Central** (always try first):
-   ```
-   https://repo1.maven.org/maven2/{group_path}/{artifactId}/maven-metadata.xml
-   ```
-
-   **b. Google Maven** (try if the artifact looks Android-related — `groupId` starts with
-   `androidx.`, `com.google.android.`, `com.android.`, `com.google.firebase.`,
-   `com.google.gms.`, `com.google.mlkit.`):
-   ```
-   https://dl.google.com/dl/android/maven2/{group_path}/{artifactId}/maven-metadata.xml
-   ```
-
-   **c. Gradle Plugin Portal** (try if `artifactId` ends with `.gradle.plugin` or the
-   groupId matches known Gradle plugin patterns):
-   ```
-   https://plugins.gradle.org/m2/{group_path}/{artifactId}/maven-metadata.xml
-   ```
-
-4. From the XML response, extract all `<version>` entries inside `<versions>`.
-   Also note `<latest>` and `<release>` tags if present.
-
-5. Classify each version for stability:
-   - **STABLE** — no pre-release suffix (no alpha/beta/rc/dev/snapshot/milestone/preview,
-     case-insensitive)
-   - **RC** — contains `-rc`, `-RC`, `-RC.`, `-rc.`
-   - **BETA** — contains `-beta`, `-Beta`, `-b`
-   - **ALPHA** — contains `-alpha`, `-Alpha`, `-dev`, `-Dev`, `-SNAPSHOT`, `-snapshot`,
-     `-milestone`, `-M`, `-preview`, `-Preview`, `-eap`, `-EAP`
-
-6. Determine the latest versions to display:
-   - **Latest stable** — highest stable version (by semantic version ordering).
-     If no stable versions exist, note that.
-   - **Latest overall** — highest version across all stability levels (if different from
-     stable, show it too).
-
-7. Display the result:
+   Example:
 
    ```
    ## io.ktor:ktor-client-core
 
-   Latest stable:  3.1.3
-   Latest overall: 3.1.3
-
-   Recent versions: 3.1.3, 3.1.2, 3.1.1, 3.1.0, 3.0.3 ... (N total)
+   Latest: 3.1.3 (STABLE)
+   Resolved from: https://repo1.maven.org/maven2 (dependency)
    ```
 
-   If stable and overall are the same, show only "Latest: X".
-   If there are more than 10 versions total, show the 5 most recent and note "(N total)".
+## Error handling
 
-## Error Handling
+- If the tool reports not found / error, tell the user and suggest checking spelling.
+  Do **not** invent a version from memory.
+- Optional: `verify_coordinates` with the same GA if the user may have hallucinated the name.
 
-- If all repository fetches return 404 or fail, tell the user the artifact was not found
-  and suggest checking the `groupId` and `artifactId` spelling.
-- If only Google Maven succeeds (404 on Maven Central), present that result and note the
-  source.
-- If the XML response is empty or malformed, note the parse failure and surface the raw URL
-  so the user can check manually.
+## Fallback (MCP unavailable only)
+
+If `get_latest_version` cannot be called, fetch `maven-metadata.xml` from public repos
+(Maven Central → Google Maven for Android/Google groups → Gradle Plugin Portal for
+`.gradle.plugin` markers), parse `<version>` / `<latest>` / `<release>`, and pick the
+highest stable version. Note that this path **skips project-declared private repos** and
+relocation detection — say so when reporting.
