@@ -26,6 +26,7 @@ The server registers tools that Claude can call during a conversation. It querie
 | `get_dependency_health` | Assess adoption-worthiness: version/stability, GitHub activity, issue dynamics, license, owner — raw signals for a verdict |
 | `search_artifacts` | Search Maven Central |
 | `audit_project_dependencies` | Full audit: scan + version compare + vulnerability check |
+| `catalog_entry` | Generate/validate Gradle version-catalog entries (`libs.versions.toml`) with rule-correct aliases and minimal diffs |
 | `verify_coordinates` | Tri-state existence check + did-you-mean for hallucinated coordinates |
 
 ### Skills

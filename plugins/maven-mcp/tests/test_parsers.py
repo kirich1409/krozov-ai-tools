@@ -986,6 +986,7 @@ class TestParseTomlCatalog(unittest.TestCase):
         result = server._parse_toml_catalog("")
         self.assertEqual(result["libraries"], {})
         self.assertEqual(result["plugins"], {})
+        self.assertEqual(result.get("versions", {}), {})
 
     # Mirrors: toml-parser.test.ts > "parses [plugins] with version.ref"
     def test_plugins_with_version_ref(self):

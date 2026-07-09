@@ -71,6 +71,29 @@ Apply only the groups the user confirms. Touch only version values:
 - Module direct / Plugin DSL / Buildscript — inline version string in the build file
 - pom.xml — `<version>` inside the matching `<dependency>`
 
+### Catalog-aware edits (`catalog_entry`, #288)
+
+Gradle has **no** built-in command to update `gradle/libs.versions.toml`. Before adding
+or renaming catalog aliases, call **`catalog_entry`**:
+
+- **Upgrade existing alias** — `mode: "generate"` with the same alias + new `version` and
+  the current `catalogToml`. Prefer the returned `suggestedDiff` (usually a single
+  `[versions]` key bump). Do not rewrite the whole file.
+- **Add a library/plugin** — `mode: "generate"` with `coordinate` + `kind`. Use the
+  returned `alias` / `accessor` / `suggestedDiff` as-is (kebab-case alias, reserved-segment
+  safe, `libs.x` or `alias(libs.plugins.x)`).
+- **Sanity-check before/after** — `mode: "validate"` with `catalogToml` and, when editing
+  build scripts, `buildContent`. Fix any `violations` (reserved aliases, invalid first
+  subgroups, `id(libs.plugins.x)` misuse, `libs` inside `subprojects {}` / `buildscript {}`).
+
+Hard rules when editing catalogs by hand:
+
+- Default catalog path is exactly `gradle/libs.versions.toml`.
+- Plugins: `alias(libs.plugins…)` — never `id(libs.plugins…)`.
+- Do not use reserved aliases (`extensions` / `class` / `convention`) or first segments
+  `bundles` / `versions` / `plugins` (e.g. `versions-foo` is invalid; `versionsFoo` or
+  `foo-versions` is fine).
+
 ## Step 5 — Build verification
 
 After every edit pass:

@@ -46,9 +46,36 @@ python3 -m unittest discover -s plugins/maven-mcp/tests -p test_handlers.py
 - **Version compatibility** — `check_version_compatibility` + shipped `compat-matrices.json` (AGP/KGP/javax→jakarta; Spring Boot via `expand_bom`) (#285).
 - **GitHub & changelog** — `gh_repo_exists` / `gh_fetch_repo` / `gh_fetch_releases` / `gh_fetch_user` / `gh_fetch_issue_stats`, `discover_github_repo` (POM SCM → groupId guess), and `_get_dependency_changes_impl` + `_filter_version_range` with provider selection (#308): AndroidX docs → AGP docs → GitHub releases. Minimal stdlib `html_to_text` powers the AGP/AndroidX HTML parsers. GitHub CHANGELOG.md markdown fallback is still not ported.
 - **Vulnerabilities** — OSV.dev batch query (`api.osv.dev/v1/querybatch`).
+- **Version catalog generate/validate** — `generate_catalog_entry` / `validate_catalog` / `handle_catalog_entry` (#288); reuses `_parse_toml_catalog`.
 - **Tool handlers** — `handle_*`, one per MCP tool, plus the stdio JSON-RPC dispatch loop.
 
-**Tools:** `get_latest_version`, `check_version_exists`, `check_multiple_dependencies`, `compare_dependency_versions`, `get_dependency_changes`, `scan_project_dependencies`, `expand_bom`, `get_transitive_graph`, `detect_dependency_conflicts`, `check_version_compatibility`, `get_dependency_vulnerabilities`, `get_dependency_health`, `get_dependency_license`, `search_artifacts`, `audit_project_dependencies`, `verify_coordinates` (see *`verify_coordinates`* below).
+**Tools:** `get_latest_version`, `check_version_exists`, `check_multiple_dependencies`, `compare_dependency_versions`, `get_dependency_changes`, `scan_project_dependencies`, `expand_bom`, `get_transitive_graph`, `detect_dependency_conflicts`, `check_version_compatibility`, `get_dependency_vulnerabilities`, `get_dependency_health`, `get_dependency_license`, `search_artifacts`, `audit_project_dependencies`, `catalog_entry` (see *Version catalog generate/validate* below), `verify_coordinates` (see *`verify_coordinates`* below).
+
+## Version catalog generate/validate (`catalog_entry`, #288)
+
+Gradle has no native command to update version catalogs; agents editing
+`gradle/libs.versions.toml` by hand routinely break kebab→accessor mapping, reserved
+alias segments, and plugin DSL usage. `catalog_entry` is a pure local tool (no network)
+that generates rule-correct entries and validates existing TOML.
+
+**`catalog_entry({mode, coordinate?, kind?, alias?, catalogToml?, buildContent?, catalogPath?, catalogName?, projectPath?})`.**
+
+- **`mode: "generate"`** — from `{groupId, artifactId, version?}` (+ `kind: library|plugin`)
+  returns `{alias, accessor, entry, suggestedDiff, violations?, notes[]}`. Alias is
+  kebab-case, reserved-segment safe, clash-aware against `catalogToml`. Library accessor
+  is `libs.x.y`; plugin accessor is `alias(libs.plugins.x.y)` (never `id(...)`). When the
+  alias already exists and a version is supplied, `suggestedDiff` is a **minimal**
+  `[versions]` bump (or single-line replace), not a full-file rewrite.
+- **`mode: "validate"`** — parses `catalogToml` (or reads `gradle/libs.versions.toml` under
+  `projectPath`) and optional `buildContent`. Reports `violations[{rule, detail}]` for:
+  invalid alias format, reserved names (`extensions`/`class`/`convention`), reserved first
+  segments (`bundles`/`versions`/`plugins`), accessor clashes (`someAlias` vs `some-alias`),
+  undefined `version.ref`, wrong default catalog path, `id(libs.plugins.x)` misuse, and
+  `libs` accessors inside `subprojects {}` / `buildscript {}`.
+
+Reuses `_parse_toml_catalog` (same parser as `scan_project_dependencies`). Does **not**
+change the pre-edit write guard (`pre-edit-deps.sh` / #359 TOML `[plugins]` extraction).
+`/check-deps` skill routes catalog edits through this tool.
 
 ## License intelligence (`get_dependency_license`, #300)
 
