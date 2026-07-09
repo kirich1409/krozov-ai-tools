@@ -38,6 +38,7 @@ os.environ.setdefault("MAVEN_MCP_CACHE_DISABLE", "1")
 os.environ.setdefault("MAVEN_MCP_SETTINGS", "/__maven_mcp_test_no_settings__")
 os.environ.pop("MAVEN_MCP_OFFLINE", None)
 os.environ.pop("MAVEN_MCP_REPOSITORY_BASE", None)
+os.environ.pop("MAVEN_MCP_REPOSITORY_TYPE", None)
 # Hermetic TLS/proxy defaults (#298): do not inherit developer proxy/CA/insecure.
 os.environ.pop("MAVEN_MCP_CA_CERT", None)
 os.environ.pop("MAVEN_MCP_INSECURE_TLS", None)

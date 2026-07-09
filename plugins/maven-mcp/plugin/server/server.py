@@ -399,6 +399,22 @@ def http_post_json(
     return _request_with_retry(req, timeout=timeout)
 
 
+def http_post_bytes(
+    url: str,
+    data: bytes,
+    content_type: str,
+    headers: Optional[Dict[str, str]] = None,
+    timeout: Optional[float] = None,
+) -> Tuple[int, bytes]:
+    """POST raw bytes (e.g. Artifactory AQL ``text/plain`` body)."""
+    _assert_http_url(url)
+    h = _make_headers({"Content-Type": content_type})
+    if headers:
+        h.update(headers)
+    req = urllib.request.Request(url, data=data, headers=h, method="POST")
+    return _request_with_retry(req, timeout=timeout)
+
+
 # ---------------------------------------------------------------------------
 # Persistent file cache
 # ---------------------------------------------------------------------------
@@ -4930,6 +4946,455 @@ def _fetch_gav_timestamp(group_id: str, artifact_id: str, version: str) -> Optio
 
 
 # ---------------------------------------------------------------------------
+# Repo-manager search backends (#295)
+# ---------------------------------------------------------------------------
+# Closed contours cannot reach search.maven.org. Nexus 3 and Artifactory expose
+# their own search APIs on the same host as MAVEN_MCP_REPOSITORY_BASE / mirrors.
+# Public Solr remains the default outside closed mode.
+
+_SEARCH_BACKEND_TYPES = ("auto", "nexus", "artifactory", "central")
+
+
+def _normalize_search_backend(raw: Optional[str]) -> str:
+    """Clamp repositoryType / MAVEN_MCP_REPOSITORY_TYPE to a known value."""
+    val = (raw or "").strip().lower()
+    if val in _SEARCH_BACKEND_TYPES:
+        return val
+    return "auto"
+
+
+def _repository_type_env() -> str:
+    return _normalize_search_backend(os.environ.get("MAVEN_MCP_REPOSITORY_TYPE"))
+
+
+def _closed_search_mode(ctx: "ResolutionContext") -> bool:
+    """True when search should prefer a repo-manager backend over public Solr."""
+    return bool(ctx.offline or ctx.repository_base or ctx.mirrors)
+
+
+def _search_manager_base(ctx: "ResolutionContext") -> Optional[str]:
+    """Maven-repo URL used to derive the manager API root (base, else first mirror)."""
+    if ctx.repository_base:
+        return ctx.repository_base.rstrip("/")
+    if ctx.mirrors:
+        url = (ctx.mirrors[0].get("url") or "").strip().rstrip("/")
+        return url or None
+    return None
+
+
+def _manager_origin(url: str) -> str:
+    parts = urllib.parse.urlsplit(url)
+    return f"{parts.scheme}://{parts.netloc}"
+
+
+def _nexus_api_root(base_url: str) -> str:
+    """Nexus REST lives at the host origin (``/service/rest/v1/...``)."""
+    return _manager_origin(base_url)
+
+
+def _artifactory_api_root(base_url: str) -> str:
+    """Artifactory REST is under ``.../artifactory/api/...``."""
+    parts = urllib.parse.urlsplit(base_url)
+    origin = f"{parts.scheme}://{parts.netloc}"
+    path = parts.path or ""
+    idx = path.lower().find("/artifactory")
+    if idx >= 0:
+        return origin + path[: idx + len("/artifactory")]
+    return origin + "/artifactory"
+
+
+def _detect_manager_from_url(base_url: str) -> Optional[str]:
+    """Heuristic manager type from URL path / host. Returns nexus|artifactory|None."""
+    try:
+        parts = urllib.parse.urlsplit(base_url)
+    except ValueError:
+        return None
+    path = (parts.path or "").lower()
+    host = (parts.hostname or "").lower()
+    if "/artifactory" in path or "artifactory" in host or "jfrog" in host:
+        return "artifactory"
+    if "/repository/" in path or "nexus" in host:
+        return "nexus"
+    return None
+
+
+def _detect_manager_from_headers(headers: Any) -> Optional[str]:
+    """Inspect response headers for Nexus / JFrog markers."""
+    if headers is None:
+        return None
+    get = getattr(headers, "get", None)
+    if not callable(get):
+        # Mapping-like
+        def get(key, default=None):  # type: ignore[misc]
+            key_l = key.lower()
+            for k, v in dict(headers).items():
+                if str(k).lower() == key_l:
+                    return v
+            return default
+    keys = []
+    try:
+        keys = list(headers.keys())  # type: ignore[arg-type]
+    except Exception:
+        keys = []
+    joined = " ".join(str(k) for k in keys).lower()
+    server = str(get("Server") or get("server") or "").lower()
+    if "nexus" in server or "x-nexus" in joined or any(
+        str(k).lower().startswith("x-nexus") for k in keys
+    ):
+        return "nexus"
+    if (
+        "artifactory" in server
+        or "jfrog" in server
+        or "x-jfrog" in joined
+        or "x-artifactory" in joined
+        or any(
+            str(k).lower().startswith(("x-jfrog", "x-artifactory")) for k in keys
+        )
+    ):
+        return "artifactory"
+    return None
+
+
+def _http_head_or_get_headers(
+    url: str, headers: Optional[Dict[str, str]] = None
+) -> Tuple[Optional[int], Any]:
+    """One-shot GET returning ``(status, headers)`` for manager detection.
+
+    Uses the shared SSL/proxy stack via ``_urlopen`` but skips the retry layer —
+    detection must be cheap and fail-open. Never raises.
+    """
+    try:
+        _assert_http_url(url)
+        req = urllib.request.Request(url, headers=headers or _make_headers())
+        try:
+            with _urlopen(req, timeout=HTTP_TIMEOUT_EXTERNAL) as resp:
+                status = getattr(resp, "status", None) or resp.getcode()
+                return int(status), getattr(resp, "headers", None)
+        except urllib.error.HTTPError as e:
+            return int(e.code), getattr(e, "headers", None)
+    except Exception:
+        return None, None
+
+
+def detect_repository_manager(
+    base_url: str,
+    preferred: Optional[str] = None,
+    probe: bool = True,
+    headers: Optional[Dict[str, str]] = None,
+) -> Optional[str]:
+    """Detect ``nexus`` / ``artifactory`` from override, URL shape, headers, or probe.
+
+    Probe (when still unknown): Nexus ``/service/rest/v1/status`` then Artifactory
+    ``/api/system/ping``, preferring ``X-Nexus-*`` / ``X-JFrog-*`` response headers
+    when present. Failures degrade to None — never raise.
+    """
+    if preferred in ("nexus", "artifactory"):
+        return preferred
+    kind = _detect_manager_from_url(base_url)
+    if kind:
+        return kind
+    if not probe:
+        return None
+    try:
+        nexus_url = _nexus_api_root(base_url) + "/service/rest/v1/status"
+        status, resp_headers = _http_head_or_get_headers(nexus_url, headers)
+        hdr_kind = _detect_manager_from_headers(resp_headers)
+        if hdr_kind:
+            return hdr_kind
+        if status == 200:
+            return "nexus"
+        art_url = _artifactory_api_root(base_url) + "/api/system/ping"
+        status, resp_headers = _http_head_or_get_headers(art_url, headers)
+        hdr_kind = _detect_manager_from_headers(resp_headers)
+        if hdr_kind:
+            return hdr_kind
+        if status == 200:
+            return "artifactory"
+    except Exception:
+        return None
+    return None
+
+
+def _search_auth_headers(base_url: str) -> Dict[str, str]:
+    """UA (+ optional Authorization) for manager search against ``base_url`` (#291)."""
+    host = _repo_host(base_url) or base_url
+    entry = {"name": host, "url": base_url}
+    return _repo_request_headers(entry)
+
+
+def _parse_gav_query(query: str) -> Tuple[Optional[str], Optional[str]]:
+    """Split ``group:artifact`` / ``g:a:v`` into (groupId, artifactId); else (None, None)."""
+    q = query.strip()
+    if ":" not in q:
+        return None, None
+    parts = [p.strip() for p in q.split(":")]
+    if len(parts) >= 2 and parts[0] and parts[1]:
+        # Reject bare Solr-style field queries like ``g:io.ktor`` only when the
+        # left side is a single-letter Solr field — treat those as keyword.
+        if len(parts[0]) == 1 and parts[0].isalpha():
+            return None, None
+        return parts[0], parts[1]
+    return None, None
+
+
+def _aggregate_ga_versions(
+    rows: List[Tuple[str, str, str]],
+    limit: int,
+) -> List[Dict[str, Any]]:
+    """Collapse (groupId, artifactId, version) rows into SearchArtifact dicts."""
+    buckets: Dict[Tuple[str, str], List[str]] = {}
+    order: List[Tuple[str, str]] = []
+    for g, a, v in rows:
+        if not g or not a:
+            continue
+        key = (g, a)
+        if key not in buckets:
+            buckets[key] = []
+            order.append(key)
+        if v and v not in buckets[key]:
+            buckets[key].append(v)
+    out: List[Dict[str, Any]] = []
+    for key in order:
+        versions = buckets[key]
+        # Prefer semver-ish ordering via compare_versions when possible.
+        try:
+            versions_sorted = sorted(
+                versions, key=functools.cmp_to_key(compare_versions)
+            )
+        except Exception:
+            versions_sorted = list(versions)
+        latest = find_latest_version(versions_sorted) if versions_sorted else ""
+        out.append(
+            {
+                "groupId": key[0],
+                "artifactId": key[1],
+                "latestVersion": latest or (versions_sorted[-1] if versions_sorted else ""),
+                "versionCount": len(versions_sorted),
+            }
+        )
+        if len(out) >= limit:
+            break
+    return out
+
+
+def _map_nexus_search_items(items: List[Dict[str, Any]], limit: int) -> List[Dict[str, Any]]:
+    rows: List[Tuple[str, str, str]] = []
+    for item in items:
+        g = str(item.get("group") or "")
+        a = str(item.get("name") or "")
+        v = str(item.get("version") or "")
+        rows.append((g, a, v))
+    return _aggregate_ga_versions(rows, limit)
+
+
+def search_nexus(
+    base_url: str,
+    query: str,
+    limit: int = 10,
+    headers: Optional[Dict[str, str]] = None,
+) -> List[Dict[str, Any]]:
+    """Search Nexus 3 ``GET /service/rest/v1/search`` (format=maven2)."""
+    root = _nexus_api_root(base_url)
+    g, a = _parse_gav_query(query)
+    params: List[Tuple[str, str]] = [("format", "maven2")]
+    if g and a:
+        params.append(("maven.groupId", g))
+        params.append(("maven.artifactId", a))
+    else:
+        # Free-text ``q`` plus name match — Nexus accepts either; ``q`` covers
+        # keyword discovery that GAV filters cannot.
+        params.append(("q", query))
+        params.append(("name", query))
+    url = root + "/service/rest/v1/search?" + urllib.parse.urlencode(params)
+    hdrs = headers if headers is not None else _search_auth_headers(base_url)
+    try:
+        status, body = http_get(url, hdrs)
+        if status != 200:
+            return []
+        data = json.loads(body)
+        items = data.get("items") or []
+        if not isinstance(items, list):
+            return []
+        return _map_nexus_search_items(items, limit)
+    except Exception:
+        return []
+
+
+def _parse_artifactory_storage_uri(uri: str) -> Optional[Tuple[str, str, str]]:
+    """Extract (groupId, artifactId, version) from an Artifactory storage/download URI."""
+    if not uri:
+        return None
+    try:
+        path = urllib.parse.urlsplit(uri).path or uri
+    except ValueError:
+        path = uri
+    # .../repoKey/group/path/artifact/version/file
+    # Strip /artifactory/api/storage/ or /artifactory/
+    for marker in ("/api/storage/", "/artifactory/"):
+        idx = path.lower().find(marker)
+        if idx >= 0:
+            path = path[idx + len(marker) :]
+            break
+    parts = [p for p in path.split("/") if p]
+    if len(parts) < 4:
+        return None
+    # parts[0] = repoKey; then group dirs...; artifactId; version; filename
+    version = parts[-2]
+    artifact_id = parts[-3]
+    group_parts = parts[1:-3]
+    if not group_parts:
+        return None
+    group_id = ".".join(group_parts)
+    return group_id, artifact_id, version
+
+
+def _map_artifactory_gavc_results(payload: Dict[str, Any], limit: int) -> List[Dict[str, Any]]:
+    rows: List[Tuple[str, str, str]] = []
+    for item in payload.get("results") or []:
+        if not isinstance(item, dict):
+            continue
+        uri = item.get("uri") or item.get("downloadUri") or item.get("downloadUrl") or ""
+        parsed = _parse_artifactory_storage_uri(str(uri))
+        if parsed:
+            rows.append(parsed)
+            continue
+        # specific=true style may omit path group — skip incomplete rows
+    return _aggregate_ga_versions(rows, limit)
+
+
+def _map_artifactory_aql_results(payload: Dict[str, Any], limit: int) -> List[Dict[str, Any]]:
+    rows: List[Tuple[str, str, str]] = []
+    for item in payload.get("results") or []:
+        if not isinstance(item, dict):
+            continue
+        # AQL item: repo, path, name, ...
+        path = str(item.get("path") or "")
+        name = str(item.get("name") or "")
+        repo = str(item.get("repo") or "repo")
+        fake = f"https://example.invalid/artifactory/api/storage/{repo}/{path}/{name}"
+        parsed = _parse_artifactory_storage_uri(fake)
+        if parsed:
+            rows.append(parsed)
+    return _aggregate_ga_versions(rows, limit)
+
+
+def _aql_escape(value: str) -> str:
+    """Escape a value for inclusion in an AQL string literal."""
+    return value.replace("\\", "\\\\").replace('"', '\\"')
+
+
+def search_artifactory(
+    base_url: str,
+    query: str,
+    limit: int = 10,
+    headers: Optional[Dict[str, str]] = None,
+) -> List[Dict[str, Any]]:
+    """Search Artifactory via GAVC (coordinate) or AQL (keyword)."""
+    root = _artifactory_api_root(base_url)
+    hdrs = headers if headers is not None else _search_auth_headers(base_url)
+    g, a = _parse_gav_query(query)
+    try:
+        if g and a:
+            params = urllib.parse.urlencode({"g": g, "a": a})
+            url = f"{root}/api/search/gavc?{params}"
+            status, body = http_get(url, hdrs)
+            if status != 200:
+                return []
+            return _map_artifactory_gavc_results(json.loads(body), limit)
+        # Keyword: match artifact name (and path segment) via AQL.
+        esc = _aql_escape(query)
+        # Bound result fan-out — Wave 0: never unbounded. Fetch extra rows so
+        # GA aggregation still fills ``limit`` after collapsing versions.
+        aql_limit = max(limit * 5, limit)
+        aql = (
+            'items.find({"$or":[{"name":{"$match":"*%s*"}},'
+            '{"path":{"$match":"*%s*"}}]}).include("name","repo","path")'
+            ".limit(%d)" % (esc, esc, aql_limit)
+        )
+        url = f"{root}/api/search/aql"
+        status, body = http_post_bytes(
+            url, aql.encode("utf-8"), "text/plain", headers=hdrs
+        )
+        if status != 200:
+            return []
+        return _map_artifactory_aql_results(json.loads(body), limit)
+    except Exception:
+        return []
+
+
+def search_artifacts_with_backend(
+    query: str,
+    limit: int,
+    ctx: "ResolutionContext",
+    repository_type: str = "auto",
+) -> Dict[str, Any]:
+    """Route ``search_artifacts`` to Solr / Nexus / Artifactory.
+
+    Returns ``{results, searchBackend?}`` or empty results with
+    ``searchBackendUnavailable`` when no usable backend exists (non-fatal).
+    """
+    rtype = _normalize_search_backend(repository_type)
+    base = _search_manager_base(ctx)
+    closed = _closed_search_mode(ctx)
+
+    def _unavailable(msg: str) -> Dict[str, Any]:
+        return {"results": [], "searchBackendUnavailable": msg}
+
+    # Explicit central — public Solr (unless offline with no override path).
+    if rtype == "central":
+        if ctx.offline:
+            return _unavailable(
+                "search backend not available: Maven Central Solr unreachable in offline mode"
+            )
+        return {"results": search_maven_central(query, limit), "searchBackend": "central"}
+
+    # Explicit nexus / artifactory require a manager base URL.
+    if rtype in ("nexus", "artifactory"):
+        if not base:
+            return _unavailable(
+                "search backend not available: set MAVEN_MCP_REPOSITORY_BASE "
+                f"(or a settings.xml mirror) for repositoryType={rtype}"
+            )
+        hdrs = _search_auth_headers(base)
+        if rtype == "nexus":
+            return {
+                "results": search_nexus(base, query, limit, hdrs),
+                "searchBackend": "nexus",
+            }
+        return {
+            "results": search_artifactory(base, query, limit, hdrs),
+            "searchBackend": "artifactory",
+        }
+
+    # auto: public mode → Solr; closed mode → detect manager.
+    if not closed:
+        return {"results": search_maven_central(query, limit), "searchBackend": "central"}
+
+    if not base:
+        return _unavailable(
+            "search backend not available: offline/closed mode without "
+            "MAVEN_MCP_REPOSITORY_BASE or a settings.xml mirror"
+        )
+
+    hdrs = _search_auth_headers(base)
+    kind = detect_repository_manager(base, preferred=None, probe=True, headers=hdrs)
+    if kind == "nexus":
+        return {
+            "results": search_nexus(base, query, limit, hdrs),
+            "searchBackend": "nexus",
+        }
+    if kind == "artifactory":
+        return {
+            "results": search_artifactory(base, query, limit, hdrs),
+            "searchBackend": "artifactory",
+        }
+    return _unavailable(
+        "search backend not available: could not detect Nexus or Artifactory "
+        "from the repository base (set repositoryType=nexus|artifactory)"
+    )
+
+
+# ---------------------------------------------------------------------------
 # Dependency scanning (local file system)
 # ---------------------------------------------------------------------------
 
@@ -7167,15 +7632,19 @@ def handle_get_dependency_health(args: Dict) -> Any:
 
 def handle_search_artifacts(args: Dict) -> Any:
     query = args["query"]
-    # Coerce + clamp before the Solr URL is built — schema bounds are advisory
+    # Coerce + clamp before any search URL is built — schema bounds are advisory
     # only (same reasoning as verify_coordinates' suggestLimit clamp).
     try:
         limit = int(args.get("limit", SEARCH_LIMIT_DEFAULT))
     except (TypeError, ValueError):
         limit = SEARCH_LIMIT_DEFAULT
     limit = max(1, min(limit, SEARCH_LIMIT_MAX))
-    results = search_maven_central(query, limit)
-    return {"results": results}
+    rtype = _normalize_search_backend(
+        args.get("repositoryType") or _repository_type_env()
+    )
+    # ResolutionContext carries offline / repository_base / mirrors for routing.
+    ctx = build_resolution_context(args)
+    return search_artifacts_with_backend(query, limit, ctx, rtype)
 
 
 def handle_get_dependency_license(args: Dict) -> Any:
@@ -8175,12 +8644,18 @@ TOOLS = [
     },
     {
         "name": "search_artifacts",
-        "description": "Search Maven Central for artifacts by keyword.",
+        "description": "Search Maven artifacts by keyword. Uses Maven Central Solr by default; in closed/offline mode (or with repositoryType) routes to Nexus 3 REST or Artifactory AQL/GAVC against MAVEN_MCP_REPOSITORY_BASE / mirrors.",
         "inputSchema": {
             "type": "object",
             "properties": {
-                "query": {"type": "string", "description": "Search query"},
+                "query": {"type": "string", "description": "Search query (keyword, or groupId:artifactId for coordinate search)"},
                 "limit": {"type": "integer", "default": 10, "minimum": 1, "maximum": 100, "description": "Maximum number of results. Default 10, clamped to [1, 100]."},
+                "repositoryType": {
+                    "type": "string",
+                    "enum": ["auto", "nexus", "artifactory", "central"],
+                    "description": "Search backend. auto (default) uses Solr in public mode and detects Nexus/Artifactory in closed mode. Override with nexus, artifactory, or central. Also settable via MAVEN_MCP_REPOSITORY_TYPE.",
+                },
+                "projectPath": {"type": "string", "description": "Project root used to resolve declared repositories / mirrors. Defaults to the current working directory."},
             },
             "required": ["query"],
         },
