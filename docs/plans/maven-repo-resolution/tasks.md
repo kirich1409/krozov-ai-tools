@@ -1,6 +1,6 @@
 # Tasks: maven-mcp repository resolution layer (#310 + #311; core of #299)
 
-> Plan: ./plan.md · One PR (branch `fix/maven-repo-resolution`). Closes #310, #311; partial #299 (defers #317–#320). Baseline = 211 existing tests.
+> Plan: ./plan.md · One PR (branch `fix/maven-repo-resolution`, merged as #321). Closes #310, #311; #299 completed via follow-ups #317–#320 (all merged). Baseline was 211 existing tests.
 
 ## T-1 — brace-depth block scanner (the risky core)
 - after: none
@@ -49,3 +49,4 @@
 - files: (PR)
 - acceptance: THE SYSTEM SHALL open a ready PR from `fix/maven-repo-resolution`, body: `Closes #310`, `Closes #311`, "partially addresses #299 (see #317–#320)", link the plan; python-tests(3.9/3.13)+validate-marketplace green.
 - check: PR open, required checks green
+- done: #321 merged 2026-06-29; #317–#320 subsequently closed the deferred #299 ACs; Wave 4 verification PR closes #299.
