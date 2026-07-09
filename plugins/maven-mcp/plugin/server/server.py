@@ -102,14 +102,25 @@ GRADLE_BUILD_FILES = ["build.gradle.kts", "build.gradle"]
 GRADLE_SETTINGS_FILES = ["settings.gradle.kts", "settings.gradle"]
 MAX_MODULE_DEPTH = 5
 
-PRODUCTION_CONFIGURATIONS = {
-    "implementation", "api", "compileOnly", "runtimeOnly",
-}
-NON_PRODUCTION_CONFIGURATIONS = {
-    "testImplementation", "testCompileOnly", "testRuntimeOnly",
-    "kapt", "ksp", "annotationProcessor",
-}
-ALL_CONFIGURATIONS = PRODUCTION_CONFIGURATIONS | NON_PRODUCTION_CONFIGURATIONS
+# Gradle configuration names matched by shape (#346), not a closed allow-list:
+# variant/flavor prefixes (`debugImplementation`, `paidReleaseApi`, …),
+# source-set forms (`androidTestImplementation`, `testFixturesImplementation`),
+# annotation processors (`kapt`/`ksp`/`kaptTest`/…), and common standalone
+# configs (`coreLibraryDesugaring`, `lintChecks`, `detektPlugins`).
+# Test-ness is classified later via `_is_test_configuration`.
+_GRADLE_CONFIGURATION_PATTERN = (
+    r"(?:"
+    # Prefix may be empty (bare `implementation` / `api`) or a variant/flavor/
+    # source-set name (`debugImplementation`, `androidTestApi`, …).
+    r"\w*(?:[Ii]mplementation|[Cc]ompileOnly|[Rr]untimeOnly|"
+    r"[Aa]nnotationProcessor|[Aa]pi)"
+    r"|kapt(?:AndroidTest|Test)?"
+    r"|ksp(?:AndroidTest|Test)?"
+    r"|coreLibraryDesugaring"
+    r"|lintChecks"
+    r"|detektPlugins"
+    r")"
+)
 
 SCOPE_TO_CONFIG = {
     "compile": "implementation",
@@ -1802,13 +1813,16 @@ def _parse_toml_catalog(content: str) -> Dict:
 def _parse_gradle_deps(content: str, source_file: str) -> List[Dict]:
     """Returns list of dep dicts with keys: groupId, artifactId, version, configuration, catalogRef."""
     deps = []
-    config_pattern = "|".join(re.escape(c) for c in sorted(ALL_CONFIGURATIONS, key=len, reverse=True))
+    config_pattern = _GRADLE_CONFIGURATION_PATTERN
 
     # String notation: implementation("group:artifact:version")
+    # Optional platform()/enforcedPlatform() wrapper around the quoted GAV (#346).
     # Version stops at ':' (classifier) or '@' (extension); trailing
     # `:classifier` / `@ext` / `:classifier@ext` are optional and discarded.
     string_re = re.compile(
-        rf'\b({config_pattern})\s*[( ]\s*["\']'
+        rf'\b({config_pattern})\s*[( ]\s*'
+        rf'(?:(?:enforcedPlatform|platform)\s*\(\s*)?'
+        rf'["\']'
         rf'([^"\':\s]+):([^"\':\s]+)'
         rf'(?::([^"\':@]+))?(?::[^"\'@]+)?(?:@[^"\']+)?["\']',
     )

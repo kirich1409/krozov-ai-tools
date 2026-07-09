@@ -274,6 +274,45 @@ class TestParseGradleDeps(unittest.TestCase):
         versions = [d["version"] for d in deps if d["groupId"] == "com.x"]
         self.assertEqual(versions, ["2.0", "2.0"])
 
+    # #346: Android variant/flavor/source-set configurations + platform()/BOM
+    def test_android_variant_and_platform_bom(self):
+        content = (
+            "dependencies {\n"
+            '  debugImplementation("a:b:1.0")\n'
+            '  androidTestImplementation("e:f:1.0")\n'
+            '  testFixturesImplementation("g:h:1.0")\n'
+            '  implementation(platform("i:j:1.0"))\n'
+            '  implementation(enforcedPlatform("k:l:1.0"))\n'
+            '  paidReleaseApi("m:n:2.0")\n'
+            '  coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.0.4")\n'
+            '  lintChecks("com.example:lint:1.0")\n'
+            '  kaptAndroidTest("com.example:kapt-at:1.0")\n'
+            '  debugImplementation(libs.foo.bar)\n'
+            "}"
+        )
+        deps = server._parse_gradle_deps(content, "build.gradle.kts")
+        by_ga = {(d["groupId"], d["artifactId"]): d for d in deps if d["groupId"]}
+        self.assertEqual(by_ga[("a", "b")]["configuration"], "debugImplementation")
+        self.assertEqual(by_ga[("e", "f")]["configuration"], "androidTestImplementation")
+        self.assertEqual(by_ga[("g", "h")]["configuration"], "testFixturesImplementation")
+        self.assertEqual(by_ga[("i", "j")]["version"], "1.0")
+        self.assertEqual(by_ga[("i", "j")]["configuration"], "implementation")
+        self.assertEqual(by_ga[("k", "l")]["configuration"], "implementation")
+        self.assertEqual(by_ga[("m", "n")]["configuration"], "paidReleaseApi")
+        self.assertEqual(
+            by_ga[("com.android.tools", "desugar_jdk_libs")]["configuration"],
+            "coreLibraryDesugaring",
+        )
+        self.assertEqual(by_ga[("com.example", "lint")]["configuration"], "lintChecks")
+        self.assertEqual(
+            by_ga[("com.example", "kapt-at")]["configuration"],
+            "kaptAndroidTest",
+        )
+        catalog = [d for d in deps if d["catalogRef"]]
+        self.assertEqual(len(catalog), 1)
+        self.assertEqual(catalog[0]["configuration"], "debugImplementation")
+        self.assertEqual(catalog[0]["catalogRef"], "libs.foo.bar")
+
 
 # ---------------------------------------------------------------------------
 # _parse_gradle_plugins_block
