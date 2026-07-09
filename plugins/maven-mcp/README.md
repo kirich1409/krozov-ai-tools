@@ -56,6 +56,11 @@ Repositories are selected by static group-prefix routing (Gradle Plugin Portal f
 - **timeout / gtimeout** — used by the PreToolUse guard hook (`pre-edit-deps.sh`) to cap the server call at 8 s. On macOS, `timeout` is not available by default; install GNU coreutils via `brew install coreutils` to get `gtimeout`. When neither is present the hook exits immediately (fail-open) — the MCP server is never called and every edit proceeds.
 - **GITHUB_TOKEN** — set this environment variable to raise GitHub API rate limits from 60 to 5000 requests/hour. Used by the `get_dependency_changes` and `get_dependency_health` tools to fetch release notes, repository metadata, and issue statistics. The PreToolUse hook scrubs this variable from the environment it passes to the server (least-privilege).
 - **MAVEN_MCP_PUBLIC_FALLBACK** — optional toggle (default OFF). When ON, public well-known repos are appended even for projects that declare their own repositories. Affects the coordinate existence check in the PreToolUse guard hook.
+- **Private Maven repository credentials** (`MAVEN_REPO_<ID>_…`) — optional. When a project declares a private/corporate repo (Artifactory, Nexus, GitHub Packages, …), the server attaches Basic or Bearer auth on HTTP queries. Credentials are never read from build files. Resolution order (first match wins):
+  1. Environment: `MAVEN_REPO_<ID>_USER` + `MAVEN_REPO_<ID>_PASSWORD` (Basic), or `MAVEN_REPO_<ID>_TOKEN` alone (Bearer), or `USER` + `TOKEN` (Basic with the token as the password — GitHub Packages / Artifactory PAT style). `<ID>` is the Maven `<id>` / Gradle `name`, else the repo hostname, uppercased with non-alnum → `_` (e.g. `nexus.example.com` → `NEXUS_EXAMPLE_COM`).
+  2. `~/.m2/settings.xml` `<servers><server><id>…</id>` matching the repo id.
+  3. `~/.gradle/gradle.properties` keys `{id}Username`/`{id}Password` or `{id}Token`.
+  Missing credentials against an auth-gated repo yield a clear `auth required for <repo>` error (no crash). Secrets are never logged or echoed in tool output. Public-repo behavior is unchanged when no credentials are configured.
 
 ## Installation
 

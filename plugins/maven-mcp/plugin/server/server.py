@@ -500,12 +500,24 @@ class FileCache:
 _file_cache = FileCache()
 
 
-def http_get_cached(url: str, ttl_seconds: float) -> Tuple[int, bytes]:
+def _headers_have_authorization(headers: Optional[Dict[str, str]]) -> bool:
+    """True when ``headers`` carries an Authorization value (any casing)."""
+    if not headers:
+        return False
+    return any(str(k).lower() == "authorization" for k in headers)
+
+
+def http_get_cached(
+    url: str,
+    ttl_seconds: float,
+    headers: Optional[Dict[str, str]] = None,
+) -> Tuple[int, bytes]:
     """Cached GET: returns a cached (200, body) on hit, else delegates to http_get.
 
-    No ``headers`` parameter — callers use the default UA-only headers, and
-    accepting auth-bearing headers not folded into the cache key would be a
-    latent footgun (cached response served for a different caller's credentials).
+    Auth-bearing requests (``Authorization`` present) NEVER touch the disk cache —
+    the cache key is URL-only, so serving a cached private-repo body to a later
+    caller without the same credentials would be a latent footgun (#291). Public
+    UA-only GETs keep the existing cache path.
 
     Sensitive hosts (api.github.com, api.osv.dev) bypass to raw http_get via
     a static denylist: belt-and-suspenders against future mis-wiring.  Private
@@ -516,16 +528,270 @@ def http_get_cached(url: str, ttl_seconds: float) -> Tuple[int, bytes]:
     any retry budget).  Non-200 responses and propagating transport errors are
     never cached; the caller receives them exactly as http_get would return/raise.
     """
+    if _headers_have_authorization(headers):
+        return http_get(url, headers)
     host = urllib.parse.urlparse(url).hostname or ""
     if host in _CACHE_DENYLIST:
-        return http_get(url)
+        return http_get(url, headers)
     result = _file_cache.get(url, ttl_seconds)
     if result is not None:
         return result
-    status, body = http_get(url)
+    status, body = http_get(url, headers)
     if status == 200:
         _file_cache.set(url, status, body)
     return (status, body)
+
+
+# ---------------------------------------------------------------------------
+# Private Maven repository credentials (#291)
+# ---------------------------------------------------------------------------
+# Credentials are NEVER read from build files. Resolution order (first match
+# wins): environment variables → ~/.m2/settings.xml <servers> →
+# ~/.gradle/gradle.properties. Secrets must never be logged or echoed into
+# tool-facing JSON — only Authorization headers on the outbound request.
+
+_CRED_ENV_PREFIX = "MAVEN_REPO_"
+
+
+def _sanitize_cred_key(identifier: str) -> str:
+    """Turn a repo id or hostname into an env-var fragment: non-alnum → ``_``,
+    uppercased, trimmed of leading/trailing underscores."""
+    cleaned = re.sub(r"[^A-Za-z0-9]+", "_", (identifier or "").strip())
+    return cleaned.strip("_").upper()
+
+
+def _repo_host(url: str) -> str:
+    """Hostname from a repo URL, or ``""`` if unparseable / missing."""
+    try:
+        return (urllib.parse.urlsplit(url).hostname or "").lower()
+    except ValueError:
+        return ""
+
+
+def _repo_id_candidates(entry: Dict[str, Any]) -> List[str]:
+    """Identifiers worth matching credentials against, in priority order.
+
+    Maven ``<id>`` / Gradle ``name = "…"`` land in ``entry["name"]`` when they
+    differ from the URL. Host is always a fallback so a Gradle ``maven { url }``
+    with no name still matches ``MAVEN_REPO_<HOST>_…`` env vars.
+    """
+    candidates: List[str] = []
+    name = (entry.get("name") or "").strip()
+    url = (entry.get("url") or "").strip()
+    if name and name != url and "://" not in name:
+        candidates.append(name)
+    host = _repo_host(url)
+    if host:
+        candidates.append(host)
+    return candidates
+
+
+def _creds_from_user_secret(
+    username: Optional[str], password: Optional[str], token: Optional[str]
+) -> Optional[Dict[str, str]]:
+    """Build a credential dict from optional user/password/token pieces.
+
+    - token alone → Bearer
+    - username + password → Basic
+    - username + token (no password) → Basic with the token as the password
+      (GitHub Packages / Artifactory PAT style)
+    Incomplete pairs return None — never invent a half-auth header.
+    """
+    user = (username or "").strip() or None
+    pwd = (password or "").strip() or None
+    tok = (token or "").strip() or None
+    if tok and not user and not pwd:
+        return {"type": "bearer", "token": tok}
+    if user and pwd:
+        return {"type": "basic", "username": user, "password": pwd}
+    if user and tok:
+        return {"type": "basic", "username": user, "password": tok}
+    return None
+
+
+def _resolve_creds_from_env(identifier: str) -> Optional[Dict[str, str]]:
+    """``MAVEN_REPO_<ID>_USER`` / ``_PASSWORD`` / ``_TOKEN`` (see #291)."""
+    key = _sanitize_cred_key(identifier)
+    if not key:
+        return None
+    prefix = f"{_CRED_ENV_PREFIX}{key}_"
+    return _creds_from_user_secret(
+        os.environ.get(prefix + "USER"),
+        os.environ.get(prefix + "PASSWORD"),
+        os.environ.get(prefix + "TOKEN"),
+    )
+
+
+def _parse_settings_xml_servers(xml: str) -> Dict[str, Dict[str, str]]:
+    """Parse Maven ``settings.xml`` ``<servers><server>`` entries into
+    ``{id: {username?, password?}}``. Regex-only (no XML parser dependency).
+    Password values are kept in memory only for header construction — never
+    logged. Malformed / comment-only files yield an empty map."""
+    servers: Dict[str, Dict[str, str]] = {}
+    # Strip XML comments so a commented-out <server> cannot contribute.
+    xml = re.sub(r"<!--.*?-->", "", xml, flags=re.DOTALL)
+    for sm in re.finditer(r"<server>([\s\S]*?)</server>", xml):
+        block = sm.group(1)
+        idm = re.search(r"<id>([^<]+)</id>", block)
+        if not idm:
+            continue
+        sid = idm.group(1).strip()
+        if not sid:
+            continue
+        user_m = re.search(r"<username>([^<]*)</username>", block)
+        pass_m = re.search(r"<password>([^<]*)</password>", block)
+        entry: Dict[str, str] = {}
+        if user_m:
+            entry["username"] = user_m.group(1)
+        if pass_m:
+            entry["password"] = pass_m.group(1)
+        if entry:
+            servers[sid] = entry
+    return servers
+
+
+def _load_settings_xml_servers() -> Dict[str, Dict[str, str]]:
+    """Read ``~/.m2/settings.xml`` (or ``$M2_HOME/conf/settings.xml`` is NOT
+    consulted — user settings only). Missing/unreadable → empty map."""
+    path = os.path.join(os.path.expanduser("~"), ".m2", "settings.xml")
+    try:
+        with open(path, "r", encoding="utf-8", errors="ignore") as fh:
+            return _parse_settings_xml_servers(fh.read())
+    except OSError:
+        return {}
+
+
+def _resolve_creds_from_settings(identifier: str) -> Optional[Dict[str, str]]:
+    """Match a Maven ``settings.xml`` ``<server><id>`` to ``identifier``."""
+    if not identifier or "://" in identifier:
+        return None
+    servers = _load_settings_xml_servers()
+    entry = servers.get(identifier)
+    if not entry:
+        # Case-insensitive id match — Maven ids are conventionally exact, but
+        # a mismatched case should not silently drop working credentials.
+        lower = identifier.lower()
+        for sid, val in servers.items():
+            if sid.lower() == lower:
+                entry = val
+                break
+    if not entry:
+        return None
+    return _creds_from_user_secret(
+        entry.get("username"), entry.get("password"), None
+    )
+
+
+def _parse_gradle_properties(text: str) -> Dict[str, str]:
+    """Minimal ``gradle.properties`` parser: ``key=value`` lines, ``#`` comments,
+    no interpolation. Values keep surrounding spaces stripped."""
+    props: Dict[str, str] = {}
+    for line in text.splitlines():
+        raw = line.strip()
+        if not raw or raw.startswith("#") or raw.startswith("!"):
+            continue
+        if "=" not in raw:
+            continue
+        key, _, value = raw.partition("=")
+        key = key.strip()
+        if key:
+            props[key] = value.strip()
+    return props
+
+
+def _load_gradle_properties() -> Dict[str, str]:
+    """Read ``~/.gradle/gradle.properties``. Missing/unreadable → empty map."""
+    path = os.path.join(os.path.expanduser("~"), ".gradle", "gradle.properties")
+    try:
+        with open(path, "r", encoding="utf-8", errors="ignore") as fh:
+            return _parse_gradle_properties(fh.read())
+    except OSError:
+        return {}
+
+
+def _resolve_creds_from_gradle_properties(identifier: str) -> Optional[Dict[str, str]]:
+    """Match common Gradle property naming for a repo id:
+
+    - ``{id}Username`` / ``{id}Password`` (Gradle docs style)
+    - ``{id}User`` / ``{id}Password``
+    - ``{id}Token`` (Bearer; or Basic password when paired with Username)
+    """
+    if not identifier or "://" in identifier:
+        return None
+    props = _load_gradle_properties()
+    if not props:
+        return None
+    # Preserve the identifier's own camel/Pascal form for key lookup, and also
+    # try a lowercased-first-letter variant (`nexus` + `Username`).
+    bases = [identifier]
+    if identifier[0].isupper():
+        bases.append(identifier[0].lower() + identifier[1:])
+    elif identifier[0].islower():
+        bases.append(identifier[0].upper() + identifier[1:])
+    for base in bases:
+        user = props.get(base + "Username") or props.get(base + "User")
+        password = props.get(base + "Password")
+        token = props.get(base + "Token")
+        creds = _creds_from_user_secret(user, password, token)
+        if creds:
+            return creds
+    return None
+
+
+def resolve_repo_credentials(entry: Dict[str, Any]) -> Optional[Dict[str, str]]:
+    """Resolve Basic/Bearer credentials for a discovered repo entry (#291).
+
+    Returns ``{"type": "basic", "username", "password"}`` or
+    ``{"type": "bearer", "token"}``, or ``None`` when nothing matches.
+    Never reads credentials from build files. Never logs secret values.
+    """
+    for ident in _repo_id_candidates(entry):
+        for resolver in (
+            _resolve_creds_from_env,
+            _resolve_creds_from_settings,
+            _resolve_creds_from_gradle_properties,
+        ):
+            creds = resolver(ident)
+            if creds:
+                return creds
+    return None
+
+
+def _authorization_header(creds: Dict[str, str]) -> str:
+    """Build an ``Authorization`` header value from a resolve_repo_credentials result."""
+    if creds.get("type") == "bearer":
+        return f"Bearer {creds['token']}"
+    raw = f"{creds['username']}:{creds['password']}"
+    encoded = base64.b64encode(raw.encode("utf-8")).decode("ascii")
+    return f"Basic {encoded}"
+
+
+def _repo_request_headers(entry: Dict[str, Any]) -> Dict[str, str]:
+    """UA headers plus optional Authorization for ``entry`` (#291)."""
+    creds = resolve_repo_credentials(entry)
+    if not creds:
+        return _make_headers()
+    return _make_headers({"Authorization": _authorization_header(creds)})
+
+
+def _repo_http_get(
+    entry: Dict[str, Any],
+    url: str,
+    ttl_seconds: Optional[float] = None,
+) -> Tuple[int, bytes]:
+    """GET a Maven-repo URL with per-repo auth headers. When ``ttl_seconds`` is
+    set, uses ``http_get_cached`` (auth-bearing responses still bypass the
+    disk cache)."""
+    headers = _repo_request_headers(entry)
+    if ttl_seconds is None:
+        return http_get(url, headers)
+    return http_get_cached(url, ttl_seconds, headers)
+
+
+def _auth_required_message(entry: Dict[str, Any], status: int) -> str:
+    """Clear, secret-free signal when a private repo rejects the request."""
+    label = _strip_userinfo(entry.get("name") or entry.get("url") or "repository")
+    return f"auth required for {label} (HTTP {status})"
 
 
 # ---------------------------------------------------------------------------
@@ -736,7 +1002,7 @@ def fetch_metadata(group_id: str, artifact_id: str, ctx: "ResolutionContext") ->
     for entry in repos:
         url = _metadata_url(entry["url"], group_id, artifact_id)
         try:
-            status, body = http_get_cached(url, TTL_METADATA)
+            status, body = _repo_http_get(entry, url, TTL_METADATA)
             if status == 200:
                 # "answered" is gated on HTTP 200 itself, not on a non-empty
                 # version list — a 200 with empty <versions> still counts as a
@@ -749,6 +1015,11 @@ def fetch_metadata(group_id: str, artifact_id: str, ctx: "ResolutionContext") ->
                 lu = parsed.get("lastUpdated")
                 if lu and (last_updated is None or lu > last_updated):
                     last_updated = lu
+            elif status in (401, 403):
+                # Private/corporate repos reject unauthenticated (or wrong-cred)
+                # probes with 401/403 — surface a clear "auth required" signal
+                # rather than a bare HTTP code (#291). Never include secrets.
+                last_err = _auth_required_message(entry, status)
             else:
                 # entry["name"] can be the literal repo URL for maven("url")
                 # declarations (name == url); redact before it reaches the
@@ -784,7 +1055,7 @@ def check_version_in_repos(group_id: str, artifact_id: str, version: str, ctx: "
     for entry in repos:
         url = _metadata_url(entry["url"], group_id, artifact_id)
         try:
-            status, body = http_get_cached(url, TTL_METADATA)
+            status, body = _repo_http_get(entry, url, TTL_METADATA)
             if status == 200:
                 xml = body.decode("utf-8", errors="replace")
                 versions = re.findall(r"<version>([^<]+)</version>", xml)
@@ -800,7 +1071,7 @@ def fetch_pom(group_id: str, artifact_id: str, version: str, ctx: "ResolutionCon
     for entry in repos:
         url = _pom_url(entry["url"], group_id, artifact_id, version)
         try:
-            status, body = http_get_cached(url, TTL_POM)
+            status, body = _repo_http_get(entry, url, TTL_POM)
             if status == 200:
                 return body.decode("utf-8", errors="replace")
         except Exception:
@@ -3429,7 +3700,9 @@ def _parse_gradle_repos(block_body: str) -> List[Dict[str, str]]:
         um = re.search(r"\burl\b\s*(?:=\s*)?(?:uri\s*\(\s*)?[\"']([^\"']+)[\"']", maven_body)
         if not um:
             continue
-        entry = {"name": um.group(1), "url": um.group(1)}
+        url = um.group(1)
+        nm = re.search(r"\bname\s*=\s*[\"']([^\"']+)[\"']", maven_body)
+        entry = {"name": nm.group(1) if nm else url, "url": url}
         filter_body = _extract_block(body, "filter")
         if filter_body is not None:
             filters = _parse_group_filters(filter_body)
@@ -3455,7 +3728,16 @@ def _parse_gradle_repos(block_body: str) -> List[Dict[str, str]]:
         body, _start, after = found
         um = re.search(r"\burl\b\s*(?:=\s*)?(?:uri\s*\(\s*)?[\"']([^\"']+)[\"']", body)
         if um:
-            entry = {"name": um.group(1), "url": um.group(1)}
+            url = um.group(1)
+            # Optional `name = "…"` (Kotlin DSL) / `name "…"` — used as the
+            # credential-lookup id (#291). Falls back to the URL when absent
+            # (same as before), so host-based env matching still works.
+            nm = re.search(
+                r"\bname\s*(?:=\s*[\"']([^\"']+)[\"']|[\"']([^\"']+)[\"'])",
+                body,
+            )
+            name = (nm.group(1) or nm.group(2)) if nm else url
+            entry = {"name": name, "url": url}
             content_body = _extract_block(body, "content")
             if content_body is not None:
                 filters = _parse_group_filters(content_body)
@@ -4911,7 +5193,10 @@ def _verify_one(
     for entry in _repos_for(group_id, artifact_id, ctx):
         url = _metadata_url(entry["url"], group_id, artifact_id)
         try:
-            status, body = http_get(url)
+            # Auth headers attached when credentials resolve for this repo
+            # (#291); public repos stay UA-only. Live every call (no cache) —
+            # same anti-steering contract as before.
+            status, body = _repo_http_get(entry, url)
         except (urllib.error.URLError, socket.timeout, http.client.InvalidURL):
             # Transport failure (offline / DNS / read timeout) — verification
             # unavailable for THIS repo; contributes "unknown", never "absent".
@@ -4938,6 +5223,8 @@ def _verify_one(
         elif status == 404:
             saw_404 = True
         else:
+            # 401/403 (auth required / forbidden) and other non-404 statuses
+            # remain "unknown" — the private repo might hold the artifact.
             saw_unverifiable = True
 
     if any_200:
