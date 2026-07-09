@@ -2,24 +2,24 @@
 type: plan
 slug: maven-repo-resolution
 date: 2026-06-29
-status: approved
+status: done
 spec: none
 risk_areas: [data-migration]
 review_verdict: conditional
 review_blockers: []
-review_note: "2 cycles (build-engineer/architecture/pr-test-analyzer). Cycle 1 FAIL (~25 findings) → cycle 2 CONDITIONAL. All folded: descoped #299→core (deferred #317-#320), brace scanner incl. inner maven{} via _extract_block, ctx REQUIRED + threaded all resolvers, merge keeps raise + carries lastUpdated, Google-heuristic-in-fallback, baseline-test contract edits (TestReposFor dict-shape + rewrite first-hit→merge test), 2x2 no-leak + buildscript-excision tests. No criticals remain; descope coherent."
+review_note: "2 cycles (build-engineer/architecture/pr-test-analyzer). Cycle 1 FAIL (~25 findings) → cycle 2 CONDITIONAL. All folded: descoped #299→core (deferred #317-#320), brace scanner incl. inner maven{} via _extract_block, ctx REQUIRED + threaded all resolvers, merge keeps raise + carries lastUpdated, Google-heuristic-in-fallback, baseline-test contract edits (TestReposFor dict-shape + rewrite first-hit→merge test), 2x2 no-leak + buildscript-excision tests. No criticals remain; descope coherent. Follow-ups #317–#320 all merged; #299 closed 2026-07-09."
 ---
 
 # Plan: maven-mcp repository resolution layer (#310 + #311; core of #299)
 
-> Branch `fix/maven-repo-resolution` off main (034e522). Epic #293 foundation. server.py = Python 3.9+ stdlib-only stdio runtime. **Closes #310, #311. Partially addresses #299** (discovery + project-first scoping + cross-repo merge); the remaining #299 acceptance criteria are split into follow-ups #317 (provenance reporting), #318 (repositoriesMode), #319 (parent-POM/profile inheritance), #320 (content/group filtering).
+> Branch `fix/maven-repo-resolution` off main (034e522). Epic #293 foundation. server.py = Python 3.9+ stdlib-only stdio runtime. **Closes #310, #311.** Originally partially addressed #299 (discovery + project-first scoping + cross-repo merge); the remaining #299 acceptance criteria were split into follow-ups #317 (provenance reporting), #318 (repositoriesMode), #319 (parent-POM/profile inheritance), #320 (content/group filtering) — **all now merged**. #299 is complete.
 
 ## Context & Decision
 
 Epic #293 (closed-perimeter) builds on project-first repository resolution. In the current Python runtime three issues are interdependent:
 - **#310 (correctness bug, CLOSE):** the #302 port dropped build-file repository discovery; `_repos_for` (server.py:128) is static group-prefix routing only → custom/private repos (`maven { url … }`, Maven `<repositories>`, JitPack/Nexus/Artifactory) are invisible → wrong answers.
 - **#311 (correctness bug, CLOSE):** `fetch_metadata` (server.py:154) returns the FIRST repo's metadata; it must MERGE across all resolved repos so a multi-repo artifact gets the union → correct "latest".
-- **#299 (foundational, PARTIAL):** resolution must be project-first + coordinate-kind-scoped. This PR delivers the resolution mechanics (discover declared repos, scope plugin vs dependency, prefer them, demote public to fallback). #299's *reporting* AC and the deeper Gradle/Maven resolution semantics (repositoriesMode, parent-POM/profile inheritance, content filtering) are larger than this PR and are tracked as #317–#320 — so #299 is NOT auto-closed.
+- **#299 (foundational, DONE):** resolution must be project-first + coordinate-kind-scoped. This PR delivered the resolution mechanics (discover declared repos, scope plugin vs dependency, prefer them, demote public to fallback). #299's *reporting* AC and the deeper Gradle/Maven resolution semantics landed in #317–#320; the parent issue is closed.
 
 ## Technical Approach
 
@@ -67,7 +67,7 @@ Epic #293 (closed-perimeter) builds on project-first repository resolution. In t
 | Decision | Rationale | Alternatives rejected |
 |---|---|---|
 | Hand-written brace-depth scanner for block extraction | regex cannot balance nested `{}`; scoping correctness depends on it | non-greedy/greedy regex (truncates/over-captures — the #299-defeating bug) |
-| Close #310/#311 fully; #299 PARTIAL (defer #317–#320) | #299's 5 ACs + Gradle/Maven edge semantics exceed one PR; auto-closing it with ACs unmet is the anti-pattern reviewers flagged | "Closes #299" (dishonest); doing all of #299 now (huge, blocks the correctness fixes) |
+| Close #310/#311 fully; #299 PARTIAL then (defer #317–#320) | #299's 5 ACs + Gradle/Maven edge semantics exceeded one PR; auto-closing it with ACs unmet was the anti-pattern reviewers flagged. Follow-ups #317–#320 later completed #299. | "Closes #299" in the first PR (dishonest then); doing all of #299 in one PR (huge, blocked the correctness fixes) |
 | `fetch_metadata` keeps `raise`-on-no-match | unwrapped callers + #263 depend on it; switching to None breaks them | return None (NoneType subscript / degraded error) |
 | Google-group heuristic preserved in the FALLBACK path only | no-declaration androidx lookups must still reach Google Maven; declared-repo projects use exactly their repos | drop heuristic (regresses androidx); keep it always (re-introduces the #299 false-positive) |
 | buildscript{} repos → plugin scope | buildscript backs legacy plugin/classpath resolution | ignore (custom buildscript repo invisible — #310 persists there) |
@@ -101,13 +101,13 @@ Correctness-fix (#310/#311) + foundational feature (#299 core). Before-state bas
 
 **Testing strategy:** L0 build + L1 (validate.sh, tests) + L2 unit (brace scanner, parsers, scoped resolution, merge, fallback matrix — mock urlopen + tempfile) + **L5 manual** (stdio smoke: public `get_latest_version` still works; tempfile project with custom `maven{url}` repo → assert that URL queried and Central NOT queried). No UI → no L3/L4.
 
-## Out of Scope (documented limitations, with trackers)
+## Out of Scope (at the time of #321; follow-ups now done)
 
-- #299 provenance reporting (`resolvedFrom`/`viaPublicFallback`) → **#317**.
-- Gradle `repositoriesMode` (PREFER_PROJECT vs union) → **#318**.
-- Maven parent-POM `<parent>` + `<profiles>` repo inheritance → **#319**.
-- Repository content/group filtering (`includeGroup`/`exclusiveContent`) → **#320**.
-- settings.xml `mirrorOf` / offline (#294), repo-manager search backends (#295), degradation (#296), TLS/proxy (#298), auth (#291) — consume this layer.
+- #299 provenance reporting (`resolvedFrom`/`viaPublicFallback`) → **#317** (merged).
+- Gradle `repositoriesMode` (PREFER_PROJECT vs union) → **#318** (merged).
+- Maven parent-POM `<parent>` + `<profiles>` repo inheritance → **#319** (merged).
+- Repository content/group filtering (`includeGroup`/`exclusiveContent`) → **#320** (merged).
+- settings.xml `mirrorOf` / offline (#294), repo-manager search backends (#295), degradation (#296), TLS/proxy (#298), auth (#291) — consume this layer; still open.
 - `mavenLocal()` file:// reads; variable-interpolated repo URLs; resolved plugin impl-GAV scoping (#290) — documented, deferred.
 - Per-submodule `build.gradle*` repos (discovery reads root build/settings only); `maven { credentials{} }` body is parsed via `_extract_block` but auth itself is #291. Multi-module per-module repo discovery → documented limitation (fallback-to-public mitigates). The #318 settings∪project union OVER-reports vs strict `repositoriesMode` (safe direction for an advisory tool — may query a repo Gradle wouldn't; never under-queries).
 
