@@ -338,5 +338,83 @@ class HttpRetryTest(unittest.TestCase):
                 sleep.assert_not_called()
 
 
+class HttpResponseSizeCapTest(unittest.TestCase):
+    """#350: HTTP bodies must not be read unbounded into memory."""
+
+    URL = "https://example.test/x"
+    # Tiny cap so tests never allocate multi-MiB buffers.
+    CAP = 64
+
+    def setUp(self):
+        self._cap_patch = unittest.mock.patch.object(
+            server, "HTTP_MAX_RESPONSE_BYTES", self.CAP
+        )
+        self._cap_patch.start()
+
+    def tearDown(self):
+        self._cap_patch.stop()
+
+    def test_body_at_cap_accepted(self):
+        body = b"x" * self.CAP
+        with unittest.mock.patch(
+            "urllib.request.urlopen",
+            side_effect=mock_urlopen([(200, body)]),
+        ):
+            status, got = server.http_get(self.URL)
+        self.assertEqual(status, 200)
+        self.assertEqual(got, body)
+
+    def test_body_over_cap_raises_without_retry(self):
+        body = b"x" * (self.CAP + 1)
+        with unittest.mock.patch.object(server, "_sleep") as sleep, \
+                unittest.mock.patch(
+                    "urllib.request.urlopen",
+                    side_effect=mock_urlopen([(200, body)]),
+                ) as urlopen:
+            with self.assertRaises(server.ResponseTooLargeError) as cm:
+                server.http_get(self.URL)
+        self.assertIn("too large", str(cm.exception.reason).lower())
+        self.assertEqual(urlopen.call_count, 1)
+        sleep.assert_not_called()
+
+    def test_content_length_over_cap_raises_before_full_read(self):
+        # Declared Content-Length alone is enough to reject — body may be empty
+        # in the mock because we never allocate the claimed size.
+        oversized_cl = str(self.CAP + 1)
+        with unittest.mock.patch.object(server, "_sleep") as sleep, \
+                unittest.mock.patch(
+                    "urllib.request.urlopen",
+                    side_effect=mock_urlopen([
+                        (200, b"", {"Content-Length": oversized_cl}),
+                    ]),
+                ) as urlopen:
+            with self.assertRaises(server.ResponseTooLargeError) as cm:
+                server.http_get(self.URL)
+        self.assertIn("content-length", str(cm.exception.reason).lower())
+        self.assertEqual(urlopen.call_count, 1)
+        sleep.assert_not_called()
+
+    def test_post_json_body_over_cap_raises(self):
+        body = b"y" * (self.CAP + 1)
+        with unittest.mock.patch(
+            "urllib.request.urlopen",
+            side_effect=mock_urlopen([(200, body)]),
+        ):
+            with self.assertRaises(server.ResponseTooLargeError):
+                server.http_post_json(self.URL, {})
+
+    def test_content_length_at_cap_with_matching_body_ok(self):
+        body = b"z" * self.CAP
+        with unittest.mock.patch(
+            "urllib.request.urlopen",
+            side_effect=mock_urlopen([
+                (200, body, {"Content-Length": str(len(body))}),
+            ]),
+        ):
+            status, got = server.http_get(self.URL)
+        self.assertEqual(status, 200)
+        self.assertEqual(got, body)
+
+
 if __name__ == "__main__":
     unittest.main()

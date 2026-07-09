@@ -42,6 +42,12 @@ HTTP_BACKOFF_JITTER = 0.3      # seconds; uniform [0, jitter) added per attempt
 HTTP_RETRY_AFTER_MAX = 30.0    # cap an upstream Retry-After so a hostile header can't stall us
 HTTP_TOTAL_RETRY_BUDGET = 60.0  # wall-clock cap across all attempts + sleeps
 
+# Cap on a single HTTP response body. Maven metadata/POMs are KB-scale;
+# OSV/GitHub/Solr JSON is typically well under a few MB. A hostile or
+# misconfigured endpoint returning multi-GB bodies must not OOM the
+# long-lived stdio server (#350). HTTP_TIMEOUT only bounds time, not size.
+HTTP_MAX_RESPONSE_BYTES = 10 * 1024 * 1024  # 10 MiB
+
 MAVEN_CENTRAL_URL = "https://repo1.maven.org/maven2"
 GOOGLE_MAVEN_URL = "https://dl.google.com/dl/android/maven2"
 GRADLE_PLUGIN_PORTAL_URL = "https://plugins.gradle.org/m2"
@@ -205,6 +211,44 @@ def _is_file_url(url: str) -> bool:
     return _url_scheme(url) == "file"
 
 
+class ResponseTooLargeError(urllib.error.URLError):
+    """Raised when an HTTP response body exceeds ``HTTP_MAX_RESPONSE_BYTES``.
+
+    Not retried: re-fetching an oversized body cannot help and would only
+    amplify memory pressure (#350).
+    """
+
+
+def _read_response_body(resp: Any) -> bytes:
+    """Read ``resp`` body with an explicit size cap (#350).
+
+    Short-circuits on an oversized ``Content-Length`` before allocating, then
+    reads at most ``HTTP_MAX_RESPONSE_BYTES + 1`` bytes and raises
+    ``ResponseTooLargeError`` if the body exceeds the cap. Chunked / missing
+    Content-Length still cannot grow without bound because of the read cap.
+    """
+    headers = getattr(resp, "headers", None)
+    if headers is not None:
+        get = getattr(headers, "get", None)
+        raw_cl = get("Content-Length") if callable(get) else None
+        if raw_cl is not None and str(raw_cl).strip():
+            try:
+                content_length = int(str(raw_cl).strip())
+            except (TypeError, ValueError):
+                content_length = -1
+            if content_length > HTTP_MAX_RESPONSE_BYTES:
+                raise ResponseTooLargeError(
+                    f"HTTP response too large: Content-Length {content_length} "
+                    f"exceeds {HTTP_MAX_RESPONSE_BYTES} bytes"
+                )
+    body = resp.read(HTTP_MAX_RESPONSE_BYTES + 1)
+    if len(body) > HTTP_MAX_RESPONSE_BYTES:
+        raise ResponseTooLargeError(
+            f"HTTP response too large: body exceeds {HTTP_MAX_RESPONSE_BYTES} bytes"
+        )
+    return body
+
+
 def _request_with_retry(req: urllib.request.Request) -> Tuple[int, bytes]:
     """Issue ``req`` with bounded retry/backoff on transient failures.
 
@@ -214,6 +258,7 @@ def _request_with_retry(req: urllib.request.Request) -> Tuple[int, bytes]:
     error (URLError / socket.timeout) when EVERY attempt failed at the transport
     level without ever obtaining an HTTP response. A 4xx (incl. 404) is never
     turned into a raise. Retry is fully internal and transparent to callers.
+    Oversized bodies raise ``ResponseTooLargeError`` immediately (not retried).
     """
     deadline = time.monotonic() + HTTP_TOTAL_RETRY_BUDGET
     last_result: Optional[Tuple[int, bytes]] = None
@@ -222,13 +267,16 @@ def _request_with_retry(req: urllib.request.Request) -> Tuple[int, bytes]:
         retry_after: Optional[float] = None
         try:
             with urllib.request.urlopen(req, timeout=HTTP_TIMEOUT) as resp:
-                status, body = resp.status, resp.read()
+                status, body = resp.status, _read_response_body(resp)
                 if not _is_retryable_status(status):
                     return status, body
                 # A retryable status surfaced as a success object (rare — urllib
                 # normally raises HTTPError for 4xx/5xx); remember it and retry.
                 last_result = (status, body)
                 retry_after = _parse_retry_after(getattr(resp, "headers", None))
+        except ResponseTooLargeError:
+            # Oversized body is definitive — do not retry (#350).
+            raise
         except urllib.error.HTTPError as e:
             # HTTPError IS-A URLError but represents a real HTTP response, not a
             # transport failure — must be caught first. Body stays b"" (the
