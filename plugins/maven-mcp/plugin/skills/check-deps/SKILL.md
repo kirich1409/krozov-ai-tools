@@ -166,7 +166,9 @@ overwhelming the network.
 
 ## Step 5 — Check vulnerabilities (optional, enabled by default)
 
-Send the collected dependencies to OSV.dev:
+**Preferred:** call `get_dependency_vulnerabilities` (hydrated severity/summary/fixedVersion).
+
+**Fallback:** POST to OSV.dev, then hydrate — never report severity from querybatch alone:
 
 ```
 POST https://api.osv.dev/v1/querybatch
@@ -182,18 +184,26 @@ Content-Type: application/json
 }
 ```
 
-`/v1/querybatch` returns only `{id, modified}` — hydrate via `GET /v1/vulns/{id}`
-(or use `get_dependency_vulnerabilities`, which already does) before deriving
-severity/fixed version as described in `/check-deps-vulnerabilities`.
+`/v1/querybatch` returns only `{id, modified}`. Hydrate each unique id via
+`GET /v1/vulns/{id}` (N extra calls; dedupe) before deriving severity/fixed version
+as described in `/check-deps-vulnerabilities`.
 
 ## Step 6 — Build the report
 
-Only include entries where `latestVersion !== currentVersion` OR `vulnerabilities` is
-non-empty. If nothing to show in a group, omit that section. If all sections are empty:
+Only include entries where `latestVersion !== currentVersion`. If nothing to show in a
+group, omit that section.
+
+**Terminal branch — nothing outdated and no vulnerabilities:**
 
 > All dependencies up to date.
 
-Then skip to the Vulnerabilities section.
+Stop here — do not continue to Steps 7–10.
+
+**Vulnerabilities only (no outdated deps):** skip the upgrade tables below and go to
+Step 7.
+
+**Outdated deps present:** render the matching sections below, then continue to Step 7
+(even if the vulnerabilities list is empty — Step 7 omits itself when empty).
 
 ---
 
