@@ -4,17 +4,26 @@ description: >-
   Use when evaluating whether to adopt a Maven dependency: "is X maintained",
   "health of dependency", "check library health", "is this library active",
   "dependency activity", "GitHub stars", "is this abandoned", "release cadence",
-  "dependency maintenance", "license of library", or when the dependency-evaluator
-  agent needs raw maintenance signals for a library. Fetches latest version,
+  "dependency maintenance", or "license of library". Fetches latest version,
   stability, GitHub activity, issue dynamics, license, and archived status.
-  Do NOT use for: an adopt/avoid recommendation or new-dependency vetting (use
-  evaluate-dependency, which calls this skill for signals).
+  Do NOT use for an adopt/avoid recommendation — present raw signals only; the
+  caller (or user) weighs them.
 ---
 
 # Dependency Health
 
-Assess the maintenance health of one or more Maven dependencies by querying Maven Central
-and GitHub directly via HTTP.
+Assess the maintenance health of one or more Maven dependencies.
+
+**Preferred:** call the `get_dependency_health` MCP tool for each coordinate. The
+server resolves Maven metadata, discovers the GitHub repo, and fetches GitHub
+signals using `GITHUB_TOKEN` server-side when present — never pass the token in
+headers yourself.
+
+**Fallback** (MCP tool unavailable): query Maven Central and GitHub via HTTP as
+below. Do **not** add an `Authorization` header or put `GITHUB_TOKEN` on a
+command line — WebFetch cannot set auth headers, and shelling out with the token
+leaks it into transcripts/process args. Unauthenticated GitHub calls are fine
+(lower rate limit); if rate-limited, say so and stop.
 
 ## Arguments
 
@@ -72,7 +81,7 @@ If a GitHub repo was identified:
 GET https://api.github.com/repos/{owner}/{repo}
 ```
 
-If `GITHUB_TOKEN` is set in the environment, add header `Authorization: Bearer {token}`.
+Do not attach `Authorization` / `GITHUB_TOKEN` here (see Preferred path above).
 
 Extract: `stargazers_count`, `forks_count`, `archived`, `pushed_at` (last commit date),
 `license.name` (use this if POM license was missing), `open_issues_count`.
@@ -144,8 +153,8 @@ Open issues: {N} | Closed: {M} | Close ratio: {X}%
 ## Important constraints
 
 - Do NOT issue an adopt/reject verdict — present raw signals only.
-- If the user wants a recommendation, suggest they weigh the signals themselves or use an
-  agent with evaluation criteria.
+- If the user wants a recommendation, suggest they weigh the signals themselves.
 - Degrade gracefully: if GitHub is unavailable or rate-limited, present Maven-only data
   and note what is missing.
-- `GITHUB_TOKEN` in the environment raises the rate limit from 60 to 5000 req/h.
+- Prefer `get_dependency_health` so any configured `GITHUB_TOKEN` stays server-side
+  (5000 req/h vs 60 unauthenticated). Never hand-roll `Authorization: Bearer` headers.

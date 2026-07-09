@@ -106,7 +106,13 @@ which file each dependency came from for the report.
 
 ## Step 4 — Query OSV.dev for vulnerabilities
 
-Send a batch request to OSV.dev for all unique `groupId:artifactId:version` combinations.
+**Preferred:** call the `get_dependency_vulnerabilities` MCP tool with the collected
+coordinates. The server POSTs `/v1/querybatch`, then hydrates each unique id via
+`GET /v1/vulns/{id}` (deduped, capped), and returns `id` / `summary` / `severity` /
+`fixedVersion` / `malicious` ready for the report. Do not re-derive those fields from
+a raw querybatch response.
+
+**Fallback** (MCP tool unavailable): send a batch request yourself, then hydrate.
 
 **Request:**
 ```
@@ -130,11 +136,12 @@ Content-Type: application/json
 OSV.dev accepts up to 1000 entries per batch. If there are more, split into multiple
 requests and merge results.
 
-**Important:** `/v1/querybatch` returns only `{id, modified}` per vulnerability.
-The MCP server hydrates each unique id via `GET https://api.osv.dev/v1/vulns/{id}`
-before extracting severity/summary/fixedVersion. Prefer the
-`get_dependency_vulnerabilities` tool (which already hydrates) over calling
-querybatch yourself.
+**Required — bare querybatch is not enough.** `/v1/querybatch` returns only
+`{id, modified}` per vulnerability — never `summary`, `severity`, `references`, or
+`affected`. Before any severity/summary/fixed-in reporting, hydrate each unique id
+with `GET https://api.osv.dev/v1/vulns/{id}` (one extra call per unique id; dedupe
+across the batch). Skipping hydration leaves every finding as unknown severity with
+an empty summary.
 
 **Bare querybatch response shape (before hydration):**
 ```json

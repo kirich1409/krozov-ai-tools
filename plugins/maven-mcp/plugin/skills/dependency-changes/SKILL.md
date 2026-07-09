@@ -6,7 +6,18 @@ description: Show what changed between two versions of a Maven/Gradle dependency
 # Dependency Changes
 
 Show what changed between two versions of a Maven artifact by fetching release notes and
-changelog data from GitHub via HTTP.
+changelog data.
+
+**Preferred:** call the `get_dependency_changes` MCP tool with
+`groupId`, `artifactId`, `fromVersion`, and `toVersion`. The server discovers the
+GitHub repo and fetches releases using `GITHUB_TOKEN` server-side when present —
+never pass the token in headers yourself.
+
+**Fallback** (MCP tool unavailable): follow the HTTP steps below. Do **not** add an
+`Authorization` header or put `GITHUB_TOKEN` on a command line — WebFetch cannot set
+auth headers, and shelling out with the token leaks it into transcripts/process args.
+Unauthenticated GitHub calls are fine (lower rate limit); if rate-limited, say so
+and stop.
 
 ## Input formats
 
@@ -71,9 +82,8 @@ If a GitHub repo was found:
 https://api.github.com/repos/{owner}/{repo}/releases?per_page=100
 ```
 
-If `GITHUB_TOKEN` is configured in the environment, add header `Authorization: Bearer {token}`
-to raise rate limits. Without a token, GitHub allows 60 unauthenticated requests/hour — this
-call counts as one.
+Do not attach `Authorization` / `GITHUB_TOKEN` here (see Preferred path above).
+Unauthenticated GitHub allows 60 requests/hour — this call counts as one.
 
 Match each version in the range to GitHub release tags. Common tag patterns:
 `v{version}`, `{version}`, `{artifactId}-{version}`, `release-{version}`.
@@ -124,7 +134,8 @@ Maven: https://search.maven.org/artifact/{groupId}/{artifactId}
   artifact, and provide the Maven Central artifact URL as a starting point:
   `https://search.maven.org/artifact/{groupId}/{artifactId}`
 - **GitHub API rate limited (HTTP 403/429)** — note that the limit is reached and suggest
-  setting `GITHUB_TOKEN` in the environment.
+  retrying via `get_dependency_changes` (uses server-side `GITHUB_TOKEN` when configured)
+  rather than attaching the token to a client request.
 - **fromVersion equals toVersion** — tell the user the versions are the same, nothing to show.
 - **Artifact not found in Maven Central** — suggest checking spelling.
 
