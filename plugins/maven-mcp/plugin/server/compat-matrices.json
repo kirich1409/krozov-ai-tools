@@ -1,0 +1,167 @@
+{
+  "_meta": {
+    "version": 1,
+    "updated": "2026-07-09",
+    "refreshProcedure": [
+      "1. AGP↔Gradle↔JDK: open https://developer.android.com/build/releases/about-agp (Gradle min table) and the latest AGP release-notes Compatibility tables (JDK). Update agpEntries: for each Plugin major.minor, set minGradle and minJdk; keep referenceUrl pointing at about-agp or the release-notes page used.",
+      "2. Kotlin Gradle plugin↔Gradle/AGP: open https://kotlinlang.org/docs/gradle-configure-project.html (KGP compatibility tables). Replace kotlinGradlePluginEntries ranges (kgpMin/kgpMax, gradleMin/gradleMax, agpMin/agpMax) to match the published tables. Prefer inclusive ranges that cover each documented KGP band.",
+      "3. javax→jakarta: extend jakartaMap only for EE coordinates that Spring Boot 3+ no longer ships under javax.*; keep artifactId mappings 1:1 where the Jakarta EE rename is stable.",
+      "4. Bump _meta.updated (ISO date) and, on breaking shape changes, _meta.version. Run plugins/maven-mcp/tests/test_compat.py.",
+      "5. Do not scrape these pages at runtime — stale-but-explicit data with a documented refresh path is the intended failure mode to avoid."
+    ],
+    "sources": [
+      "https://developer.android.com/build/releases/about-agp",
+      "https://developer.android.com/build/releases/agp-8-7-0-release-notes",
+      "https://kotlinlang.org/docs/gradle-configure-project.html",
+      "https://docs.spring.io/spring-boot/docs/current/reference/html/dependency-versions.html"
+    ],
+    "limitations": [
+      "AGP matrix covers stable 7.0–9.2 lines commonly used in 2024–2026; older 3.x/4.x rows are omitted.",
+      "Kotlin matrix covers KGP 1.9.20–2.4.0 bands from the Kotlin docs; earlier 1.6–1.8 bands are omitted in v1.",
+      "AGP max Gradle is not published as a hard ceiling — only minGradle is enforced for AGP↔Gradle.",
+      "Spring Cloud release-train pairing is not a separate matrix; pass Cloud-managed deps under dependencies with springBoot set so Boot BOM mismatches still surface.",
+      "javax→jakarta is a coordinate heuristic for known EE GAs, not a full bytecode/import scanner."
+    ]
+  },
+  "agpEntries": [
+    {"agp": "9.2", "minGradle": "9.4.1", "minJdk": 17, "referenceUrl": "https://developer.android.com/build/releases/about-agp"},
+    {"agp": "9.1", "minGradle": "9.3.1", "minJdk": 17, "referenceUrl": "https://developer.android.com/build/releases/about-agp"},
+    {"agp": "9.0", "minGradle": "9.1.0", "minJdk": 17, "referenceUrl": "https://developer.android.com/build/releases/about-agp"},
+    {"agp": "8.13", "minGradle": "8.13", "minJdk": 17, "referenceUrl": "https://developer.android.com/build/releases/about-agp"},
+    {"agp": "8.12", "minGradle": "8.13", "minJdk": 17, "referenceUrl": "https://developer.android.com/build/releases/about-agp"},
+    {"agp": "8.11", "minGradle": "8.13", "minJdk": 17, "referenceUrl": "https://developer.android.com/build/releases/about-agp"},
+    {"agp": "8.10", "minGradle": "8.11.1", "minJdk": 17, "referenceUrl": "https://developer.android.com/build/releases/about-agp"},
+    {"agp": "8.9", "minGradle": "8.11.1", "minJdk": 17, "referenceUrl": "https://developer.android.com/build/releases/about-agp"},
+    {"agp": "8.8", "minGradle": "8.10.2", "minJdk": 17, "referenceUrl": "https://developer.android.com/build/releases/about-agp"},
+    {"agp": "8.7", "minGradle": "8.9", "minJdk": 17, "referenceUrl": "https://developer.android.com/build/releases/about-agp"},
+    {"agp": "8.6", "minGradle": "8.7", "minJdk": 17, "referenceUrl": "https://developer.android.com/build/releases/about-agp"},
+    {"agp": "8.5", "minGradle": "8.7", "minJdk": 17, "referenceUrl": "https://developer.android.com/build/releases/about-agp"},
+    {"agp": "8.4", "minGradle": "8.6", "minJdk": 17, "referenceUrl": "https://developer.android.com/build/releases/about-agp"},
+    {"agp": "8.3", "minGradle": "8.4", "minJdk": 17, "referenceUrl": "https://developer.android.com/build/releases/about-agp"},
+    {"agp": "8.2", "minGradle": "8.2", "minJdk": 17, "referenceUrl": "https://developer.android.com/build/releases/about-agp"},
+    {"agp": "8.1", "minGradle": "8.0", "minJdk": 17, "referenceUrl": "https://developer.android.com/build/releases/about-agp"},
+    {"agp": "8.0", "minGradle": "8.0", "minJdk": 17, "referenceUrl": "https://developer.android.com/build/releases/about-agp"},
+    {"agp": "7.4", "minGradle": "7.5", "minJdk": 11, "referenceUrl": "https://developer.android.com/build/releases/about-agp"},
+    {"agp": "7.3", "minGradle": "7.4", "minJdk": 11, "referenceUrl": "https://developer.android.com/build/releases/about-agp"},
+    {"agp": "7.2", "minGradle": "7.3.3", "minJdk": 11, "referenceUrl": "https://developer.android.com/build/releases/about-agp"},
+    {"agp": "7.1", "minGradle": "7.2", "minJdk": 11, "referenceUrl": "https://developer.android.com/build/releases/about-agp"},
+    {"agp": "7.0", "minGradle": "7.0", "minJdk": 11, "referenceUrl": "https://developer.android.com/build/releases/about-agp"}
+  ],
+  "kotlinGradlePluginEntries": [
+    {
+      "kgpMin": "2.4.0",
+      "kgpMax": "2.4.0",
+      "gradleMin": "7.6.3",
+      "gradleMax": "9.5.0",
+      "agpMin": "8.5.2",
+      "agpMax": "9.1.0",
+      "referenceUrl": "https://kotlinlang.org/docs/gradle-configure-project.html"
+    },
+    {
+      "kgpMin": "2.3.20",
+      "kgpMax": "2.3.21",
+      "gradleMin": "7.6.3",
+      "gradleMax": "9.3.0",
+      "agpMin": "8.2.2",
+      "agpMax": "9.0.0",
+      "referenceUrl": "https://kotlinlang.org/docs/gradle-configure-project.html"
+    },
+    {
+      "kgpMin": "2.3.10",
+      "kgpMax": "2.3.10",
+      "gradleMin": "7.6.3",
+      "gradleMax": "9.0.0",
+      "agpMin": "8.2.2",
+      "agpMax": "9.0.0",
+      "referenceUrl": "https://kotlinlang.org/docs/gradle-configure-project.html"
+    },
+    {
+      "kgpMin": "2.3.0",
+      "kgpMax": "2.3.0",
+      "gradleMin": "7.6.3",
+      "gradleMax": "9.0.0",
+      "agpMin": "8.2.2",
+      "agpMax": "8.13.0",
+      "referenceUrl": "https://kotlinlang.org/docs/gradle-configure-project.html"
+    },
+    {
+      "kgpMin": "2.2.20",
+      "kgpMax": "2.2.21",
+      "gradleMin": "7.6.3",
+      "gradleMax": "8.14",
+      "agpMin": "7.3.1",
+      "agpMax": "8.11.1",
+      "referenceUrl": "https://kotlinlang.org/docs/gradle-configure-project.html"
+    },
+    {
+      "kgpMin": "2.2.0",
+      "kgpMax": "2.2.10",
+      "gradleMin": "7.6.3",
+      "gradleMax": "8.14",
+      "agpMin": "7.3.1",
+      "agpMax": "8.10.0",
+      "referenceUrl": "https://kotlinlang.org/docs/gradle-configure-project.html"
+    },
+    {
+      "kgpMin": "2.1.20",
+      "kgpMax": "2.1.21",
+      "gradleMin": "7.6.3",
+      "gradleMax": "8.12.1",
+      "agpMin": "7.3.1",
+      "agpMax": "8.7.2",
+      "referenceUrl": "https://kotlinlang.org/docs/gradle-configure-project.html"
+    },
+    {
+      "kgpMin": "2.1.0",
+      "kgpMax": "2.1.10",
+      "gradleMin": "7.6.3",
+      "gradleMax": "8.10",
+      "agpMin": "7.3.1",
+      "agpMax": "8.7.2",
+      "referenceUrl": "https://kotlinlang.org/docs/gradle-configure-project.html"
+    },
+    {
+      "kgpMin": "2.0.20",
+      "kgpMax": "2.0.21",
+      "gradleMin": "6.8.3",
+      "gradleMax": "8.8",
+      "agpMin": "7.1.3",
+      "agpMax": "8.5",
+      "referenceUrl": "https://kotlinlang.org/docs/gradle-configure-project.html"
+    },
+    {
+      "kgpMin": "2.0.0",
+      "kgpMax": "2.0.0",
+      "gradleMin": "6.8.3",
+      "gradleMax": "8.5",
+      "agpMin": "7.1.3",
+      "agpMax": "8.3.1",
+      "referenceUrl": "https://kotlinlang.org/docs/gradle-configure-project.html"
+    },
+    {
+      "kgpMin": "1.9.20",
+      "kgpMax": "1.9.25",
+      "gradleMin": "6.8.3",
+      "gradleMax": "8.1.1",
+      "agpMin": "4.2.2",
+      "agpMax": "8.1.0",
+      "referenceUrl": "https://kotlinlang.org/docs/gradle-configure-project.html"
+    }
+  ],
+  "jakartaMap": {
+    "javax.persistence:javax.persistence-api": "jakarta.persistence:jakarta.persistence-api",
+    "javax.validation:validation-api": "jakarta.validation:jakarta.validation-api",
+    "javax.servlet:javax.servlet-api": "jakarta.servlet:jakarta.servlet-api",
+    "javax.servlet:servlet-api": "jakarta.servlet:jakarta.servlet-api",
+    "javax.annotation:javax.annotation-api": "jakarta.annotation:jakarta.annotation-api",
+    "javax.inject:javax.inject": "jakarta.inject:jakarta.inject-api",
+    "javax.transaction:javax.transaction-api": "jakarta.transaction:jakarta.transaction-api",
+    "javax.websocket:javax.websocket-api": "jakarta.websocket:jakarta.websocket-api",
+    "javax.ws.rs:javax.ws.rs-api": "jakarta.ws.rs:jakarta.ws.rs-api",
+    "javax.mail:javax.mail-api": "jakarta.mail:jakarta.mail-api",
+    "com.sun.mail:javax.mail": "org.eclipse.angus:jakarta.mail",
+    "javax.xml.bind:jaxb-api": "jakarta.xml.bind:jakarta.xml.bind-api",
+    "javax.activation:javax.activation-api": "jakarta.activation:jakarta.activation-api",
+    "javax.activation:activation": "jakarta.activation:jakarta.activation-api"
+  }
+}

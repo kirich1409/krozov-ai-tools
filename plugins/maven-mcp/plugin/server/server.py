@@ -1100,6 +1100,409 @@ def apply_bom_managed_versions(scan: Dict, ctx: "ResolutionContext") -> Dict:
 
 
 # ---------------------------------------------------------------------------
+# Version compatibility matrices (#285)
+# ---------------------------------------------------------------------------
+
+SPRING_BOOT_BOM_GROUP = "org.springframework.boot"
+SPRING_BOOT_BOM_ARTIFACT = "spring-boot-dependencies"
+COMPAT_MATRICES_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "compat-matrices.json")
+MAX_COMPAT_DEPENDENCIES = 100
+
+_COMPAT_MATRICES_CACHE: Optional[Dict] = None
+
+
+def _load_compat_matrices() -> Dict:
+    """Load shipped compat-matrices.json (cached for the process lifetime)."""
+    global _COMPAT_MATRICES_CACHE
+    if _COMPAT_MATRICES_CACHE is not None:
+        return _COMPAT_MATRICES_CACHE
+    with open(COMPAT_MATRICES_PATH, "r", encoding="utf-8") as fh:
+        _COMPAT_MATRICES_CACHE = json.load(fh)
+    return _COMPAT_MATRICES_CACHE
+
+
+def _major_minor_line(version: str) -> str:
+    """Return ``major.minor`` for matrix line matching (e.g. 8.7.3 → 8.7)."""
+    segs = _parse_segments(version)
+    if len(segs) >= 2:
+        return f"{segs[0]}.{segs[1]}"
+    if segs:
+        return str(segs[0])
+    return version
+
+
+def _version_gte(a: str, b: str) -> bool:
+    return compare_versions(a, b) >= 0
+
+
+def _version_lte(a: str, b: str) -> bool:
+    return compare_versions(a, b) <= 0
+
+
+def _version_in_closed_range(version: str, vmin: str, vmax: str) -> bool:
+    return _version_gte(version, vmin) and _version_lte(version, vmax)
+
+
+def _find_agp_entry(agp_version: str, entries: List[Dict]) -> Optional[Dict]:
+    line = _major_minor_line(agp_version)
+    for entry in entries:
+        if entry.get("agp") == line:
+            return entry
+    for entry in entries:
+        if entry.get("agp") == agp_version:
+            return entry
+    return None
+
+
+def _find_kgp_entry(kotlin_version: str, entries: List[Dict]) -> Optional[Dict]:
+    for entry in entries:
+        kmin = entry.get("kgpMin") or ""
+        kmax = entry.get("kgpMax") or ""
+        if kmin and kmax and _version_in_closed_range(kotlin_version, kmin, kmax):
+            return entry
+    return None
+
+
+def _nearest_agp_suggestion(agp_version: str, entries: List[Dict]) -> Optional[Dict]:
+    """Pick the closest AGP matrix row by major.minor distance for suggestions."""
+    if not entries:
+        return None
+    target = _parse_segments(agp_version)
+    best = None
+    best_dist = None
+    for entry in entries:
+        segs = _parse_segments(entry["agp"])
+        # Lexicographic distance on padded major.minor
+        a = (target + [0, 0])[:2]
+        b = (segs + [0, 0])[:2]
+        dist = abs(a[0] - b[0]) * 1000 + abs(a[1] - b[1])
+        if best_dist is None or dist < best_dist:
+            best_dist = dist
+            best = entry
+    return best
+
+
+def check_android_kotlin_compatibility(android: Dict, matrices: Dict) -> Tuple[List[Dict], List[str]]:
+    """Validate AGP/Gradle/Kotlin/JDK against shipped matrices.
+
+    Returns (conflicts, notes).
+    """
+    conflicts: List[Dict] = []
+    notes: List[str] = []
+    agp = (android.get("agp") or "").strip() or None
+    gradle = (android.get("gradle") or "").strip() or None
+    kotlin = (android.get("kotlin") or "").strip() or None
+    jdk_raw = android.get("jdk")
+    jdk: Optional[int] = None
+    if jdk_raw is not None and jdk_raw != "":
+        try:
+            jdk = int(str(jdk_raw).strip())
+        except (TypeError, ValueError):
+            notes.append(f"android.jdk={jdk_raw!r} is not an integer; JDK check skipped.")
+
+    agp_entries = matrices.get("agpEntries") or []
+    kgp_entries = matrices.get("kotlinGradlePluginEntries") or []
+    agp_entry = _find_agp_entry(agp, agp_entries) if agp else None
+
+    if agp and agp_entry is None:
+        nearest = _nearest_agp_suggestion(agp, agp_entries)
+        suggestion = None
+        if nearest:
+            suggestion = {
+                "agp": nearest["agp"],
+                "gradle": nearest["minGradle"],
+                "jdk": nearest["minJdk"],
+            }
+        conflicts.append({
+            "kind": "agp_unknown",
+            "requested": {"agp": agp, "gradle": gradle, "kotlin": kotlin, "jdk": jdk},
+            "expected": None,
+            "suggestion": suggestion,
+            "reference": (nearest or {}).get("referenceUrl")
+            or "https://developer.android.com/build/releases/about-agp",
+        })
+    elif agp_entry is not None:
+        ref = agp_entry.get("referenceUrl") or "https://developer.android.com/build/releases/about-agp"
+        suggestion = {
+            "agp": agp_entry["agp"],
+            "gradle": agp_entry["minGradle"],
+            "jdk": agp_entry["minJdk"],
+        }
+        if gradle and not _version_gte(gradle, agp_entry["minGradle"]):
+            conflicts.append({
+                "kind": "agp_gradle",
+                "requested": {"agp": agp, "gradle": gradle},
+                "expected": {"minGradle": agp_entry["minGradle"]},
+                "suggestion": suggestion,
+                "reference": ref,
+            })
+        if jdk is not None and jdk < int(agp_entry["minJdk"]):
+            conflicts.append({
+                "kind": "agp_jdk",
+                "requested": {"agp": agp, "jdk": jdk},
+                "expected": {"minJdk": agp_entry["minJdk"]},
+                "suggestion": suggestion,
+                "reference": ref,
+            })
+
+    if kotlin:
+        kgp_entry = _find_kgp_entry(kotlin, kgp_entries)
+        if kgp_entry is None:
+            # Suggest the nearest band by kgpMin distance.
+            nearest_k = None
+            best_dist = None
+            for entry in kgp_entries:
+                a = _parse_segments(kotlin)
+                b = _parse_segments(entry["kgpMin"])
+                pad = max(len(a), len(b), 3)
+                a = (a + [0] * pad)[:pad]
+                b = (b + [0] * pad)[:pad]
+                d = sum(abs(x - y) for x, y in zip(a, b))
+                if best_dist is None or d < best_dist:
+                    best_dist = d
+                    nearest_k = entry
+            suggestion = None
+            if nearest_k:
+                suggestion = {
+                    "kotlin": f"{nearest_k['kgpMin']}-{nearest_k['kgpMax']}",
+                    "gradle": f"{nearest_k['gradleMin']}-{nearest_k['gradleMax']}",
+                    "agp": f"{nearest_k['agpMin']}-{nearest_k['agpMax']}",
+                }
+            conflicts.append({
+                "kind": "kotlin_unknown",
+                "requested": {"kotlin": kotlin, "gradle": gradle, "agp": agp},
+                "expected": None,
+                "suggestion": suggestion,
+                "reference": (nearest_k or {}).get("referenceUrl")
+                or "https://kotlinlang.org/docs/gradle-configure-project.html",
+            })
+        else:
+            ref = kgp_entry.get("referenceUrl") or (
+                "https://kotlinlang.org/docs/gradle-configure-project.html"
+            )
+            suggestion = {
+                "kotlin": f"{kgp_entry['kgpMin']}-{kgp_entry['kgpMax']}",
+                "gradle": f"{kgp_entry['gradleMin']}-{kgp_entry['gradleMax']}",
+                "agp": f"{kgp_entry['agpMin']}-{kgp_entry['agpMax']}",
+            }
+            if gradle and not _version_in_closed_range(
+                gradle, kgp_entry["gradleMin"], kgp_entry["gradleMax"]
+            ):
+                conflicts.append({
+                    "kind": "kotlin_gradle",
+                    "requested": {"kotlin": kotlin, "gradle": gradle},
+                    "expected": {
+                        "gradleMin": kgp_entry["gradleMin"],
+                        "gradleMax": kgp_entry["gradleMax"],
+                    },
+                    "suggestion": suggestion,
+                    "reference": ref,
+                })
+            if agp and not _version_in_closed_range(
+                agp, kgp_entry["agpMin"], kgp_entry["agpMax"]
+            ):
+                conflicts.append({
+                    "kind": "kotlin_agp",
+                    "requested": {"kotlin": kotlin, "agp": agp},
+                    "expected": {
+                        "agpMin": kgp_entry["agpMin"],
+                        "agpMax": kgp_entry["agpMax"],
+                    },
+                    "suggestion": suggestion,
+                    "reference": ref,
+                })
+
+    if not agp and not kotlin:
+        notes.append(
+            "android block provided without agp or kotlin; nothing to check against the matrix."
+        )
+    return conflicts, notes
+
+
+def check_spring_boot_bom_compatibility(
+    spring_boot: str,
+    dependencies: List[Dict],
+    ctx: "ResolutionContext",
+) -> Tuple[List[Dict], List[str]]:
+    """Compare requested dependency versions against spring-boot-dependencies BOM."""
+    conflicts: List[Dict] = []
+    notes: List[str] = []
+    managed = expand_bom(
+        SPRING_BOOT_BOM_GROUP, SPRING_BOOT_BOM_ARTIFACT, spring_boot, ctx
+    )
+    if not managed:
+        notes.append(
+            f"Could not expand {SPRING_BOOT_BOM_GROUP}:{SPRING_BOOT_BOM_ARTIFACT}:{spring_boot}; "
+            "Spring Boot BOM checks skipped."
+        )
+        return conflicts, notes
+    managed_map = {
+        (m["groupId"], m["artifactId"]): m["version"] for m in managed
+    }
+    ref = (
+        "https://docs.spring.io/spring-boot/docs/current/reference/html/"
+        "dependency-versions.html"
+    )
+    for dep in dependencies:
+        gid = dep.get("groupId")
+        aid = dep.get("artifactId")
+        requested = dep.get("version")
+        if not gid or not aid or not requested:
+            continue
+        expected = managed_map.get((gid, aid))
+        if expected is None:
+            continue
+        if requested == expected:
+            continue
+        conflicts.append({
+            "kind": "spring_boot_bom",
+            "requested": {
+                "groupId": gid,
+                "artifactId": aid,
+                "version": requested,
+            },
+            "expected": {
+                "groupId": gid,
+                "artifactId": aid,
+                "version": expected,
+                "managedBy": {
+                    "groupId": SPRING_BOOT_BOM_GROUP,
+                    "artifactId": SPRING_BOOT_BOM_ARTIFACT,
+                    "version": spring_boot,
+                },
+            },
+            "suggestion": {
+                "groupId": gid,
+                "artifactId": aid,
+                "version": expected,
+            },
+            "reference": ref,
+        })
+    return conflicts, notes
+
+
+def check_javax_jakarta_migration(
+    spring_boot: Optional[str],
+    dependencies: List[Dict],
+    matrices: Dict,
+) -> Tuple[List[Dict], List[str]]:
+    """Flag javax.* EE coordinates when Spring Boot ≥ 3."""
+    conflicts: List[Dict] = []
+    notes: List[str] = []
+    if not spring_boot:
+        return conflicts, notes
+    # Major-version gate: Boot 3 milestones/RCs (3.0.0-M1) compare < 3.0.0
+    # under compare_versions but already require jakarta.*.
+    boot_major = (_parse_segments(spring_boot) or [0])[0]
+    if boot_major < 3:
+        return conflicts, notes
+    jmap = matrices.get("jakartaMap") or {}
+    ref = (
+        "https://github.com/spring-projects/spring-boot/wiki/"
+        "Spring-Boot-3.0-Migration-Guide"
+    )
+    for dep in dependencies:
+        gid = dep.get("groupId") or ""
+        aid = dep.get("artifactId") or ""
+        key = f"{gid}:{aid}"
+        replacement = jmap.get(key)
+        if replacement:
+            jg, ja = replacement.split(":", 1)
+            conflicts.append({
+                "kind": "javax_to_jakarta",
+                "requested": {
+                    "groupId": gid,
+                    "artifactId": aid,
+                    "version": dep.get("version"),
+                },
+                "expected": {"groupId": jg, "artifactId": ja},
+                "suggestion": {"groupId": jg, "artifactId": ja},
+                "reference": ref,
+            })
+            continue
+        # Unmapped javax.* still flagged (no concrete replacement known).
+        if gid.startswith("javax."):
+            conflicts.append({
+                "kind": "javax_to_jakarta",
+                "requested": {
+                    "groupId": gid,
+                    "artifactId": aid,
+                    "version": dep.get("version"),
+                },
+                "expected": None,
+                "suggestion": None,
+                "reference": ref,
+            })
+    return conflicts, notes
+
+
+def check_version_compatibility(
+    *,
+    spring_boot: Optional[str] = None,
+    android: Optional[Dict] = None,
+    dependencies: Optional[List[Dict]] = None,
+    ctx: Optional["ResolutionContext"] = None,
+) -> Dict:
+    """Core compatibility check used by the MCP tool (#285)."""
+    matrices = _load_compat_matrices()
+    conflicts: List[Dict] = []
+    notes: List[str] = list((matrices.get("_meta") or {}).get("limitations") or [])
+    deps = list(dependencies or [])
+    if len(deps) > MAX_COMPAT_DEPENDENCIES:
+        deps = deps[:MAX_COMPAT_DEPENDENCIES]
+        notes.append(
+            f"dependencies truncated to {MAX_COMPAT_DEPENDENCIES} items "
+            "(handler-enforced cap)."
+        )
+
+    if android:
+        c, n = check_android_kotlin_compatibility(android, matrices)
+        conflicts.extend(c)
+        notes.extend(n)
+
+    if spring_boot:
+        if ctx is None:
+            notes.append(
+                "No resolution context; Spring Boot BOM expansion skipped."
+            )
+        else:
+            c, n = check_spring_boot_bom_compatibility(spring_boot, deps, ctx)
+            conflicts.extend(c)
+            notes.extend(n)
+        c, n = check_javax_jakarta_migration(spring_boot, deps, matrices)
+        conflicts.extend(c)
+        notes.extend(n)
+    elif deps and any(
+        (d.get("groupId") or "").startswith("javax.") for d in deps
+    ):
+        notes.append(
+            "javax.* coordinates present but springBoot was not set; "
+            "javax→jakarta migration check skipped (requires Spring Boot ≥ 3)."
+        )
+
+    if not spring_boot and not android and not deps:
+        notes.append(
+            "No springBoot, android, or dependencies provided; nothing to check."
+        )
+
+    # De-dupe identical limitation notes that we always attach — keep order,
+    # but drop exact duplicate strings from the dynamic notes path.
+    seen_notes = set()
+    unique_notes: List[str] = []
+    for note in notes:
+        if note in seen_notes:
+            continue
+        seen_notes.add(note)
+        unique_notes.append(note)
+
+    return {
+        "compatible": len(conflicts) == 0,
+        "conflicts": conflicts,
+        "notes": unique_notes,
+    }
+
+
+# ---------------------------------------------------------------------------
 # Version classification & comparison
 # ---------------------------------------------------------------------------
 
@@ -4192,6 +4595,29 @@ def handle_verify_coordinates(args: Dict) -> Any:
     return {"results": results}
 
 
+
+def handle_check_version_compatibility(args: Dict) -> Any:
+    """Validate Spring Boot BOM / Android-Kotlin-Gradle-JDK / javax→jakarta (#285)."""
+    spring_boot = args.get("springBoot")
+    android = args.get("android")
+    dependencies = args.get("dependencies") or []
+    if not isinstance(dependencies, list):
+        dependencies = []
+    # Cap before any network I/O (BOM expand) — same rationale as verify_coordinates.
+    if len(dependencies) > MAX_COMPAT_DEPENDENCIES:
+        dependencies = dependencies[:MAX_COMPAT_DEPENDENCIES]
+    ctx = None
+    if spring_boot:
+        ctx = build_resolution_context(args)
+    return check_version_compatibility(
+        spring_boot=spring_boot,
+        android=android if isinstance(android, dict) else None,
+        dependencies=dependencies,
+        ctx=ctx,
+    )
+
+
+
 TOOLS = [
     {
         "name": "get_latest_version",
@@ -4310,6 +4736,44 @@ TOOLS = [
         },
     },
     {
+        "name": "check_version_compatibility",
+        "description": "Check whether a set of versions is mutually compatible. Validates (1) dependency versions against the Spring Boot BOM (spring-boot-dependencies) when springBoot is set, (2) AGP↔Gradle↔JDK and Kotlin Gradle plugin↔Gradle/AGP ranges from a shipped matrix file, and (3) javax→jakarta EE coordinate migration when Spring Boot ≥ 3. Returns conflicts with suggested compatible versions and reference URLs. v1 coverage is intentionally bounded — see notes[] / AGENTS.md; matrices are not scraped at runtime and must be refreshed via the documented procedure in compat-matrices.json.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "springBoot": {
+                    "type": "string",
+                    "description": "Spring Boot version. When set, expands org.springframework.boot:spring-boot-dependencies and checks dependencies[] against managed versions; also enables javax→jakarta checks when ≥ 3.0.0.",
+                },
+                "android": {
+                    "type": "object",
+                    "description": "Android / Kotlin toolchain versions to validate against the shipped AGP and KGP matrices.",
+                    "properties": {
+                        "agp": {"type": "string", "description": "Android Gradle Plugin version"},
+                        "gradle": {"type": "string", "description": "Gradle version"},
+                        "kotlin": {"type": "string", "description": "Kotlin Gradle plugin version"},
+                        "jdk": {"type": "integer", "description": "JDK major version used to run the build"},
+                    },
+                },
+                "dependencies": {
+                    "type": "array",
+                    "maxItems": 100,
+                    "description": "Dependencies to check against the Spring Boot BOM and/or javax→jakarta map.",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "groupId": {"type": "string"},
+                            "artifactId": {"type": "string"},
+                            "version": {"type": "string"},
+                        },
+                        "required": ["groupId", "artifactId"],
+                    },
+                },
+                "projectPath": {"type": "string", "description": "Project root used to resolve declared repositories for BOM fetch. Defaults to the current working directory."},
+            },
+        },
+    },
+    {
         "name": "get_dependency_vulnerabilities",
         "description": "Check dependencies for known vulnerabilities using the OSV.dev database.",
         "inputSchema": {
@@ -4415,6 +4879,7 @@ TOOL_HANDLERS = {
     "get_dependency_changes": handle_get_dependency_changes,
     "scan_project_dependencies": handle_scan_project_dependencies,
     "expand_bom": handle_expand_bom,
+    "check_version_compatibility": handle_check_version_compatibility,
     "get_dependency_vulnerabilities": handle_get_dependency_vulnerabilities,
     "get_dependency_health": handle_get_dependency_health,
     "search_artifacts": handle_search_artifacts,

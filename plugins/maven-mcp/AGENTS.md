@@ -42,11 +42,12 @@ python3 -m unittest discover -s plugins/maven-mcp/tests -p test_handlers.py
 - **Metadata & POM** — `fetch_metadata`, `check_version_in_repos`, `fetch_pom`, `_parse_metadata_xml` (regex), `extract_relocation_from_pom` / `check_relocation` (relocation detection, #284 — see *Relocation detection & dead-repository flagging*).
 - **Project scanning** (local collection) — `_detect_build_system` + parsers: `_parse_gradle_deps`, `_parse_gradle_plugins_block`, `_parse_buildscript_classpath`, `_parse_settings_modules`, `_parse_settings_catalogs`, `_parse_maven_deps`, `_parse_maven_modules`, `_parse_toml_catalog`, `_detect_dead_repo_hints` (#284); orchestrated by `scan_project`. `buildSrc/` (kind `buildsrc`) and `build-logic/` subproject convention-plugin scripts (kind `convention-plugin`) are also walked, in addition to settings-listed modules. BOM/platform expansion (#286) is applied later in the scan/audit handlers (network via `fetch_pom`) — see *BOM / platform expansion*.
 - **BOM / platform expansion** — `parse_dependency_management`, `expand_bom`, `apply_bom_managed_versions` (#286).
+- **Version compatibility** — `check_version_compatibility` + shipped `compat-matrices.json` (AGP/KGP/javax→jakarta; Spring Boot via `expand_bom`) (#285).
 - **GitHub & changelog** — `gh_repo_exists` / `gh_fetch_repo` / `gh_fetch_releases` / `gh_fetch_user` / `gh_fetch_issue_stats`, `discover_github_repo` (POM SCM → groupId guess), and `_get_dependency_changes_impl` + `_filter_version_range` (GitHub releases only).
 - **Vulnerabilities** — OSV.dev batch query (`api.osv.dev/v1/querybatch`).
 - **Tool handlers** — `handle_*`, one per MCP tool, plus the stdio JSON-RPC dispatch loop.
 
-**Tools:** `get_latest_version`, `check_version_exists`, `check_multiple_dependencies`, `compare_dependency_versions`, `get_dependency_changes`, `scan_project_dependencies`, `expand_bom`, `get_dependency_vulnerabilities`, `get_dependency_health`, `search_artifacts`, `audit_project_dependencies`, `verify_coordinates` (see *`verify_coordinates`* below).
+**Tools:** `get_latest_version`, `check_version_exists`, `check_multiple_dependencies`, `compare_dependency_versions`, `get_dependency_changes`, `scan_project_dependencies`, `expand_bom`, `check_version_compatibility`, `get_dependency_vulnerabilities`, `get_dependency_health`, `search_artifacts`, `audit_project_dependencies`, `verify_coordinates` (see *`verify_coordinates`* below).
 
 ## Repository resolution
 
@@ -119,6 +120,25 @@ Maven BOMs and Gradle `platform()` / `enforcedPlatform()` declare managed versio
 
 **Apply on scan/audit.** `scan_project` stays local. `handle_scan_project_dependencies` and `handle_audit_project_dependencies` build a `ResolutionContext`, call `apply_bom_managed_versions` (network via `fetch_pom`), then flatten / audit. Versionless non-platform deps gain `effectiveVersion` + `managedBy: {groupId, artifactId, version}` of the BOM/pin that provided the version. Local Maven non-import `dependencyManagement` pins **override** imported managed versions. Explicit dependency versions win over `platform()`; `enforcedPlatform` may override a differing explicit version. Audit uses `effectiveVersion or version` as `currentVersion` for upgrade/vuln paths.
 
+## Version compatibility (`check_version_compatibility`, #285)
+
+Validates a set of versions against known compatibility matrices and returns `{compatible, conflicts[], notes[]}`. Conflicts carry `kind`, `requested`, `expected`, `suggestion`, and `reference`.
+
+**Params:** `springBoot?`, `android?: {agp?, gradle?, kotlin?, jdk?}`, `dependencies?: [{groupId, artifactId, version?}]`, `projectPath?`.
+
+**Checks (v1):**
+1. **Spring Boot BOM** — when `springBoot` is set, expands `org.springframework.boot:spring-boot-dependencies` via `expand_bom` (#286) and flags any `dependencies[]` entry whose version differs from the BOM-managed version (`kind: spring_boot_bom`).
+2. **AGP ↔ Gradle ↔ JDK** — shipped matrix in `plugin/server/compat-matrices.json` (`agpEntries`). AGP line matched by `major.minor`; Gradle must be ≥ `minGradle`; JDK major must be ≥ `minJdk`.
+3. **Kotlin Gradle plugin ↔ Gradle / AGP** — same file (`kotlinGradlePluginEntries`); closed ranges for Gradle and AGP per KGP band.
+4. **javax → jakarta** — when `springBoot ≥ 3.0.0`, flags known `javax.*` EE coordinates (and a few `com.sun.mail` aliases) with the `jakarta.*` replacement from `jakartaMap`.
+
+**Matrix refresh.** Data is **not** scraped at runtime. `_meta.refreshProcedure` in `compat-matrices.json` documents how to update AGP/KGP tables from the official Android / Kotlin docs. Bump `_meta.updated` (and `_meta.version` on shape changes) when refreshing. Stale-but-explicit data with a documented refresh path is intentional — silent drift is the failure mode this fights.
+
+**Known limitations (also echoed in `notes[]`):** AGP coverage is the 7.0–9.2 lines; KGP coverage is 1.9.20–2.4.0 bands; AGP has no published max Gradle (only min enforced); Spring Cloud release-train pairing is not a separate matrix (pass Cloud-managed deps under `dependencies` with `springBoot` set); javax→jakarta is a coordinate heuristic, not a full import/bytecode scanner. Hook integration is advisory `ask` only (never `deny`).
+
+**Hook:** `pre-edit-deps.sh` optionally calls this tool (JSON-RPC id:3) when the edit payload exposes Spring Boot / AGP / Kotlin / Gradle pins (or javax.* coords with a Boot version). Conflicts → `ask` with structured reason text; fail-open if the call is skipped or errors.
+
+
 ## Gradle plugin-marker resolution for vulnerabilities (#290)
 
 Gradle plugin-marker coordinates (`{pluginId}:{pluginId}.gradle.plugin`) are not indexed by OSV directly — OSV indexes the real implementation artifact, not the marker. `resolve_plugin_marker_implementation(group_id, artifact_id, version, ctx)` fetches the marker's POM (via the existing `fetch_pom` / `_repos_for` plugin-scope routing) and extracts its single `<dependency>` block — the implementation GAV — before the coordinate is sent to OSV. `audit_project_dependencies` calls this on every scanned coordinate (deduplicated per-GAV). `get_dependency_vulnerabilities` calls this per input coordinate too, but only builds the `ResolutionContext` (`build_resolution_context` → `discover_repositories`, a filesystem read of the project's build files) when at least one requested coordinate actually has the marker shape — a request with no marker-shaped dependency makes zero filesystem calls and exactly one network call (the OSV POST), preserving the handler's original purity contract; a `ResolutionContext` build failure degrades to "markers unresolved" rather than raising. When a marker is resolved, the result entry keeps the marker's own `groupId`/`artifactId`/`version` identity and gains an additional `resolvedImplementation: {groupId, artifactId, version}` field. Resolution failure (POM fetch failure, missing/incomplete `<dependency>` block, unresolved `${...}` property, missing version) degrades gracefully to no resolution — the coordinate is queried against OSV as-is, which simply yields no CVEs for a marker GA that OSV never indexed; this path never raises.
@@ -184,6 +204,7 @@ Fires before `Edit`/`Write`/`MultiEdit` on build files; extracts coordinates fro
 - `exists` + any `vulnerabilities[].malicious == true` (#322 Layer 1, from `get_dependency_vulnerabilities`) → **`deny`**, set UNCONDITIONALLY (never behind a `[ "$DECISION" = "deny" ] ||`-style guard) — same tier as `absent + likelyHallucination`; MAL- entries carry no CVSS severity, so the CRITICAL/HIGH branch below would never catch this on its own. Unconditional (not just "first-decision-wins") matters: it is what upgrades a prior `ask` (from the CRITICAL/HIGH branch, or from the `typosquatRisk` branch below) to `deny` when both fire for the same coordinate, regardless of which branch runs first in loop order.
 - `exists` + `typosquatRisk.signal == true` (#322 Layer 2, from `verify_coordinates`) → **`ask`**, guarded exactly like the CRITICAL/HIGH branch (`[ "$DECISION" = "deny" ] || DECISION="ask"`) — advisory only (heuristic, false-positive-prone); this guard also prevents a heuristic `ask` on a LATER coordinate in the same batch from downgrading a `deny` already set for an EARLIER coordinate in the same hook invocation (both checks share one per-coordinate loop). Reason text includes `typosquatRisk.reasons` and, when present, `popularMatch.groupId`/`artifactId` — charset-filtered `[A-Za-z0-9._:-]` identically to `suggestions` (same Solr-search-result provenance, same indirect-injection surface into `permissionDecisionReason`).
 - CRITICAL/HIGH CVE on versioned coord → `ask` (advisory prompt; severity comes from OSV `/v1/vulns/{id}` hydration in `query_osv_batch`, #338)
+- Version compatibility conflict from `check_version_compatibility` (#285) → `ask` (advisory; never deny). Triggered only when the edit exposes Spring Boot / AGP / Kotlin / Gradle pins or javax.* with Boot ≥ detection; fail-open if the optional id:3 call is absent/errors.
 - `deny` wins over `ask` when both fire — within one coordinate (malicious-vuln-deny vs. CRITICAL/HIGH-ask or typosquatRisk-ask) AND across two different coordinates in the same batch (an earlier coordinate's deny is never downgraded by a later coordinate's ask)
 
 **Security constraints:**

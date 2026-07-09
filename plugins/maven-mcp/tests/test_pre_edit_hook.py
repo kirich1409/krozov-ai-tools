@@ -1500,5 +1500,126 @@ class ContractDriftGuardTest(unittest.TestCase):
         self.assertIn("results", parsed)
 
 
+@_require_jq_and_timeout()
+class CompatAskTest(unittest.TestCase):
+    """#285: check_version_compatibility conflicts → advisory ask (never deny)."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def test_agp_gradle_conflict_asks(self):
+        """AGP 8.7 + Gradle 8.5 in edit → id:3 compat call → ask."""
+        _make_fixture(
+            self.tmp,
+            {
+                1: {
+                    "results": [
+                        _verify_entry(
+                            "exists",
+                            "com.android.application",
+                            "com.android.application.gradle.plugin",
+                        )
+                    ]
+                },
+                3: {
+                    "compatible": False,
+                    "conflicts": [
+                        {
+                            "kind": "agp_gradle",
+                            "requested": {"agp": "8.7.2", "gradle": "8.5"},
+                            "expected": {"minGradle": "8.9"},
+                            "suggestion": {
+                                "agp": "8.7",
+                                "gradle": "8.9",
+                                "jdk": 17,
+                            },
+                            "reference": (
+                                "https://developer.android.com/build/releases/about-agp"
+                            ),
+                        }
+                    ],
+                    "notes": [],
+                },
+            },
+        )
+        content = textwrap.dedent(
+            """\
+            plugins {
+              id("com.android.application") version "8.7.2"
+            }
+            // gradle-8.5-bin.zip
+            distributionUrl=https\\://services.gradle.org/distributions/gradle-8.5-bin.zip
+            """
+        )
+        proc = _run_hook(self.tmp, _edit_stdin("build.gradle.kts", content))
+        self.assertEqual(proc.returncode, 0)
+        decision = _parse_decision(proc.stdout)
+        self.assertIsNotNone(decision)
+        ho = decision["hookSpecificOutput"]
+        self.assertEqual(ho["permissionDecision"], "ask")
+        self.assertIn("agp_gradle", ho["permissionDecisionReason"])
+        args = _stub_args(self.tmp)
+        names = {a.get("name") for a in args}
+        self.assertIn("check_version_compatibility", names)
+        compat = next(a for a in args if a.get("name") == "check_version_compatibility")
+        android = compat["arguments"].get("android") or {}
+        self.assertEqual(android.get("agp"), "8.7.2")
+        self.assertEqual(android.get("gradle"), "8.5")
+
+    def test_compat_conflict_does_not_deny(self):
+        """Compatibility arm must use ask, never deny."""
+        _make_fixture(
+            self.tmp,
+            {
+                1: {
+                    "results": [
+                        _verify_entry(
+                            "exists", "javax.persistence", "javax.persistence-api"
+                        )
+                    ]
+                },
+                3: {
+                    "compatible": False,
+                    "conflicts": [
+                        {
+                            "kind": "javax_to_jakarta",
+                            "requested": {
+                                "groupId": "javax.persistence",
+                                "artifactId": "javax.persistence-api",
+                            },
+                            "suggestion": {
+                                "groupId": "jakarta.persistence",
+                                "artifactId": "jakarta.persistence-api",
+                            },
+                            "reference": "https://example.com/boot3",
+                        }
+                    ],
+                    "notes": [],
+                },
+            },
+        )
+        content = textwrap.dedent(
+            """\
+            plugins {
+              id("org.springframework.boot") version "3.2.0"
+            }
+            implementation("javax.persistence:javax.persistence-api:2.2")
+            """
+        )
+        proc = _run_hook(self.tmp, _edit_stdin("build.gradle.kts", content))
+        self.assertEqual(proc.returncode, 0)
+        decision = _parse_decision(proc.stdout)
+        self.assertIsNotNone(decision)
+        self.assertEqual(
+            decision["hookSpecificOutput"]["permissionDecision"], "ask"
+        )
+        self.assertNotEqual(
+            decision["hookSpecificOutput"]["permissionDecision"], "deny"
+        )
+
+
 if __name__ == "__main__":
     unittest.main()
