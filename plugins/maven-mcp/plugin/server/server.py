@@ -1773,8 +1773,12 @@ def _parse_gradle_deps(content: str, source_file: str) -> List[Dict]:
     config_pattern = "|".join(re.escape(c) for c in sorted(ALL_CONFIGURATIONS, key=len, reverse=True))
 
     # String notation: implementation("group:artifact:version")
+    # Version stops at ':' (classifier) or '@' (extension); trailing
+    # `:classifier` / `@ext` / `:classifier@ext` are optional and discarded.
     string_re = re.compile(
-        rf'\b({config_pattern})\s*[( ]\s*["\']([^"\':\s]+):([^"\':\s]+)(?::([^"\']+))?["\']',
+        rf'\b({config_pattern})\s*[( ]\s*["\']'
+        rf'([^"\':\s]+):([^"\':\s]+)'
+        rf'(?::([^"\':@]+))?(?::[^"\'@]+)?(?:@[^"\']+)?["\']',
     )
     for m in string_re.finditer(content):
         deps.append({
@@ -1854,8 +1858,11 @@ def _parse_buildscript_classpath(content: str) -> List[Dict]:
     the buildscript body at the first `}` (brace-naive non-greedy regex did).
     """
     results = []
+    # Same classifier/@ext stripping as `_parse_gradle_deps` string notation.
     cp_re = re.compile(
-        r'\bclasspath\s*\(["\']([^"\':\s]+):([^"\':\s]+)(?::([^"\']+))?["\']'
+        r'\bclasspath\s*\(["\']'
+        r'([^"\':\s]+):([^"\':\s]+)'
+        r'(?::([^"\':@]+))?(?::[^"\'@]+)?(?:@[^"\']+)?["\']'
     )
     pos = 0
     while True:
