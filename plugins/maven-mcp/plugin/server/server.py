@@ -4122,7 +4122,534 @@ def _parse_toml_catalog(content: str) -> Dict:
                     version = vinline_m.group(1)
             plugins[alias] = {"id": plugin_id, "version": version}
 
-    return {"libraries": libraries, "plugins": plugins}
+    return {"libraries": libraries, "plugins": plugins, "versions": versions}
+
+
+
+# ---------------------------------------------------------------------------
+# Version catalog generate / validate (#288)
+# ---------------------------------------------------------------------------
+# Gradle version catalogs have strict, error-prone rules (no native update
+# command). Agents editing gradle/libs.versions.toml by hand routinely break
+# kebab→camel accessors, reserved alias segments, and plugin DSL usage.
+# catalog_entry generates rule-correct entries and validates existing TOML.
+
+# Alias shape from Gradle docs: [a-z]([a-zA-Z0-9_.\-])*
+_CATALOG_ALIAS_RE = re.compile(r"^[a-z]([a-zA-Z0-9_.\-]*)$")
+# Fully reserved alias names (any section).
+_CATALOG_RESERVED_NAMES = frozenset({"extensions", "class", "convention"})
+# Cannot be the first subgroup of a library/plugin alias (Gradle docs).
+_CATALOG_RESERVED_FIRST_SEGMENTS = frozenset({"bundles", "versions", "plugins"})
+# Conventional default catalog path (Gradle auto-imports this file).
+_DEFAULT_CATALOG_PATH = "gradle/libs.versions.toml"
+
+
+def _catalog_alias_segments(alias: str) -> List[str]:
+    """Split a catalog alias into accessor segments.
+
+    Dashes, underscores, and dots become segment boundaries. camelCase stays
+    as a single segment (Gradle's way to avoid nested subgroup accessors —
+    ``groovyCore`` → ``libs.groovyCore``, not ``libs.groovy.core``).
+    """
+    parts = re.split(r"[-_.]+", alias)
+    return [p for p in parts if p]
+
+
+def _catalog_normalize_accessor_key(alias: str) -> str:
+    """Normalize alias to the type-safe accessor key (dot form, camelCase kept)."""
+    return ".".join(_catalog_alias_segments(alias))
+
+
+def _catalog_clash_key(alias: str) -> str:
+    """Normalized key used to detect accessor name clashes.
+
+    Gradle treats ``someAlias`` and ``some-alias`` as the same accessor
+    (troubleshooting: accessor name clashes). Clash detection therefore splits
+    camelCase in addition to ``-``/``_``/``.``, then lowercases — unlike the
+    emitted accessor string, which preserves camelCase segments.
+    """
+    segments: List[str] = []
+    for part in _catalog_alias_segments(alias):
+        camel_bits = re.sub(r"([a-z0-9])([A-Z])", r"\1\n\2", part).split("\n")
+        segments.extend(b.lower() for b in camel_bits if b)
+    return ".".join(segments)
+
+
+def _to_kebab_catalog_alias(raw: str) -> str:
+    """Convert an artifactId / plugin-id fragment into a kebab-case alias."""
+    s = raw.strip()
+    # Split dotted plugin ids / group-ish names on dots first.
+    s = s.replace(".", "-")
+    # camelCase / PascalCase → kebab
+    s = re.sub(r"([a-z0-9])([A-Z])", r"\1-\2", s)
+    s = s.replace("_", "-")
+    s = re.sub(r"-{2,}", "-", s)
+    s = s.strip("-").lower()
+    # Alias must start with a letter.
+    s = re.sub(r"^[^a-z]+", "", s)
+    s = re.sub(r"[^a-z0-9_.\-]", "", s)
+    return s
+
+
+def _rewrite_reserved_catalog_alias(value: str) -> str:
+    """Rewrite reserved whole-alias names and reserved first subgroups.
+
+    ``extensions`` / ``class`` / ``convention`` are reserved as full alias names
+    (Gradle docs). ``bundles`` / ``versions`` / ``plugins`` cannot be the first
+    subgroup — ``versions-dependency`` becomes ``versionsDependency``.
+    """
+    if not value:
+        return "lib"
+    segs = _catalog_alias_segments(value)
+    if not segs:
+        return "lib"
+    if value in _CATALOG_RESERVED_NAMES or value.lower() in _CATALOG_RESERVED_NAMES:
+        return f"dep-{value}"
+    if segs[0].lower() in _CATALOG_RESERVED_FIRST_SEGMENTS:
+        if len(segs) == 1:
+            return f"dep-{segs[0]}"
+        rest = "".join(s[:1].upper() + s[1:] for s in segs[1:])
+        return segs[0] + rest
+    return value
+
+
+def _sanitize_catalog_alias(alias: str, existing: Optional[set] = None) -> str:
+    """Ensure alias is valid: format, reserved names/segments, unique."""
+    existing = existing or set()
+    candidate = _rewrite_reserved_catalog_alias(alias or "lib")
+    # Enforce alias regex; fall back to stripped kebab.
+    if not _CATALOG_ALIAS_RE.match(candidate):
+        candidate = _to_kebab_catalog_alias(candidate) or "lib"
+        if not _CATALOG_ALIAS_RE.match(candidate):
+            candidate = "lib"
+        candidate = _rewrite_reserved_catalog_alias(candidate)
+        if not _CATALOG_ALIAS_RE.match(candidate):
+            candidate = "lib"
+    # Uniqueness against existing aliases (clash-key aware).
+    base = candidate
+    n = 2
+    existing_norm = {_catalog_clash_key(a) for a in existing}
+    while candidate in existing or _catalog_clash_key(candidate) in existing_norm:
+        candidate = f"{base}-{n}"
+        n += 1
+    return candidate
+
+
+def _suggest_library_alias(group_id: str, artifact_id: str, existing: Optional[set] = None) -> str:
+    raw = _to_kebab_catalog_alias(artifact_id) or _to_kebab_catalog_alias(group_id.split(".")[-1])
+    return _sanitize_catalog_alias(raw, existing)
+
+
+def _suggest_plugin_alias(plugin_id: str, existing: Optional[set] = None) -> str:
+    parts = [p for p in plugin_id.split(".") if p]
+    if len(parts) >= 2:
+        raw = _to_kebab_catalog_alias("-".join(parts[-2:]))
+    else:
+        raw = _to_kebab_catalog_alias(plugin_id)
+    return _sanitize_catalog_alias(raw, existing)
+
+
+def _library_accessor(alias: str, catalog_name: str = "libs") -> str:
+    return f"{catalog_name}.{_catalog_normalize_accessor_key(alias)}"
+
+
+def _plugin_accessor(alias: str, catalog_name: str = "libs") -> str:
+    # Plugins MUST be applied via alias(...), never id(libs.plugins...).
+    return f"alias({catalog_name}.plugins.{_catalog_normalize_accessor_key(alias)})"
+
+
+def _plugin_id_from_coordinate(group_id: str, artifact_id: str) -> str:
+    """Derive a Gradle plugin id from a Maven-ish coordinate."""
+    if artifact_id.endswith(".gradle.plugin"):
+        # Marker artifact: {id}:{id}.gradle.plugin
+        return group_id
+    if artifact_id == group_id:
+        return group_id
+    # Prefer a dotted artifactId when it looks like a plugin id.
+    if "." in artifact_id and not artifact_id.endswith((".jar", ".pom")):
+        return artifact_id
+    return group_id
+
+
+def _extract_version_refs(content: str) -> List[Dict[str, str]]:
+    """Return raw version.ref usages with section + alias (unresolved)."""
+    refs: List[Dict[str, str]] = []
+    for section in ("libraries", "plugins"):
+        m = re.search(rf"\[{section}\]([\s\S]*?)(?=\n\[|$)", content)
+        if not m:
+            continue
+        for lm in re.finditer(r"^(\S+)\s*=\s*\{([^}]+)\}", m.group(1), re.MULTILINE):
+            alias = lm.group(1)
+            vref = re.search(r'version\.ref\s*=\s*"([^"]+)"', lm.group(2))
+            if vref:
+                refs.append({"section": section, "alias": alias, "versionRef": vref.group(1)})
+    return refs
+
+
+def _validate_alias_name(alias: str, section: str) -> List[Dict[str, str]]:
+    """Validate one catalog alias; return violation dicts."""
+    violations: List[Dict[str, str]] = []
+    if not _CATALOG_ALIAS_RE.match(alias):
+        violations.append({
+            "rule": "invalid_alias_format",
+            "detail": (
+                f"{section} alias {alias!r} does not match "
+                f"[a-z]([a-zA-Z0-9_.-])* required by Gradle version catalogs"
+            ),
+        })
+    if alias in _CATALOG_RESERVED_NAMES or alias.lower() in _CATALOG_RESERVED_NAMES:
+        violations.append({
+            "rule": "reserved_alias",
+            "detail": (
+                f"{section} alias {alias!r} is reserved "
+                f"(extensions/class/convention cannot be used as aliases)"
+            ),
+        })
+    segs = _catalog_alias_segments(alias)
+    if segs and segs[0].lower() in _CATALOG_RESERVED_FIRST_SEGMENTS:
+        violations.append({
+            "rule": "reserved_first_segment",
+            "detail": (
+                f"{section} alias {alias!r} starts with reserved subgroup "
+                f"{segs[0]!r}; bundles/versions/plugins cannot be the first "
+                f"segment (use e.g. versionsDependency or dependency-versions)"
+            ),
+        })
+    return violations
+
+
+def generate_catalog_entry(
+    group_id: str,
+    artifact_id: str,
+    version: Optional[str] = None,
+    kind: str = "library",
+    catalog_toml: Optional[str] = None,
+    catalog_name: str = "libs",
+    alias: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Generate a rule-correct catalog entry + minimal diff suggestion (#288)."""
+    kind = kind if kind in ("library", "plugin") else "library"
+    parsed = _parse_toml_catalog(catalog_toml or "")
+    existing_lib = set(parsed.get("libraries") or {})
+    existing_plugin = set(parsed.get("plugins") or {})
+    existing_versions = set((parsed.get("versions") or {}).keys())
+    existing = existing_plugin if kind == "plugin" else existing_lib
+
+    # Preferred alias before uniqueness suffix — used to detect version bumps
+    # against an existing catalog entry (do not invent alias-2 when bumping).
+    if kind == "plugin":
+        plugin_id = _plugin_id_from_coordinate(group_id, artifact_id)
+        preferred_raw = alias or _to_kebab_catalog_alias(
+            "-".join([p for p in plugin_id.split(".") if p][-2:])
+            if len([p for p in plugin_id.split(".") if p]) >= 2
+            else plugin_id
+        )
+    else:
+        plugin_id = None
+        preferred_raw = alias or (
+            _to_kebab_catalog_alias(artifact_id)
+            or _to_kebab_catalog_alias(group_id.split(".")[-1])
+        )
+    preferred = _sanitize_catalog_alias(preferred_raw, existing=set())
+    bump_existing = bool(catalog_toml and version and preferred in existing)
+    chosen = preferred if bump_existing else _sanitize_catalog_alias(preferred_raw, existing)
+
+    if kind == "plugin":
+        accessor = _plugin_accessor(chosen, catalog_name)
+        version_key = _sanitize_catalog_alias(
+            _to_kebab_catalog_alias(chosen) or chosen, existing_versions
+        )
+        if version:
+            lib_line = f'{chosen} = {{ id = "{plugin_id}", version.ref = "{version_key}" }}'
+            ver_line = f'{version_key} = "{version}"'
+            entry_toml = f"[versions]\n{ver_line}\n\n[plugins]\n{lib_line}\n"
+            suggested = (
+                f"# Minimal addition to {_DEFAULT_CATALOG_PATH}\n"
+                f"[versions]\n{ver_line}\n\n[plugins]\n{lib_line}\n\n"
+                f"# Apply in plugins {{ }} with:\n# {accessor}\n"
+                f"# Do NOT write id({catalog_name}.plugins.{_catalog_normalize_accessor_key(chosen)})\n"
+            )
+        else:
+            lib_line = f'{chosen} = {{ id = "{plugin_id}" }}'
+            ver_line = None
+            entry_toml = f"[plugins]\n{lib_line}\n"
+            suggested = (
+                f"# Minimal addition to {_DEFAULT_CATALOG_PATH}\n"
+                f"[plugins]\n{lib_line}\n\n"
+                f"# Apply in plugins {{ }} with:\n# {accessor}\n"
+            )
+        entry = {
+            "section": "plugins",
+            "alias": chosen,
+            "id": plugin_id,
+            "version": version,
+            "versionRef": version_key if version else None,
+            "tomlLine": lib_line,
+            "versionLine": ver_line,
+        }
+    else:
+        accessor = _library_accessor(chosen, catalog_name)
+        version_key = _sanitize_catalog_alias(
+            _to_kebab_catalog_alias(chosen) or chosen, existing_versions
+        )
+        module = f"{group_id}:{artifact_id}"
+        if version:
+            lib_line = f'{chosen} = {{ module = "{module}", version.ref = "{version_key}" }}'
+            ver_line = f'{version_key} = "{version}"'
+            entry_toml = f"[versions]\n{ver_line}\n\n[libraries]\n{lib_line}\n"
+            suggested = (
+                f"# Minimal addition to {_DEFAULT_CATALOG_PATH}\n"
+                f"[versions]\n{ver_line}\n\n[libraries]\n{lib_line}\n\n"
+                f"# Use in dependencies {{ }}:\n# implementation({accessor})\n"
+            )
+        else:
+            lib_line = f'{chosen} = {{ module = "{module}" }}'
+            ver_line = None
+            entry_toml = f"[libraries]\n{lib_line}\n"
+            suggested = (
+                f"# Minimal addition to {_DEFAULT_CATALOG_PATH}\n"
+                f"[libraries]\n{lib_line}\n\n"
+                f"# Use in dependencies {{ }}:\n# implementation({accessor})\n"
+            )
+        entry = {
+            "section": "libraries",
+            "alias": chosen,
+            "groupId": group_id,
+            "artifactId": artifact_id,
+            "version": version,
+            "versionRef": version_key if version else None,
+            "tomlLine": lib_line,
+            "versionLine": ver_line,
+        }
+
+    # If the alias already exists in the provided catalog, prefer a version-only bump.
+    if bump_existing:
+        bump_lines = []
+        # Prefer bumping version.ref target when present in raw TOML.
+        section = "plugins" if kind == "plugin" else "libraries"
+        raw_refs = [r for r in _extract_version_refs(catalog_toml) if r["alias"] == chosen and r["section"] == section]
+        if raw_refs:
+            vref = raw_refs[0]["versionRef"]
+            bump_lines.append(f'# Update existing [versions] key only\n{vref} = "{version}"')
+            suggested = "\n".join(bump_lines) + "\n"
+            entry["updateKind"] = "version_ref_bump"
+            entry["versionRef"] = vref
+        else:
+            # Inline version in the table/shorthand — replace just the version literal on that alias line.
+            bump_lines.append(f"# Update version on existing [{section}] alias {chosen!r}")
+            bump_lines.append(entry["tomlLine"])
+            suggested = "\n".join(bump_lines) + "\n"
+            entry["updateKind"] = "inline_or_line_replace"
+        entry["tomlSnippet"] = suggested
+    else:
+        entry["updateKind"] = "add"
+        entry["tomlSnippet"] = entry_toml
+
+    # Report when a caller-supplied alias had to be rewritten; chosen alias is
+    # always rule-correct so we do not re-emit validate findings against it.
+    alias_violations: List[Dict[str, str]] = []
+    if alias and alias != chosen:
+        alias_violations.append({
+            "rule": "alias_sanitized",
+            "detail": f"requested alias {alias!r} was adjusted to valid alias {chosen!r}",
+        })
+        alias_violations.extend(_validate_alias_name(alias, entry["section"]))
+
+    return {
+        "alias": chosen,
+        "accessor": accessor,
+        "entry": entry,
+        "suggestedDiff": suggested,
+        "violations": alias_violations,
+        "catalogPath": _DEFAULT_CATALOG_PATH,
+        "notes": [
+            "Gradle has no built-in command to update version catalogs; apply the minimal diff manually.",
+            "Plugin catalog entries must be applied with alias(libs.plugins.*), never id(libs.plugins.*).",
+            "Type-safe catalog accessors are not available inside subprojects {} or buildscript {} blocks.",
+        ],
+    }
+
+
+def validate_catalog(
+    catalog_toml: str,
+    build_content: Optional[str] = None,
+    catalog_path: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Validate catalog TOML (+ optional build script text) against Gradle rules (#288)."""
+    violations: List[Dict[str, str]] = []
+    if catalog_path:
+        norm = catalog_path.replace("\\", "/").lstrip("./")
+        base = os.path.basename(norm)
+        # Default catalog must be exactly gradle/libs.versions.toml; other
+        # *.versions.toml files are valid only when registered in settings.
+        if base == "libs.versions.toml" and norm != _DEFAULT_CATALOG_PATH and not norm.endswith(
+            "/" + _DEFAULT_CATALOG_PATH
+        ):
+            violations.append({
+                "rule": "catalog_path",
+                "detail": (
+                    f"default catalog filename must be {_DEFAULT_CATALOG_PATH!r} "
+                    f"(Gradle auto-imports only that path); got {catalog_path!r}"
+                ),
+            })
+        elif not base.endswith(".versions.toml"):
+            violations.append({
+                "rule": "catalog_path",
+                "detail": (
+                    f"catalog file {catalog_path!r} should use a "
+                    f"*.versions.toml basename (convention: {_DEFAULT_CATALOG_PATH})"
+                ),
+            })
+
+    parsed = _parse_toml_catalog(catalog_toml or "")
+    versions = parsed.get("versions") or {}
+    libraries = parsed.get("libraries") or {}
+    plugins = parsed.get("plugins") or {}
+
+    for alias in libraries:
+        violations.extend(_validate_alias_name(alias, "libraries"))
+    for alias in plugins:
+        violations.extend(_validate_alias_name(alias, "plugins"))
+    for alias in versions:
+        # Version aliases share the same naming rules / reserved words.
+        violations.extend(_validate_alias_name(alias, "versions"))
+
+    # Accessor clashes: someAlias vs some-alias share one clash key.
+    for section_name, table in (("libraries", libraries), ("plugins", plugins), ("versions", versions)):
+        by_key: Dict[str, List[str]] = {}
+        for alias in table:
+            by_key.setdefault(_catalog_clash_key(alias), []).append(alias)
+        for key, aliases in by_key.items():
+            if len(aliases) > 1:
+                violations.append({
+                    "rule": "accessor_clash",
+                    "detail": (
+                        f"{section_name} aliases {aliases!r} normalize to the same "
+                        f"accessor clash key {key!r}"
+                    ),
+                })
+
+    for ref in _extract_version_refs(catalog_toml or ""):
+        if ref["versionRef"] not in versions:
+            violations.append({
+                "rule": "undefined_version_ref",
+                "detail": (
+                    f"{ref['section']} alias {ref['alias']!r} references missing "
+                    f"version {ref['versionRef']!r}"
+                ),
+            })
+
+    if build_content:
+        # id(libs.plugins.x) is invalid — must use alias(libs.plugins.x).
+        for m in re.finditer(
+            r"\bid\s*\(\s*([a-zA-Z_][a-zA-Z0-9_]*)\.plugins\.([a-zA-Z0-9.]+)\s*\)",
+            build_content,
+        ):
+            catalog = m.group(1)
+            plugin_acc = m.group(2)
+            violations.append({
+                "rule": "plugin_id_accessor_misuse",
+                "detail": (
+                    f"found id({catalog}.plugins.{plugin_acc}) — use "
+                    f"alias({catalog}.plugins.{plugin_acc}) instead"
+                ),
+            })
+        # Catalog accessors are not available in subprojects { } / buildscript { }.
+        for block_name in ("subprojects", "buildscript"):
+            found = _find_block(build_content, block_name, 0)
+            # _find_block may only find one; scan all occurrences.
+            pos = 0
+            while True:
+                found = _find_block(build_content, block_name, pos)
+                if not found:
+                    break
+                body, start, end = found
+                if re.search(r"\blibs\.[a-zA-Z_]", body) or re.search(
+                    r"\balias\s*\(\s*libs\.", body
+                ):
+                    violations.append({
+                        "rule": "libs_accessor_unavailable_in_block",
+                        "detail": (
+                            f"type-safe libs accessors are not available inside "
+                            f"{block_name} {{ }}; move catalog usage to the root "
+                            f"project or a regular subproject build script"
+                        ),
+                    })
+                    break
+                pos = end
+
+    return {
+        "violations": violations,
+        "aliasCount": {
+            "versions": len(versions),
+            "libraries": len(libraries),
+            "plugins": len(plugins),
+        },
+        "catalogPath": catalog_path or _DEFAULT_CATALOG_PATH,
+    }
+
+
+def handle_catalog_entry(args: Dict) -> Any:
+    """MCP handler for catalog_entry (#288) — generate or validate catalog edits."""
+    mode = args.get("mode") or "generate"
+    if mode not in ("generate", "validate"):
+        return {
+            "error": f"mode must be 'generate' or 'validate', got {mode!r}",
+            "violations": [{"rule": "invalid_mode", "detail": f"unsupported mode {mode!r}"}],
+        }
+
+    catalog_toml = args.get("catalogToml")
+    if catalog_toml is not None and not isinstance(catalog_toml, str):
+        catalog_toml = str(catalog_toml)
+
+    if mode == "validate":
+        build_content = args.get("buildContent")
+        if build_content is not None and not isinstance(build_content, str):
+            build_content = str(build_content)
+        catalog_path = args.get("catalogPath")
+        if not catalog_toml and args.get("projectPath"):
+            # Convenience: read default catalog from project when TOML omitted.
+            root = args.get("projectPath") or os.getcwd()
+            candidate = os.path.join(root, _DEFAULT_CATALOG_PATH)
+            if os.path.isfile(candidate):
+                with open(candidate, encoding="utf-8") as fh:
+                    catalog_toml = fh.read()
+                catalog_path = catalog_path or _DEFAULT_CATALOG_PATH
+        if catalog_toml is None:
+            return {
+                "error": "validate mode requires catalogToml (or a projectPath with gradle/libs.versions.toml)",
+                "violations": [{
+                    "rule": "missing_catalog",
+                    "detail": "catalogToml is required for validate when the default catalog file is absent",
+                }],
+            }
+        return validate_catalog(catalog_toml, build_content=build_content, catalog_path=catalog_path)
+
+    # generate
+    coord = args.get("coordinate") or {}
+    if not isinstance(coord, dict):
+        return {
+            "error": "coordinate must be an object with groupId and artifactId",
+            "violations": [{"rule": "missing_coordinate", "detail": "coordinate is required for generate"}],
+        }
+    group_id = coord.get("groupId")
+    artifact_id = coord.get("artifactId")
+    version = coord.get("version")
+    if not group_id or not artifact_id:
+        return {
+            "error": "coordinate.groupId and coordinate.artifactId are required for generate",
+            "violations": [{"rule": "missing_coordinate", "detail": "groupId and artifactId are required"}],
+        }
+    kind = args.get("kind") or "library"
+    return generate_catalog_entry(
+        group_id=group_id,
+        artifact_id=artifact_id,
+        version=version,
+        kind=kind if isinstance(kind, str) else "library",
+        catalog_toml=catalog_toml,
+        catalog_name=args.get("catalogName") or "libs",
+        alias=args.get("alias"),
+    )
 
 
 def _parse_gradle_deps(content: str, source_file: str) -> List[Dict]:
@@ -6689,6 +7216,60 @@ TOOLS = [
         },
     },
     {
+        "name": "catalog_entry",
+        "description": "Generate or validate Gradle version-catalog (libs.versions.toml) entries. mode=generate builds a rule-correct [versions]/[libraries]/[plugins] snippet with kebab alias + libs/alias(libs.plugins.*) accessor; mode=validate flags reserved aliases, invalid first subgroups, undefined version.ref, accessor clashes, id(libs.plugins.*) misuse, and libs usage inside subprojects/buildscript. Returns a minimal diff suggestion, not a full file rewrite.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "mode": {
+                    "type": "string",
+                    "enum": ["generate", "validate"],
+                    "description": "generate a catalog entry from a coordinate, or validate catalog TOML (+ optional build script text).",
+                },
+                "coordinate": {
+                    "type": "object",
+                    "description": "Required for generate. Maven GAV or plugin marker coordinate.",
+                    "properties": {
+                        "groupId": {"type": "string"},
+                        "artifactId": {"type": "string"},
+                        "version": {"type": "string"},
+                    },
+                    "required": ["groupId", "artifactId"],
+                },
+                "kind": {
+                    "type": "string",
+                    "enum": ["library", "plugin"],
+                    "description": "Entry kind for generate. Default: library.",
+                },
+                "alias": {
+                    "type": "string",
+                    "description": "Optional preferred alias for generate; sanitized if it violates catalog rules.",
+                },
+                "catalogToml": {
+                    "type": "string",
+                    "description": "Existing libs.versions.toml content. Used by validate; for generate, avoids alias clashes and enables version-only bump suggestions.",
+                },
+                "buildContent": {
+                    "type": "string",
+                    "description": "Optional build script text for validate — detects id(libs.plugins.*) misuse and libs accessors inside subprojects/buildscript.",
+                },
+                "catalogPath": {
+                    "type": "string",
+                    "description": "Optional path of the catalog file for validate path-convention checks (default gradle/libs.versions.toml).",
+                },
+                "catalogName": {
+                    "type": "string",
+                    "description": "Catalog accessor prefix for generate (default libs).",
+                },
+                "projectPath": {
+                    "type": "string",
+                    "description": "Optional project root. In validate mode, reads gradle/libs.versions.toml when catalogToml is omitted.",
+                },
+            },
+            "required": ["mode"],
+        },
+    },
+    {
         "name": "verify_coordinates",
         "description": "Verify whether Maven coordinates exist (tri-state: exists / absent / unknown) and, for absent ones, suggest the closest real coordinates. Detects hallucinated / slopsquat-shaped names an LLM may invent. Existence is NOT a safety guarantee: a published typosquat reports exists and is not flagged. Suggestions are candidates to verify, not endorsements.",
         "inputSchema": {
@@ -6731,6 +7312,7 @@ TOOL_HANDLERS = {
     "get_dependency_license": handle_get_dependency_license,
     "search_artifacts": handle_search_artifacts,
     "audit_project_dependencies": handle_audit_project_dependencies,
+    "catalog_entry": handle_catalog_entry,
     "verify_coordinates": handle_verify_coordinates,
 }
 
