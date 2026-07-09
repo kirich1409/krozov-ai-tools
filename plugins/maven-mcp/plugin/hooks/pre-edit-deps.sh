@@ -2,16 +2,16 @@
 # pre-edit-deps.sh — PreToolUse write-time dependency guard for maven-mcp.
 #
 # Checks NEW coordinates being added to a build file for:
-#   - Non-existent / likely-hallucinated coords (absent + likelyHallucination or suggestion)  → deny
+#   - Non-existent / likely-hallucinated coords (absent + likelyHallucination)                  → deny
 #   - CRITICAL/HIGH CVEs on a pinned version                                                   → ask
 # Any uncertainty, failure, or network error → fail-open (edit proceeds).
 #
 # IMPORTANT — existence guard scope: the guard is Maven-Central-scoped.
 # A coordinate that 404s across ALL probed repos is "absent" but may be a
-# legitimate private/internal/androidx dependency with no Central suggestion.
-# We therefore only act on "absent" when likelyHallucination==true OR
-# non-empty suggestions exist. NEVER tighten this to bare-absent denial —
-# that would false-block real private dependencies. See plan §Decisions #4.
+# legitimate private/internal/androidx dependency with no close Central match.
+# We therefore only act on "absent" when likelyHallucination==true (similarity
+# ≥ HALLUCINATION_THRESHOLD). NEVER deny on bare-absent or on weak Solr hits —
+# that would false-block real private dependencies. See plan §Decisions #4 / #352.
 #
 # Fail-open is structural: trap 'exit 0' EXIT immediately after set -euo pipefail
 # (replaced after mktemp to also rm -rf the work dir; still always exits 0).
@@ -335,8 +335,12 @@ REASONS_FILE="${TMPDIR_WORK}/reasons.txt"
 : > "$REASONS_FILE"
 
 # ── Check existence results ───────────────────────────────────────────────────
-# Act only on absent AND (likelyHallucination==true OR non-empty suggestions).
-# NEVER act on "exists" or "unknown". See plan §Decisions #4.
+# Act only on absent AND likelyHallucination==true (score ≥ HALLUCINATION_THRESHOLD).
+# Non-empty suggestions alone must NOT deny — verify_coordinates historically
+# populated suggestions for every Solr hit regardless of score, which made this
+# branch de-facto bare-absent denial for private/new coords (#352). Suggestions
+# are still shown in the reason when present (server now threshold-filters them).
+# NEVER act on "exists" or "unknown". See plan §Decisions #4 / #352.
 if [ -n "$VERIFY_RESULT" ]; then
   COUNT=0
   COUNT=$(printf '%s' "$VERIFY_RESULT" | jq '.results | length' 2>/dev/null) || COUNT=0
@@ -352,16 +356,16 @@ if [ -n "$VERIFY_RESULT" ]; then
     if [ "$STATUS" = "absent" ]; then
       HALLUC=""
       HALLUC=$(printf '%s' "$ITEM" | jq -r '.likelyHallucination // "false"' 2>/dev/null) || HALLUC="false"
-      SUGG_COUNT=0
-      SUGG_COUNT=$(printf '%s' "$ITEM" | jq '.suggestions | length // 0' 2>/dev/null) || SUGG_COUNT=0
 
-      if [ "$HALLUC" = "true" ] || [ "$SUGG_COUNT" -gt 0 ] 2>/dev/null; then
+      if [ "$HALLUC" = "true" ]; then
         # Build reason — only structured fields, no raw network text
         GA=""
         GA=$(printf '%s' "$ITEM" | jq -r '"\(.groupId // ""):\(.artifactId // "")"' 2>/dev/null) || GA=""
         GA=$(printf '%s' "$GA" | tr -cd 'A-Za-z0-9._:-') || GA=""
 
         SUGG_TEXT=""
+        SUGG_COUNT=0
+        SUGG_COUNT=$(printf '%s' "$ITEM" | jq '.suggestions | length // 0' 2>/dev/null) || SUGG_COUNT=0
         if [ "$SUGG_COUNT" -gt 0 ] 2>/dev/null; then
           # Charset-filter suggestion coordinates before embedding
           SUGG_TEXT=$(printf '%s' "$ITEM" | jq -r \

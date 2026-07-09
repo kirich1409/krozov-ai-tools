@@ -234,13 +234,29 @@ class SuggestionsAndHallucinationTest(unittest.TestCase):
 
     def test_score_just_below_threshold_flags_false(self):
         # artifactId "aaaa" vs candidate "aaab": edit distance 1 over length 4 ->
-        # similarity 0.75, just below the 0.8 boundary -> flag false.
+        # similarity 0.75, just below the 0.8 boundary -> flag false AND the
+        # candidate is omitted from suggestions (#352: empty list = no close match).
         item = self._flag_for_candidate(
             "g", "aaaa",
             [{"groupId": "other", "artifactId": "aaab", "versionCount": 5}],
         )
         self.assertFalse(item["likelyHallucination"])
-        self.assertAlmostEqual(item["suggestions"][0]["score"], 0.75)
+        self.assertEqual(item["suggestions"], [])
+
+    def test_weak_solr_hits_omitted_from_suggestions(self):
+        # Free-text Solr often returns unrelated hits for a common artifactId
+        # token (e.g. "utils"). Below-threshold scores must not populate
+        # suggestions — otherwise any non-empty-suggestions consumer false-denies
+        # legitimate private/new coordinates (#352).
+        item = self._flag_for_candidate(
+            "com.mycorp.internal", "utils",
+            [
+                {"groupId": "org.apache.commons", "artifactId": "commons-lang3", "versionCount": 50},
+                {"groupId": "com.google.guava", "artifactId": "guava", "versionCount": 100},
+            ],
+        )
+        self.assertFalse(item["likelyHallucination"])
+        self.assertEqual(item["suggestions"], [])
 
     def test_low_pop_near_miss_deweighted_out_but_flag_still_true(self):
         # A high-similarity (0.95) 1-version near-miss vs a lower-similarity (0.85)
@@ -594,7 +610,11 @@ class IsolationAndCapsTest(unittest.TestCase):
 
     def test_caps_clamp_suggest_limit_over_10(self):
         # suggestLimit=50 -> the HANDLER clamps to 10 emitted suggestions.
-        candidates = [{"groupId": "g", "artifactId": f"cand{i}", "versionCount": 5} for i in range(12)]
+        # Candidates reuse the requested artifactId so every score clears the
+        # HALLUCINATION_THRESHOLD gate (#352); only the emit cap is under test.
+        candidates = [
+            {"groupId": f"g{i}", "artifactId": "ghost", "versionCount": 5} for i in range(12)
+        ]
         url = server._metadata_url(server.MAVEN_CENTRAL_URL, "com.x", "ghost")
         with temp_project({}) as root, \
                 unittest.mock.patch.object(server, "search_maven_central", return_value=candidates), \
