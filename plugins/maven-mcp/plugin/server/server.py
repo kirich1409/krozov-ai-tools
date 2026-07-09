@@ -85,6 +85,8 @@ SEARCH_LIMIT_MAX = 100
 # get_dependency_vulnerabilities dependency-list cap — same bound and rationale
 # as verify_coordinates (enforced in-handler before any network I/O).
 MAX_VULN_DEPENDENCIES = 100
+# get_dependency_license batch cap — same bound/rationale as vuln/verify.
+MAX_LICENSE_DEPENDENCIES = 100
 
 # Persistent file cache TTLs and capacity (see FileCache below).
 TTL_POM = 7 * 86400     # 7 days — release POMs are immutable once published
@@ -2852,17 +2854,364 @@ def extract_scm_url_from_pom(pom_xml: str) -> Optional[str]:
     return None
 
 
-def extract_licenses_from_pom(pom_xml: str) -> List[str]:
+def extract_licenses_from_pom(pom_xml: str) -> List[Dict[str, Optional[str]]]:
+    """Extract ``<licenses><license>`` entries from a POM (#300).
+
+    Returns a list of ``{name, url}`` dicts. ``name`` comes from ``<name>``;
+    ``url`` from ``<url>`` (either may be None when the tag is absent/empty).
+    Entries with neither name nor url are skipped. Regex-only — no XML parser.
+    """
     xml = _strip_xml_comments(pom_xml)
     block_m = re.search(r"<licenses>([\s\S]*?)</licenses>", xml)
     if not block_m:
         return []
-    names = []
+    entries: List[Dict[str, Optional[str]]] = []
     for m in re.finditer(r"<license>([\s\S]*?)</license>", block_m.group(1)):
-        name_m = re.search(r"<name>\s*(.*?)\s*</name>", m.group(1))
-        if name_m and name_m.group(1):
-            names.append(name_m.group(1).strip())
-    return names
+        block = m.group(1)
+        name_m = re.search(r"<name>\s*(.*?)\s*</name>", block)
+        url_m = re.search(r"<url>\s*(.*?)\s*</url>", block)
+        name = name_m.group(1).strip() if name_m and name_m.group(1) else None
+        url = url_m.group(1).strip() if url_m and url_m.group(1) else None
+        if name or url:
+            entries.append({"name": name, "url": url})
+    return entries
+
+
+# ---------------------------------------------------------------------------
+# License intelligence (#300) — SPDX normalize, categorize, interpret
+# ---------------------------------------------------------------------------
+
+# Canonical SPDX id -> category. Static lookup only; no external license API.
+_LICENSE_CATEGORY_BY_SPDX: Dict[str, str] = {
+    # permissive
+    "MIT": "permissive",
+    "Apache-2.0": "permissive",
+    "Apache-1.1": "permissive",
+    "Apache-1.0": "permissive",
+    "BSD-2-Clause": "permissive",
+    "BSD-3-Clause": "permissive",
+    "BSD-3-Clause-Clear": "permissive",
+    "BSD-4-Clause": "permissive",
+    "ISC": "permissive",
+    "0BSD": "permissive",
+    "Unlicense": "permissive",
+    "WTFPL": "permissive",
+    "CC0-1.0": "permissive",
+    "PostgreSQL": "permissive",
+    "Zlib": "permissive",
+    "BSL-1.0": "permissive",
+    "NCSA": "permissive",
+    "X11": "permissive",
+    "Python-2.0": "permissive",
+    "PSF-2.0": "permissive",
+    "AFL-2.1": "permissive",
+    "AFL-3.0": "permissive",
+    "Artistic-2.0": "permissive",
+    "MS-PL": "permissive",
+    "PHP-3.01": "permissive",
+    # weak copyleft
+    "LGPL-2.0": "weak-copyleft",
+    "LGPL-2.0-only": "weak-copyleft",
+    "LGPL-2.0-or-later": "weak-copyleft",
+    "LGPL-2.1": "weak-copyleft",
+    "LGPL-2.1-only": "weak-copyleft",
+    "LGPL-2.1-or-later": "weak-copyleft",
+    "LGPL-3.0": "weak-copyleft",
+    "LGPL-3.0-only": "weak-copyleft",
+    "LGPL-3.0-or-later": "weak-copyleft",
+    "MPL-1.1": "weak-copyleft",
+    "MPL-2.0": "weak-copyleft",
+    "EPL-1.0": "weak-copyleft",
+    "EPL-2.0": "weak-copyleft",
+    "CDDL-1.0": "weak-copyleft",
+    "CDDL-1.1": "weak-copyleft",
+    "CPL-1.0": "weak-copyleft",
+    "IPL-1.0": "weak-copyleft",
+    # strong copyleft
+    "GPL-2.0": "strong-copyleft",
+    "GPL-2.0-only": "strong-copyleft",
+    "GPL-2.0-or-later": "strong-copyleft",
+    "GPL-3.0": "strong-copyleft",
+    "GPL-3.0-only": "strong-copyleft",
+    "GPL-3.0-or-later": "strong-copyleft",
+    # network copyleft
+    "AGPL-3.0": "network-copyleft",
+    "AGPL-3.0-only": "network-copyleft",
+    "AGPL-3.0-or-later": "network-copyleft",
+    "EUPL-1.1": "network-copyleft",
+    "EUPL-1.2": "network-copyleft",
+}
+
+_LICENSE_CATEGORY_NOTES: Dict[str, str] = {
+    "permissive": (
+        "Permissive open-source license: generally allows use, modification, "
+        "and redistribution with attribution; no copyleft obligation on your code."
+    ),
+    "weak-copyleft": (
+        "Weak copyleft: modifications to this library itself may need to stay "
+        "under the same license; linking from proprietary code is usually allowed."
+    ),
+    "strong-copyleft": (
+        "Strong copyleft: distributing a combined work that includes this "
+        "library typically requires releasing that work under a compatible copyleft license."
+    ),
+    "network-copyleft": (
+        "Network copyleft: providing the software as a network service can "
+        "trigger source-disclosure obligations similar to strong copyleft."
+    ),
+    "proprietary": (
+        "Declared license is not a recognized open-source SPDX id; treat as "
+        "proprietary/custom and review the license text before adopting."
+    ),
+    "unknown": (
+        "No license was declared in the POM or on the linked GitHub repository; "
+        "do not assume redistributable rights."
+    ),
+}
+
+# Lowercased POM/GitHub license name fragments -> canonical SPDX.
+# Longer / more specific keys are matched first via sorted length.
+_LICENSE_NAME_TO_SPDX: Dict[str, str] = {
+    "apache license, version 2.0": "Apache-2.0",
+    "apache license version 2.0": "Apache-2.0",
+    "the apache software license, version 2.0": "Apache-2.0",
+    "apache software license, version 2.0": "Apache-2.0",
+    "apache software license - version 2.0": "Apache-2.0",
+    "asl 2.0": "Apache-2.0",
+    "apache-2.0": "Apache-2.0",
+    "apache 2.0": "Apache-2.0",
+    "apache 2": "Apache-2.0",
+    "apache license 2.0": "Apache-2.0",
+    "the apache license, version 2.0": "Apache-2.0",
+    "apache license, version 1.1": "Apache-1.1",
+    "mit license": "MIT",
+    "the mit license": "MIT",
+    "mit": "MIT",
+    "bsd 2-clause license": "BSD-2-Clause",
+    "bsd 2-clause \"simplified\" license": "BSD-2-Clause",
+    "bsd-2-clause": "BSD-2-Clause",
+    "simplified bsd license": "BSD-2-Clause",
+    "bsd 3-clause license": "BSD-3-Clause",
+    "bsd 3-clause \"new\" or \"revised\" license": "BSD-3-Clause",
+    "the bsd 3-clause license": "BSD-3-Clause",
+    "bsd-3-clause": "BSD-3-Clause",
+    "new bsd license": "BSD-3-Clause",
+    "revised bsd license": "BSD-3-Clause",
+    "isc license": "ISC",
+    "isc": "ISC",
+    "unlicense": "Unlicense",
+    "wtfpl": "WTFPL",
+    "cc0 1.0 universal": "CC0-1.0",
+    "cc0-1.0": "CC0-1.0",
+    "mozilla public license version 2.0": "MPL-2.0",
+    "mozilla public license 2.0": "MPL-2.0",
+    "mpl 2.0": "MPL-2.0",
+    "mpl-2.0": "MPL-2.0",
+    "eclipse public license - v 2.0": "EPL-2.0",
+    "eclipse public license - v 1.0": "EPL-1.0",
+    "eclipse public license 2.0": "EPL-2.0",
+    "eclipse public license 1.0": "EPL-1.0",
+    "epl-2.0": "EPL-2.0",
+    "epl-1.0": "EPL-1.0",
+    "common development and distribution license (cddl) v1.0": "CDDL-1.0",
+    "common development and distribution license 1.0": "CDDL-1.0",
+    "cddl-1.0": "CDDL-1.0",
+    "cddl 1.1": "CDDL-1.1",
+    "cddl-1.1": "CDDL-1.1",
+    "gnu lesser general public license, version 3": "LGPL-3.0-only",
+    "gnu lesser general public license version 3": "LGPL-3.0-only",
+    "gnu lesser general public license, version 2.1": "LGPL-2.1-only",
+    "gnu lesser general public license version 2.1": "LGPL-2.1-only",
+    "lgpl-3.0": "LGPL-3.0-only",
+    "lgpl 3.0": "LGPL-3.0-only",
+    "lgplv3": "LGPL-3.0-only",
+    "lgpl-2.1": "LGPL-2.1-only",
+    "lgpl 2.1": "LGPL-2.1-only",
+    "lgplv2.1": "LGPL-2.1-only",
+    "gnu general public license, version 3": "GPL-3.0-only",
+    "gnu general public license version 3": "GPL-3.0-only",
+    "gnu general public license, version 2": "GPL-2.0-only",
+    "gnu general public license version 2": "GPL-2.0-only",
+    "gpl-3.0": "GPL-3.0-only",
+    "gpl 3.0": "GPL-3.0-only",
+    "gplv3": "GPL-3.0-only",
+    "gpl-2.0": "GPL-2.0-only",
+    "gpl 2.0": "GPL-2.0-only",
+    "gplv2": "GPL-2.0-only",
+    "gnu affero general public license v3": "AGPL-3.0-only",
+    "gnu affero general public license version 3": "AGPL-3.0-only",
+    "agpl-3.0": "AGPL-3.0-only",
+    "agpl 3.0": "AGPL-3.0-only",
+    "agplv3": "AGPL-3.0-only",
+    "european union public licence 1.2": "EUPL-1.2",
+    "european union public license 1.2": "EUPL-1.2",
+    "eupl-1.2": "EUPL-1.2",
+    "eupl 1.2": "EUPL-1.2",
+    "zlib license": "Zlib",
+    "boost software license 1.0": "BSL-1.0",
+    "bsl-1.0": "BSL-1.0",
+}
+
+_LICENSE_NAME_TO_SPDX_KEYS = sorted(_LICENSE_NAME_TO_SPDX.keys(), key=len, reverse=True)
+
+
+def normalize_license_to_spdx(raw: Optional[str]) -> Optional[str]:
+    """Map a POM/GitHub license string to a canonical SPDX id, or None."""
+    if not raw:
+        return None
+    text = raw.strip()
+    if not text or text.upper() in ("NOASSERTION", "NONE", "UNKNOWN", "SEE LICENSE", "SEE LICENSE IN LICENSE"):
+        return None
+    if text in _LICENSE_CATEGORY_BY_SPDX:
+        return text
+    # GitHub sometimes returns SPDX with "NOASSERTION"; already handled above.
+    lower = re.sub(r"\s+", " ", text.lower())
+    lower = lower.strip(" .;")
+    if lower in _LICENSE_NAME_TO_SPDX:
+        return _LICENSE_NAME_TO_SPDX[lower]
+    for key in _LICENSE_NAME_TO_SPDX_KEYS:
+        if key in lower:
+            return _LICENSE_NAME_TO_SPDX[key]
+    # Bare SPDX-looking token (e.g. already-canonical from GitHub).
+    token = text.strip()
+    if token in _LICENSE_CATEGORY_BY_SPDX:
+        return token
+    return None
+
+
+def categorize_license(spdx_id: Optional[str], raw_name: Optional[str] = None) -> str:
+    """Return license category for an SPDX id / raw name (#300)."""
+    if spdx_id and spdx_id in _LICENSE_CATEGORY_BY_SPDX:
+        return _LICENSE_CATEGORY_BY_SPDX[spdx_id]
+    if spdx_id or (raw_name and raw_name.strip()):
+        return "proprietary"
+    return "unknown"
+
+
+def license_category_notes(category: str) -> str:
+    return _LICENSE_CATEGORY_NOTES.get(category, _LICENSE_CATEGORY_NOTES["unknown"])
+
+
+def _license_result(
+    group_id: str,
+    artifact_id: str,
+    version: Optional[str],
+    spdx_id: Optional[str],
+    name: Optional[str],
+    url: Optional[str],
+    category: str,
+    source: Optional[str],
+    error: Optional[str] = None,
+) -> Dict[str, Any]:
+    out: Dict[str, Any] = {
+        "groupId": group_id,
+        "artifactId": artifact_id,
+        "spdxId": spdx_id,
+        "name": name,
+        "url": url,
+        "category": category,
+        "notes": license_category_notes(category),
+        "source": source,
+    }
+    if version is not None:
+        out["version"] = version
+    if error is not None:
+        out["error"] = error
+    return out
+
+
+def resolve_dependency_license(
+    group_id: str,
+    artifact_id: str,
+    version: Optional[str],
+    ctx: "ResolutionContext",
+) -> Dict[str, Any]:
+    """Resolve license intelligence for one GAV (#300).
+
+    Reuses the health-tool path: metadata → POM licenses → optional GitHub
+    ``license.spdx_id``. Category/notes come from static tables only.
+    """
+    resolved_version = version
+    resolved_from = None
+    try:
+        metadata = fetch_metadata(group_id, artifact_id, ctx)
+        resolved_from = metadata.get("resolvedFrom")
+        if not resolved_version:
+            versions = metadata.get("versions") or []
+            resolved_version = find_latest_version(versions, "PREFER_STABLE") or (
+                versions[-1] if versions else None
+            )
+            if not resolved_version:
+                result = _license_result(
+                    group_id, artifact_id, None, None, None, None, "unknown", None,
+                    error="No version found",
+                )
+                if resolved_from is not None:
+                    result["resolvedFrom"] = resolved_from
+                return result
+    except Exception as e:
+        return _license_result(
+            group_id, artifact_id, version, None, None, None, "unknown", None,
+            error=str(e),
+        )
+
+    pom_name: Optional[str] = None
+    pom_url: Optional[str] = None
+    pom_xml = fetch_pom(group_id, artifact_id, resolved_version, ctx) if resolved_version else None
+    if pom_xml:
+        pom_entries = extract_licenses_from_pom(pom_xml)
+        if pom_entries:
+            pom_name = pom_entries[0]["name"]
+            pom_url = pom_entries[0]["url"]
+
+    github_spdx: Optional[str] = None
+    gh_repo = extract_github_repo_from_pom(pom_xml) if pom_xml else None
+    if not gh_repo:
+        guess = guess_github_repo(group_id, artifact_id)
+        if guess:
+            # Prefer a cheap existence check before fetching full repo metadata,
+            # matching get_dependency_health's guess path cost profile.
+            cached = gh_fetch_repo(guess["owner"], guess["repo"])
+            if cached:
+                gh_repo = guess
+                spdx = (cached.get("license") or {}).get("spdx_id")
+                if spdx and spdx != "NOASSERTION":
+                    github_spdx = spdx
+    if gh_repo and github_spdx is None:
+        repo_meta = gh_fetch_repo(gh_repo["owner"], gh_repo["repo"])
+        if repo_meta:
+            spdx = (repo_meta.get("license") or {}).get("spdx_id")
+            if spdx and spdx != "NOASSERTION":
+                github_spdx = spdx
+
+    # Prefer GitHub SPDX (already canonical) over POM name normalization.
+    source: Optional[str] = None
+    spdx_id: Optional[str] = None
+    name: Optional[str] = pom_name
+    url: Optional[str] = pom_url
+
+    if github_spdx:
+        spdx_id = normalize_license_to_spdx(github_spdx) or github_spdx
+        source = "github"
+        if not name:
+            name = github_spdx
+    elif pom_name:
+        normalized = normalize_license_to_spdx(pom_name)
+        if normalized:
+            spdx_id = normalized
+            source = "pom" if pom_name in _LICENSE_CATEGORY_BY_SPDX else "spdx-normalized"
+        else:
+            source = "pom"
+    else:
+        source = None
+
+    category = categorize_license(spdx_id, name or github_spdx)
+    result = _license_result(
+        group_id, artifact_id, resolved_version, spdx_id, name, url, category, source,
+    )
+    if resolved_from is not None:
+        result["resolvedFrom"] = resolved_from
+    return result
 
 
 def extract_relocation_from_pom(
@@ -5066,7 +5415,7 @@ def handle_get_dependency_health(args: Dict) -> Any:
             result["signals"].append("no stable release")
 
         gh_repo = None
-        pom_licenses: List[str] = []
+        pom_licenses: List[Dict[str, Optional[str]]] = []
         if target_version:
             pom = fetch_pom(group_id, artifact_id, target_version, ctx)
             if pom:
@@ -5118,7 +5467,8 @@ def handle_get_dependency_health(args: Dict) -> Any:
         owner_info = gh_fetch_user(owner_login)
 
         spdx = (repo_meta.get("license") or {}).get("spdx_id")
-        license_val = spdx if (spdx and spdx != "NOASSERTION") else (pom_licenses[0] if pom_licenses else None)
+        pom_license_name = pom_licenses[0]["name"] if pom_licenses else None
+        license_val = spdx if (spdx and spdx != "NOASSERTION") else pom_license_name
 
         result["github"] = {
             "stars": repo_meta.get("stargazers_count", 0),
@@ -5174,6 +5524,95 @@ def handle_search_artifacts(args: Dict) -> Any:
     return {"results": results}
 
 
+def handle_get_dependency_license(args: Dict) -> Any:
+    """Batch license intelligence for Maven dependencies (#300)."""
+    deps = list(args.get("dependencies") or [])
+    # Cap enforced in-handler before any network I/O (schema maxItems is advisory).
+    if len(deps) > MAX_LICENSE_DEPENDENCIES:
+        deps = deps[:MAX_LICENSE_DEPENDENCIES]
+    ctx = build_resolution_context(args)
+    results = []
+    for dep in deps:
+        group_id = dep["groupId"]
+        artifact_id = dep["artifactId"]
+        version = dep.get("version")
+        try:
+            results.append(
+                resolve_dependency_license(group_id, artifact_id, version, ctx)
+            )
+        except Exception as e:
+            results.append(
+                _license_result(
+                    group_id, artifact_id, version, None, None, None, "unknown", None,
+                    error=str(e),
+                )
+            )
+    return {"results": results}
+
+
+def _build_license_audit(
+    license_entries: List[Dict[str, Any]],
+) -> Dict[str, Any]:
+    """Build the ``licenses`` section for audit_project_dependencies (#300)."""
+    by_category: Dict[str, int] = {}
+    unique_spdx: List[str] = []
+    seen_spdx = set()
+    deps_out: List[Dict[str, Any]] = []
+    for entry in license_entries:
+        cat = entry.get("category") or "unknown"
+        by_category[cat] = by_category.get(cat, 0) + 1
+        spdx = entry.get("spdxId")
+        if spdx and spdx not in seen_spdx:
+            seen_spdx.add(spdx)
+            unique_spdx.append(spdx)
+        deps_out.append({
+            "groupId": entry["groupId"],
+            "artifactId": entry["artifactId"],
+            "version": entry.get("version"),
+            "spdxId": entry.get("spdxId"),
+            "category": cat,
+            "notes": entry.get("notes"),
+            "name": entry.get("name"),
+            "url": entry.get("url"),
+            "source": entry.get("source"),
+        })
+    has_unknown = by_category.get("unknown", 0) > 0
+    has_proprietary_or_copyleft = any(
+        by_category.get(c, 0) > 0
+        for c in ("proprietary", "weak-copyleft", "strong-copyleft", "network-copyleft")
+    )
+    return {
+        "summary": {
+            "byCategory": by_category,
+            "uniqueSpdxIds": unique_spdx,
+            "hasUnknown": has_unknown,
+            "hasProprietaryOrCopyleft": has_proprietary_or_copyleft,
+        },
+        "dependencies": deps_out,
+    }
+
+
+def _detect_new_license_categories(
+    license_entries: List[Dict[str, Any]],
+) -> List[str]:
+    """Categories that appear only once in the scanned set (#300).
+
+    Comparison is per SPDX *category*, not exact SPDX id: a project already
+    using MIT should not warn about every new MIT dependency. A category that
+    appears exactly once is treated as new relative to the rest of the set
+    (useful when adding one AGPL library into an otherwise Apache/MIT tree).
+    With fewer than two licensed dependencies there is no baseline to compare,
+    so the result is empty.
+    """
+    if len(license_entries) < 2:
+        return []
+    counts: Dict[str, int] = {}
+    for entry in license_entries:
+        cat = entry.get("category") or "unknown"
+        counts[cat] = counts.get(cat, 0) + 1
+    return sorted(cat for cat, n in counts.items() if n == 1)
+
+
 def handle_audit_project_dependencies(args: Dict) -> Any:
     project_path = args.get("projectPath") or os.getcwd()
     include_vulns = args.get("includeVulnerabilities", True)
@@ -5182,6 +5621,9 @@ def handle_audit_project_dependencies(args: Dict) -> Any:
     production_only = args.get("productionOnly", True)
     if production_only is None:
         production_only = True
+    include_licenses = args.get("includeLicenses", False)
+    if include_licenses is None:
+        include_licenses = False
 
     ctx = build_resolution_context(args)
     scan = scan_project(project_path)
@@ -5333,6 +5775,41 @@ def handle_audit_project_dependencies(args: Dict) -> Any:
                 if resolved:
                     target["resolvedImplementation"] = resolved
 
+    licenses_section: Optional[Dict[str, Any]] = None
+    new_license_categories: Optional[List[str]] = None
+    if include_licenses:
+        # Resolve licenses for versioned deps only (POM fetch needs a version).
+        # Memoize per GAV so duplicate audit entries share one resolution.
+        license_cache: Dict[str, Dict[str, Any]] = {}
+        license_entries: List[Dict[str, Any]] = []
+        for a in audit_deps:
+            ver = a.get("currentVersion")
+            if not ver:
+                continue
+            gav_key = f"{a['groupId']}:{a['artifactId']}:{ver}"
+            if gav_key not in license_cache:
+                try:
+                    license_cache[gav_key] = resolve_dependency_license(
+                        a["groupId"], a["artifactId"], ver, ctx
+                    )
+                except Exception as e:
+                    license_cache[gav_key] = _license_result(
+                        a["groupId"], a["artifactId"], ver,
+                        None, None, None, "unknown", None, error=str(e),
+                    )
+            lic = license_cache[gav_key]
+            license_entries.append(lic)
+            signals = a.setdefault("signals", [])
+            cat = lic.get("category") or "unknown"
+            if cat == "unknown":
+                if "unknown license" not in signals:
+                    signals.append("unknown license")
+            elif cat == "proprietary":
+                if "proprietary license" not in signals:
+                    signals.append("proprietary license")
+        licenses_section = _build_license_audit(license_entries)
+        new_license_categories = _detect_new_license_categories(license_entries)
+
     summary = {
         "total": len(audit_deps),
         "upgradeable": sum(1 for d in audit_deps if d.get("upgradeType") and d["upgradeType"] != "none"),
@@ -5342,7 +5819,16 @@ def handle_audit_project_dependencies(args: Dict) -> Any:
         "patch": sum(1 for d in audit_deps if d.get("upgradeType") == "patch"),
     }
 
-    return {"buildSystem": scan["buildSystem"], "dependencies": audit_deps, "summary": summary}
+    out: Dict[str, Any] = {
+        "buildSystem": scan["buildSystem"],
+        "dependencies": audit_deps,
+        "summary": summary,
+    }
+    if licenses_section is not None:
+        out["licenses"] = licenses_section
+    if new_license_categories is not None:
+        out["newLicenseCategories"] = new_license_categories
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -5955,6 +6441,30 @@ TOOLS = [
         },
     },
     {
+        "name": "get_dependency_license",
+        "description": "Resolve license intelligence for Maven dependencies: SPDX id, category (permissive / weak-copyleft / strong-copyleft / network-copyleft / proprietary / unknown), plain-English notes, and source (pom / github / spdx-normalized). Uses POM <licenses> plus optional GitHub license metadata; category mapping is a static lookup (no external license API).",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "dependencies": {
+                    "type": "array",
+                    "maxItems": 100,
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "groupId": {"type": "string"},
+                            "artifactId": {"type": "string"},
+                            "version": {"type": "string", "description": "Optional. When omitted, the latest preferred-stable version is used."},
+                        },
+                        "required": ["groupId", "artifactId"],
+                    },
+                },
+                "projectPath": {"type": "string", "description": "Project root used to resolve declared repositories. Defaults to the current working directory."},
+            },
+            "required": ["dependencies"],
+        },
+    },
+    {
         "name": "search_artifacts",
         "description": "Search Maven Central for artifacts by keyword.",
         "inputSchema": {
@@ -5968,13 +6478,14 @@ TOOLS = [
     },
     {
         "name": "audit_project_dependencies",
-        "description": "Orchestrates a full dependency audit: scans project build files, checks for available updates, and optionally queries OSV.dev for vulnerabilities.",
+        "description": "Orchestrates a full dependency audit: scans project build files, checks for available updates, and optionally queries OSV.dev for vulnerabilities. Optional includeLicenses adds license categorization, summary, and newLicenseCategories (categories unique in the scanned set).",
         "inputSchema": {
             "type": "object",
             "properties": {
                 "projectPath": {"type": "string", "description": "Project root used to resolve declared repositories. Defaults to the current working directory."},
                 "includeVulnerabilities": {"type": "boolean", "description": "Include OSV vulnerability check (default true)"},
                 "productionOnly": {"type": "boolean", "description": "Exclude test-scope dependencies (default true)"},
+                "includeLicenses": {"type": "boolean", "description": "Include license intelligence (POM/GitHub resolve + category summary). Default false to avoid extra POM fetches."},
             },
         },
     },
@@ -6018,6 +6529,7 @@ TOOL_HANDLERS = {
     "check_version_compatibility": handle_check_version_compatibility,
     "get_dependency_vulnerabilities": handle_get_dependency_vulnerabilities,
     "get_dependency_health": handle_get_dependency_health,
+    "get_dependency_license": handle_get_dependency_license,
     "search_artifacts": handle_search_artifacts,
     "audit_project_dependencies": handle_audit_project_dependencies,
     "verify_coordinates": handle_verify_coordinates,
