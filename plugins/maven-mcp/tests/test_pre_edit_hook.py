@@ -599,6 +599,122 @@ class ExtractionTest(unittest.TestCase):
         ids = [a["id"] for a in args]
         self.assertNotIn(2, ids, "vuln check must not fire for GA-only coord")
 
+    # ── #359: plugins DSL, map-form, TOML [plugins], custom catalogs ─────────
+
+    def test_gradle_plugins_dsl_id_version(self):
+        """plugins { id("com.foo") version "1.0" } → marker coordinate (#359)."""
+        _make_fixture(self.tmp, {
+            1: {"results": [_verify_entry(
+                "exists", "com.foo.bar", "com.foo.bar.gradle.plugin",
+            )]},
+        })
+        proc = _run_hook(self.tmp, _edit_stdin(
+            "build.gradle.kts",
+            'plugins { id("com.foo.bar") version "1.0" }',
+        ))
+        self.assertEqual(proc.returncode, 0)
+        args = _stub_args(self.tmp)
+        self.assertGreaterEqual(len(args), 1)
+        deps = args[0]["arguments"].get("dependencies", [])
+        self.assertEqual(len(deps), 1)
+        self.assertEqual(deps[0]["groupId"], "com.foo.bar")
+        self.assertEqual(deps[0]["artifactId"], "com.foo.bar.gradle.plugin")
+        self.assertEqual(deps[0].get("version"), "1.0")
+
+    def test_gradle_plugins_dsl_groovy_space_form(self):
+        """Groovy id 'com.foo' version '2.0' → marker (#359)."""
+        _make_fixture(self.tmp, {
+            1: {"results": [_verify_entry(
+                "exists", "com.foo", "com.foo.gradle.plugin",
+            )]},
+        })
+        proc = _run_hook(self.tmp, _edit_stdin(
+            "build.gradle",
+            "plugins { id 'com.foo' version '2.0' }",
+        ))
+        self.assertEqual(proc.returncode, 0)
+        deps = _stub_args(self.tmp)[0]["arguments"].get("dependencies", [])
+        self.assertEqual(deps[0]["groupId"], "com.foo")
+        self.assertEqual(deps[0]["artifactId"], "com.foo.gradle.plugin")
+        self.assertEqual(deps[0].get("version"), "2.0")
+
+    def test_gradle_map_form_named_args(self):
+        """implementation(group = "g", name = "a", version = "v") (#359)."""
+        _make_fixture(self.tmp, {
+            1: {"results": [_verify_entry("exists", "com.ex", "lib")]},
+        })
+        proc = _run_hook(self.tmp, _edit_stdin(
+            "build.gradle.kts",
+            'implementation(group = "com.ex", name = "lib", version = "1.0")',
+        ))
+        self.assertEqual(proc.returncode, 0)
+        deps = _stub_args(self.tmp)[0]["arguments"].get("dependencies", [])
+        self.assertEqual(len(deps), 1)
+        self.assertEqual(deps[0]["groupId"], "com.ex")
+        self.assertEqual(deps[0]["artifactId"], "lib")
+        self.assertEqual(deps[0].get("version"), "1.0")
+
+    def test_toml_plugins_id_table(self):
+        """TOML [plugins] id = "com.foo" → marker GA (#359)."""
+        _make_fixture(self.tmp, {
+            1: {"results": [_verify_entry(
+                "exists",
+                "com.android.application",
+                "com.android.application.gradle.plugin",
+            )]},
+        })
+        proc = _run_hook(self.tmp, _edit_stdin(
+            "libs.versions.toml",
+            'android = { id = "com.android.application", version.ref = "agp" }',
+        ))
+        self.assertEqual(proc.returncode, 0)
+        deps = _stub_args(self.tmp)[0]["arguments"].get("dependencies", [])
+        found = [
+            d for d in deps
+            if d.get("groupId") == "com.android.application"
+            and d.get("artifactId") == "com.android.application.gradle.plugin"
+        ]
+        self.assertEqual(len(found), 1)
+        self.assertNotIn("version", found[0], "version.ref must stay GA-only")
+
+    def test_toml_plugins_shorthand_id_version(self):
+        """TOML [plugins] alias = "id:1.0" → marker with version (#359)."""
+        _make_fixture(self.tmp, {
+            1: {"results": [_verify_entry(
+                "exists",
+                "com.android.application",
+                "com.android.application.gradle.plugin",
+            )]},
+        })
+        proc = _run_hook(self.tmp, _edit_stdin(
+            "libs.versions.toml",
+            'android = "com.android.application:8.2.0"',
+        ))
+        self.assertEqual(proc.returncode, 0)
+        deps = _stub_args(self.tmp)[0]["arguments"].get("dependencies", [])
+        self.assertEqual(deps[0]["groupId"], "com.android.application")
+        self.assertEqual(
+            deps[0]["artifactId"],
+            "com.android.application.gradle.plugin",
+        )
+        self.assertEqual(deps[0].get("version"), "8.2.0")
+
+    def test_custom_versions_toml_basename_gated(self):
+        """Custom *.versions.toml catalogs are gated, not only libs.* (#359)."""
+        _make_fixture(self.tmp, {
+            1: {"results": [_verify_entry("exists", "com.example", "foo")]},
+        })
+        proc = _run_hook(self.tmp, _edit_stdin(
+            "deps.versions.toml",
+            'foo = { module = "com.example:foo", version.ref = "foo" }',
+        ))
+        self.assertEqual(proc.returncode, 0)
+        args = _stub_args(self.tmp)
+        self.assertGreaterEqual(len(args), 1, "custom catalog must invoke verify")
+        deps = args[0]["arguments"].get("dependencies", [])
+        found = [d for d in deps if d.get("groupId") == "com.example"]
+        self.assertGreaterEqual(len(found), 1)
+
     # ── MultiEdit ────────────────────────────────────────────────────────────
 
     def test_multiedit_edits_concatenated(self):
