@@ -252,12 +252,6 @@ class AuthHeaderAttachmentIntegrationTest(unittest.TestCase):
     """Repository GETs attach Authorization when credentials resolve."""
 
     def test_fetch_metadata_sends_basic_auth(self):
-        entry = {
-            "name": "corp-nexus",
-            "url": PRIVATE_URL,
-            "scope": "dependency",
-            "is_public_fallback": False,
-        }
         ctx = server.ResolutionContext(
             "/__x__",
             {"dependency": [{"name": "corp-nexus", "url": PRIVATE_URL, "scope": "dependency"}],
