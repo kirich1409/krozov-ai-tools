@@ -4,6 +4,7 @@
 # Checks NEW coordinates being added to a build file for:
 #   - Non-existent / likely-hallucinated coords (absent + likelyHallucination)                  → deny
 #   - CRITICAL/HIGH CVEs on a pinned version                                                   → ask
+#   - Version compatibility conflicts (Spring Boot BOM / AGP↔Gradle↔Kotlin↔JDK / javax→jakarta) → ask (#285)
 # Any uncertainty, failure, or network error → fail-open (edit proceeds).
 #
 # IMPORTANT — existence guard scope: the guard is Maven-Central-scoped.
@@ -379,10 +380,127 @@ if [ -n "$DEPS_VULN" ]; then
   fi
 fi
 
+# ── Optional check_version_compatibility (id:3) — richer write-time messages (#285)
+# Fail-open advisory only (ask, never deny). Triggered when NEW_CONTENT exposes
+# a Spring Boot / AGP / Kotlin / Gradle pin, or when extracted coords include
+# javax.* (Boot ≥3 migration). Extraction is best-effort regex on the edit
+# payload; missing signals simply skip this call.
+REQ3=""
+SPRING_BOOT=""
+AGP_VER=""
+GRADLE_VER=""
+KOTLIN_VER=""
+JDK_VER=""
+
+# Spring Boot: plugins DSL or springBootVersion assignment
+SPRING_BOOT=$(printf '%s' "$NEW_CONTENT" | grep -oE \
+  'org\.springframework\.boot["'\'')]*.*version[[:space:]]*["'\''][0-9]+\.[0-9]+(\.[0-9]+)?["'\'']' \
+  2>/dev/null | grep -oE '[0-9]+\.[0-9]+(\.[0-9]+)?' | head -n1) || SPRING_BOOT=""
+if [ -z "$SPRING_BOOT" ]; then
+  SPRING_BOOT=$(printf '%s' "$NEW_CONTENT" | grep -oE \
+    'org\.springframework\.boot:[^"'\''0-9]*[0-9]+\.[0-9]+(\.[0-9]+)?' \
+    2>/dev/null | grep -oE '[0-9]+\.[0-9]+(\.[0-9]+)?' | head -n1) || SPRING_BOOT=""
+fi
+if [ -z "$SPRING_BOOT" ]; then
+  SPRING_BOOT=$(printf '%s' "$NEW_CONTENT" | grep -oE \
+    'springBootVersion[[:space:]]*=[[:space:]]*["'\''][0-9]+\.[0-9]+(\.[0-9]+)?["'\'']' \
+    2>/dev/null | grep -oE '[0-9]+\.[0-9]+(\.[0-9]+)?' | head -n1) || SPRING_BOOT=""
+fi
+
+# AGP: com.android.application / library / tools.build:gradle
+AGP_VER=$(printf '%s' "$NEW_CONTENT" | grep -oE \
+  'com\.android\.(application|library)["'\'')]*.*version[[:space:]]*["'\''][0-9]+\.[0-9]+(\.[0-9]+)?["'\'']' \
+  2>/dev/null | grep -oE '[0-9]+\.[0-9]+(\.[0-9]+)?' | head -n1) || AGP_VER=""
+if [ -z "$AGP_VER" ]; then
+  AGP_VER=$(printf '%s' "$NEW_CONTENT" | grep -oE \
+    'com\.android\.tools\.build:gradle[^0-9]*[0-9]+\.[0-9]+(\.[0-9]+)?' \
+    2>/dev/null | grep -oE '[0-9]+\.[0-9]+(\.[0-9]+)?' | head -n1) || AGP_VER=""
+fi
+if [ -z "$AGP_VER" ]; then
+  AGP_VER=$(printf '%s' "$NEW_CONTENT" | grep -oE \
+    'agp[[:space:]]*=[[:space:]]*["'\''][0-9]+\.[0-9]+(\.[0-9]+)?["'\'']' \
+    2>/dev/null | grep -oE '[0-9]+\.[0-9]+(\.[0-9]+)?' | head -n1) || AGP_VER=""
+fi
+
+# Kotlin plugin version
+KOTLIN_VER=$(printf '%s' "$NEW_CONTENT" | grep -oE \
+  'org\.jetbrains\.kotlin\.[a-zA-Z.]+[^"'\''0-9]*["'\''][0-9]+\.[0-9]+(\.[0-9]+)?["'\'']' \
+  2>/dev/null | grep -oE '[0-9]+\.[0-9]+(\.[0-9]+)?' | head -n1) || KOTLIN_VER=""
+if [ -z "$KOTLIN_VER" ]; then
+  KOTLIN_VER=$(printf '%s' "$NEW_CONTENT" | grep -oE \
+    'kotlin\(["'\''][a-zA-Z-]+["'\'']\)[[:space:]]+version[[:space:]]+["'\''][0-9]+\.[0-9]+(\.[0-9]+)?["'\'']' \
+    2>/dev/null | grep -oE '[0-9]+\.[0-9]+(\.[0-9]+)?' | head -n1) || KOTLIN_VER=""
+fi
+
+# Gradle wrapper distributionUrl
+GRADLE_VER=$(printf '%s' "$NEW_CONTENT" | grep -oE \
+  'gradle-[0-9]+\.[0-9]+(\.[0-9]+)?-' \
+  2>/dev/null | grep -oE '[0-9]+\.[0-9]+(\.[0-9]+)?' | head -n1) || GRADLE_VER=""
+
+# JDK major from JavaVersion.VERSION_17 / jvmToolchain(17) / sourceCompatibility
+JDK_VER=$(printf '%s' "$NEW_CONTENT" | grep -oE \
+  'jvmToolchain[[:space:]]*\([[:space:]]*[0-9]+' \
+  2>/dev/null | grep -oE '[0-9]+' | head -n1) || JDK_VER=""
+if [ -z "$JDK_VER" ]; then
+  JDK_VER=$(printf '%s' "$NEW_CONTENT" | grep -oE \
+    'VERSION_([0-9]+)' \
+    2>/dev/null | grep -oE '[0-9]+' | head -n1) || JDK_VER=""
+fi
+
+HAS_JAVAX=""
+HAS_JAVAX=$(printf '%s\n' "$DEPS_VERIFY" | grep -c '"groupId":"javax\.' 2>/dev/null) || HAS_JAVAX="0"
+
+NEED_COMPAT=""
+[ -n "$SPRING_BOOT" ] && NEED_COMPAT=1
+[ -n "$AGP_VER" ] && NEED_COMPAT=1
+[ -n "$KOTLIN_VER" ] && NEED_COMPAT=1
+[ -n "$GRADLE_VER" ] && NEED_COMPAT=1
+[ "${HAS_JAVAX:-0}" != "0" ] && [ -n "$SPRING_BOOT" ] && NEED_COMPAT=1
+
+if [ -n "$NEED_COMPAT" ]; then
+  COMPAT_ARGS="{}"
+  COMPAT_ARGS=$(jq -c -n \
+    --argjson deps "$DEPS_VERIFY_ARR" \
+    --arg sb "$SPRING_BOOT" \
+    --arg agp "$AGP_VER" \
+    --arg gradle "$GRADLE_VER" \
+    --arg kotlin "$KOTLIN_VER" \
+    --arg jdk "$JDK_VER" \
+    --arg cwd "$CWD" '
+      def nonempty: select(length > 0);
+      {
+        dependencies: $deps
+      }
+      + (if ($sb | length) > 0 then {springBoot: $sb} else {} end)
+      + (
+          if ([($agp|length), ($gradle|length), ($kotlin|length), ($jdk|length)] | max) > 0 then
+            {
+              android: (
+                {}
+                + (if ($agp|length) > 0 then {agp: $agp} else {} end)
+                + (if ($gradle|length) > 0 then {gradle: $gradle} else {} end)
+                + (if ($kotlin|length) > 0 then {kotlin: $kotlin} else {} end)
+                + (if ($jdk|length) > 0 then {jdk: ($jdk|tonumber)} else {} end)
+              )
+            }
+          else {} end
+        )
+      + (if ($cwd|length) > 0 then {projectPath: $cwd} else {} end)
+    ' 2>/dev/null) || COMPAT_ARGS=""
+  if [ -n "$COMPAT_ARGS" ]; then
+    REQ3=$(jq -c -n \
+      --argjson args "$COMPAT_ARGS" \
+      '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"check_version_compatibility","arguments":$args}}' \
+      2>/dev/null) || REQ3=""
+  fi
+fi
+
 # ── Invoke server; scrub GITHUB_TOKEN from spawned env ───────────────────────
 REQUESTS="${REQ1}"
 [ -n "$REQ2" ] && REQUESTS="${REQ1}
 ${REQ2}"
+[ -n "$REQ3" ] && REQUESTS="${REQUESTS}
+${REQ3}"
 
 SERVER_OUTPUT=""
 SERVER_OUTPUT=$(
@@ -612,6 +730,61 @@ if [ -n "$VULN_RESULT" ]; then
     fi
     IDX=$((IDX+1))
   done
+fi
+
+# ── Compatibility conflicts (#285) — advisory ask only ────────────────────────
+RESP3=""
+COMPAT_RESULT=""
+if [ -n "$REQ3" ]; then
+  RESP3=$(printf '%s\n' "$SERVER_OUTPUT" | \
+    jq -c 'select(.id==3)' 2>/dev/null | head -n1) || RESP3=""
+  if [ -n "$RESP3" ]; then
+    COMPAT_RESULT=$(printf '%s' "$RESP3" | \
+      jq -r 'if .error or (.result==null) then empty else .result.content[0].text end' 2>/dev/null | \
+      jq '.' 2>/dev/null) || COMPAT_RESULT=""
+  fi
+fi
+
+if [ -n "$COMPAT_RESULT" ]; then
+  # jq `//` treats false as missing — use explicit == false (boolean).
+  COMPAT_OK=""
+  COMPAT_OK=$(printf '%s' "$COMPAT_RESULT" | jq -r 'if .compatible == false then "false" else "true" end' 2>/dev/null) || COMPAT_OK=""
+  if [ "$COMPAT_OK" = "false" ]; then
+    CCOUNT=0
+    CCOUNT=$(printf '%s' "$COMPAT_RESULT" | jq '.conflicts | length' 2>/dev/null) || CCOUNT=0
+    CIDX=0
+    while [ "$CIDX" -lt "$CCOUNT" ] 2>/dev/null; do
+      CITEM=""
+      CITEM=$(printf '%s' "$COMPAT_RESULT" | jq -c ".conflicts[$CIDX]" 2>/dev/null) || CITEM=""
+      [ -n "$CITEM" ] || { CIDX=$((CIDX+1)); continue; }
+
+      CKIND=""
+      CKIND=$(printf '%s' "$CITEM" | jq -r '.kind // "compatibility"' 2>/dev/null) || CKIND="compatibility"
+      CKIND=$(printf '%s' "$CKIND" | tr -cd 'A-Za-z0-9._-') || CKIND="compatibility"
+
+      CREF=""
+      CREF=$(printf '%s' "$CITEM" | jq -r '.reference // empty' 2>/dev/null) || CREF=""
+      CREF=$(printf '%s' "$CREF" | tr -cd 'A-Za-z0-9._:/=?-') || CREF=""
+
+      SUGGEST=""
+      SUGGEST=$(printf '%s' "$CITEM" | jq -c '.suggestion // empty' 2>/dev/null) || SUGGEST=""
+      SUGGEST=$(printf '%s' "$SUGGEST" | tr -cd 'A-Za-z0-9._:{}," -') || SUGGEST=""
+
+      REASON_LINE=""
+      if [ -n "$SUGGEST" ] && [ "$SUGGEST" != "null" ] && [ -n "$CREF" ]; then
+        REASON_LINE=$(printf 'Version compatibility conflict (%s). Suggested: %s. See %s' \
+          "$CKIND" "$SUGGEST" "$CREF")
+      elif [ -n "$CREF" ]; then
+        REASON_LINE=$(printf 'Version compatibility conflict (%s). See %s' "$CKIND" "$CREF")
+      else
+        REASON_LINE=$(printf 'Version compatibility conflict (%s). Verify versions before use.' "$CKIND")
+      fi
+      printf '%s\n' "$REASON_LINE" >> "$REASONS_FILE" || true
+      CIDX=$((CIDX+1))
+    done
+    # deny wins over ask
+    [ "$DECISION" = "deny" ] || DECISION="ask"
+  fi
 fi
 
 # ── Emit result ───────────────────────────────────────────────────────────────
