@@ -114,6 +114,10 @@ TTL_DEPSDEV = 3600  # 1 hour
 MAX_TRANSITIVE_GRAPH_NODES = 2000
 MAX_CONFLICT_SCAN_ROOTS = 50
 MAX_DEPSDEV_ERRORS_REPORTED = 20
+# License compliance across transitive trees (#289): GetDependencies for the
+# graph + GetVersion per unique node for SPDX licenses. Caps bound fan-out.
+MAX_LICENSE_COMPLIANCE_ROOTS = 20
+MAX_LICENSE_COMPLIANCE_NODES = 500
 
 # Gradle configuration names matched by shape (#346), not a closed allow-list:
 # variant/flavor prefixes (`debugImplementation`, `paidReleaseApi`, …),
@@ -1759,6 +1763,66 @@ def _depsdev_dependencies_url(group_id: str, artifact_id: str, version: str) -> 
     )
 
 
+def _depsdev_version_url(group_id: str, artifact_id: str, version: str) -> str:
+    """Build the GetVersion URL (licenses live here, not on GetDependencies)."""
+    name = _depsdev_package_name(group_id, artifact_id)
+    return (
+        f"{DEPSDEV_API}/systems/MAVEN/packages/"
+        f"{urllib.parse.quote(name, safe='')}/versions/"
+        f"{urllib.parse.quote(version, safe='')}"
+    )
+
+
+def fetch_depsdev_licenses(
+    group_id: str,
+    artifact_id: str,
+    version: str,
+) -> Dict[str, Any]:
+    """Fetch SPDX license strings for one GAV via deps.dev GetVersion (#289).
+
+    Returns ``{ok, status, licenses, error}``. Never raises for network/HTTP/
+    parse failures — callers degrade to an empty license list + error.
+    ``licenses`` are the raw deps.dev strings (SPDX expressions or
+    ``non-standard``); empty means deps.dev had no license metadata.
+    """
+    empty: Dict[str, Any] = {
+        "ok": False,
+        "status": None,
+        "licenses": [],
+        "error": None,
+    }
+    url = _depsdev_version_url(group_id, artifact_id, version)
+    try:
+        status, body = http_get_cached(url, TTL_DEPSDEV)
+    except Exception as e:
+        out = dict(empty)
+        out["error"] = f"{type(e).__name__}: deps.dev unreachable"
+        return out
+
+    out = dict(empty)
+    out["status"] = status
+    if status != 200 or not body:
+        out["error"] = (
+            f"deps.dev returned HTTP {status}"
+            if status is not None
+            else "deps.dev returned empty response"
+        )
+        return out
+
+    try:
+        payload = json.loads(body.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as e:
+        out["error"] = f"deps.dev response not JSON: {type(e).__name__}"
+        return out
+
+    raw = payload.get("licenses") or []
+    if not isinstance(raw, list):
+        raw = [str(raw)]
+    licenses = [str(x).strip() for x in raw if str(x).strip()]
+    out.update({"ok": True, "licenses": licenses, "error": None})
+    return out
+
+
 def fetch_depsdev_dependencies(
     group_id: str,
     artifact_id: str,
@@ -3212,6 +3276,449 @@ def resolve_dependency_license(
     if resolved_from is not None:
         result["resolvedFrom"] = resolved_from
     return result
+
+
+# ---------------------------------------------------------------------------
+# Transitive license compliance (#289)
+# ---------------------------------------------------------------------------
+
+# Categories treated as risky under a permissive projectLicense posture.
+# Overridable via ``disallow`` (SPDX ids and/or category names).
+_DEFAULT_DISALLOW_FOR_PERMISSIVE = frozenset({
+    "strong-copyleft",
+    "network-copyleft",
+    "proprietary",
+})
+
+# Known category tokens accepted in ``disallow`` (case-insensitive match).
+_LICENSE_CATEGORY_TOKENS = frozenset({
+    "permissive",
+    "weak-copyleft",
+    "strong-copyleft",
+    "network-copyleft",
+    "proprietary",
+    "unknown",
+})
+
+_LICENSE_COMPLIANCE_NOTES = [
+    (
+        "License data comes from deps.dev GetVersion (package metadata SPDX "
+        "expressions), not from a full legal review of license text."
+    ),
+    (
+        "GetDependencies does not include licenses; each unique GAV in the "
+        "resolved graph requires a separate GetVersion call (cached, capped)."
+    ),
+    (
+        "Graphs are resolved per root in isolation via deps.dev — not a full "
+        "Maven/Gradle project resolve (exclusions, dependencyManagement, "
+        "ResolutionStrategy, private coordinates are not modeled)."
+    ),
+    (
+        "Verdicts are heuristic policy signals, not legal advice. Independently "
+        "verify licenses before redistributing."
+    ),
+    (
+        "deps.dev may return SPDX expressions (e.g. Apache-2.0 OR MIT) or "
+        "'non-standard'; expression operators beyond a single id are treated "
+        "conservatively (review when not an exact known SPDX id)."
+    ),
+]
+
+
+def _normalize_disallow_token(raw: str) -> str:
+    """Normalize a disallow entry to a category name or canonical SPDX id."""
+    text = (raw or "").strip()
+    if not text:
+        return ""
+    lower = text.lower()
+    if lower in _LICENSE_CATEGORY_TOKENS:
+        return lower
+    # Accept hyphen/underscore variants of category names.
+    compact = lower.replace("_", "-")
+    if compact in _LICENSE_CATEGORY_TOKENS:
+        return compact
+    spdx = normalize_license_to_spdx(text)
+    return spdx or text
+
+
+def resolve_license_policy(
+    project_license: Optional[str] = None,
+    disallow: Optional[List[str]] = None,
+) -> Dict[str, Any]:
+    """Build the effective disallow set for license compliance (#289).
+
+    Default posture when ``projectLicense`` is permissive (or omitted with no
+    custom ``disallow``): flag strong-copyleft, network-copyleft, and
+    proprietary. Explicit ``disallow`` replaces the default set entirely.
+    Unknown project licenses do not invent a default disallow list unless
+    ``disallow`` is provided.
+    """
+    project_spdx = normalize_license_to_spdx(project_license) if project_license else None
+    project_category = (
+        categorize_license(project_spdx, project_license)
+        if (project_spdx or project_license)
+        else None
+    )
+
+    if disallow is not None:
+        tokens = []
+        seen = set()
+        for item in disallow:
+            tok = _normalize_disallow_token(str(item))
+            if tok and tok not in seen:
+                seen.add(tok)
+                tokens.append(tok)
+        source = "custom"
+    elif project_category == "permissive" or (
+        project_license is None and project_category is None
+    ):
+        # Omitted projectLicense → assume permissive posture (common OSS default
+        # for this tool's audience). Explicit non-permissive projectLicense
+        # without disallow → empty set (no invented policy).
+        tokens = sorted(_DEFAULT_DISALLOW_FOR_PERMISSIVE)
+        source = "default-permissive"
+    else:
+        tokens = []
+        source = "none"
+
+    return {
+        "projectLicense": project_spdx or project_license,
+        "projectCategory": project_category,
+        "disallow": tokens,
+        "policySource": source,
+    }
+
+
+def _is_spdx_expression(raw: str) -> bool:
+    """True when ``raw`` looks like a compound SPDX expression, not a single id.
+
+    deps.dev may return ``Apache-2.0 OR MIT``. Substring normalization would
+    otherwise pick the first known id and falsely categorize as permissive.
+    """
+    upper = f" {raw.upper()} "
+    return (
+        " OR " in upper
+        or " AND " in upper
+        or " WITH " in upper
+        or raw.strip().startswith("(")
+    )
+
+
+def _primary_license_from_depsdev(raw_licenses: List[str]) -> Dict[str, Any]:
+    """Pick a primary SPDX/category from deps.dev license strings.
+
+    Multi-license lists and SPDX expressions that are not a single known id
+    degrade to category ``unknown`` with the raw expression preserved, so the
+    compliance verdict becomes ``review`` rather than a false ``ok``.
+    """
+    if not raw_licenses:
+        return {
+            "spdxId": None,
+            "name": None,
+            "category": "unknown",
+            "licenses": [],
+        }
+    # Prefer the first entry that is a single known SPDX id.
+    for raw in raw_licenses:
+        if raw.lower() == "non-standard":
+            return {
+                "spdxId": None,
+                "name": raw,
+                "category": "proprietary",
+                "licenses": list(raw_licenses),
+            }
+        if _is_spdx_expression(raw):
+            continue
+        spdx = normalize_license_to_spdx(raw)
+        if spdx and spdx in _LICENSE_CATEGORY_BY_SPDX and spdx == raw.strip():
+            return {
+                "spdxId": spdx,
+                "name": spdx,
+                "category": categorize_license(spdx, raw),
+                "licenses": list(raw_licenses),
+            }
+        if spdx and spdx in _LICENSE_CATEGORY_BY_SPDX and not _is_spdx_expression(raw):
+            # Exact table hit or simple alias (e.g. "MIT License") — not an expression.
+            return {
+                "spdxId": spdx,
+                "name": raw if raw != spdx else spdx,
+                "category": categorize_license(spdx, raw),
+                "licenses": list(raw_licenses),
+            }
+    # Expression / unrecognized — keep raw, force review via unknown.
+    primary = raw_licenses[0]
+    return {
+        "spdxId": None,
+        "name": primary,
+        "category": "unknown",
+        "licenses": list(raw_licenses),
+    }
+
+
+def license_compliance_verdict(
+    *,
+    spdx_id: Optional[str],
+    category: str,
+    policy: Dict[str, Any],
+    fetch_error: Optional[str] = None,
+    missing_license: bool = False,
+) -> Dict[str, str]:
+    """Return ``{verdict, reason}`` for one node against the policy.
+
+    - ``violation`` — category or SPDX id is in the disallow set.
+    - ``review`` — missing/unknown license metadata, or fetch failure.
+    - ``ok`` — known license not disallowed.
+    """
+    disallow = set(policy.get("disallow") or [])
+    if fetch_error:
+        return {
+            "verdict": "review",
+            "reason": f"license metadata unavailable: {fetch_error}",
+        }
+    if missing_license or category == "unknown" or not spdx_id:
+        # Unknown / empty must never be a false ok (AC).
+        if category in disallow or "unknown" in disallow:
+            return {
+                "verdict": "violation",
+                "reason": f"disallowed category '{category}' (license unknown or undeclared)",
+            }
+        return {
+            "verdict": "review",
+            "reason": "no SPDX license declared by deps.dev; verify manually",
+        }
+    if category in disallow:
+        return {
+            "verdict": "violation",
+            "reason": f"category '{category}' is disallowed by policy",
+        }
+    if spdx_id in disallow:
+        return {
+            "verdict": "violation",
+            "reason": f"SPDX id '{spdx_id}' is disallowed by policy",
+        }
+    return {"verdict": "ok", "reason": "license allowed by policy"}
+
+
+def check_license_compliance(
+    dependencies: List[Dict[str, Any]],
+    project_license: Optional[str] = None,
+    disallow: Optional[List[str]] = None,
+) -> Dict[str, Any]:
+    """Aggregate transitive licenses and flag policy violations (#289).
+
+    For each versioned root, fetches the deps.dev GetDependencies graph, then
+    GetVersion licenses for each unique GAV (capped). Marks ``viaTransitive``
+    from deps.dev ``relation`` (SELF/DIRECT → false, else true).
+    """
+    policy = resolve_license_policy(project_license, disallow)
+    roots = []
+    for dep in dependencies or []:
+        gid = dep.get("groupId")
+        aid = dep.get("artifactId")
+        ver = dep.get("version")
+        if not gid or not aid or not ver:
+            continue
+        roots.append({"groupId": gid, "artifactId": aid, "version": ver})
+
+    truncated_roots = len(roots) > MAX_LICENSE_COMPLIANCE_ROOTS
+    roots = roots[:MAX_LICENSE_COMPLIANCE_ROOTS]
+
+    # Dedup GetVersion calls across roots: g:a:v → license fetch result.
+    license_cache: Dict[str, Dict[str, Any]] = {}
+    results: List[Dict[str, Any]] = []
+    seen_result_keys: set = set()
+    errors: List[str] = []
+    partial = False
+    truncated_nodes = False
+    nodes_fetched = 0
+
+    def _gav_key(g: str, a: str, v: str) -> str:
+        return f"{g}:{a}:{v}"
+
+    def _ensure_license(g: str, a: str, v: str) -> Dict[str, Any]:
+        nonlocal nodes_fetched, truncated_nodes, partial
+        key = _gav_key(g, a, v)
+        if key in license_cache:
+            return license_cache[key]
+        if nodes_fetched >= MAX_LICENSE_COMPLIANCE_NODES:
+            truncated_nodes = True
+            partial = True
+            entry = {
+                "ok": False,
+                "licenses": [],
+                "error": (
+                    f"GetVersion fan-out capped at {MAX_LICENSE_COMPLIANCE_NODES}"
+                ),
+            }
+            license_cache[key] = entry
+            return entry
+        nodes_fetched += 1
+        entry = fetch_depsdev_licenses(g, a, v)
+        license_cache[key] = entry
+        return entry
+
+    def _add_result(
+        g: str,
+        a: str,
+        v: str,
+        *,
+        via_transitive: bool,
+        relation: str,
+        root: Dict[str, str],
+    ) -> None:
+        nonlocal partial
+        key = _gav_key(g, a, v)
+        # One row per unique GAV across all roots (first-seen wins for
+        # viaTransitive=false — a direct hit beats a later transitive sighting).
+        if key in seen_result_keys:
+            # Upgrade viaTransitive False if we later see it as direct/self.
+            if not via_transitive:
+                for row in results:
+                    if (
+                        row["groupId"] == g
+                        and row["artifactId"] == a
+                        and row["version"] == v
+                        and row.get("viaTransitive")
+                    ):
+                        row["viaTransitive"] = False
+                        row["relation"] = relation or row.get("relation")
+                        break
+            return
+        seen_result_keys.add(key)
+        fetched = _ensure_license(g, a, v)
+        primary = _primary_license_from_depsdev(fetched.get("licenses") or [])
+        missing = not (fetched.get("licenses") or [])
+        verdict_info = license_compliance_verdict(
+            spdx_id=primary.get("spdxId"),
+            category=primary.get("category") or "unknown",
+            policy=policy,
+            fetch_error=None if fetched.get("ok") else fetched.get("error"),
+            missing_license=missing and fetched.get("ok", False),
+        )
+        if verdict_info["verdict"] != "ok":
+            # review/violation are expected outcomes; do not mark partial solely
+            # for policy hits. Partial is reserved for data/transport gaps.
+            pass
+        if not fetched.get("ok"):
+            partial = True
+        row: Dict[str, Any] = {
+            "groupId": g,
+            "artifactId": a,
+            "version": v,
+            "spdxId": primary.get("spdxId"),
+            "license": primary.get("spdxId") or primary.get("name"),
+            "licenses": primary.get("licenses") or [],
+            "category": primary.get("category") or "unknown",
+            "viaTransitive": via_transitive,
+            "relation": relation or ("INDIRECT" if via_transitive else "DIRECT"),
+            "verdict": verdict_info["verdict"],
+            "reason": verdict_info["reason"],
+            "root": {
+                "groupId": root["groupId"],
+                "artifactId": root["artifactId"],
+                "version": root["version"],
+            },
+            "source": "deps.dev",
+        }
+        if fetched.get("error"):
+            row["error"] = fetched["error"]
+        results.append(row)
+
+    for root in roots:
+        fetched = fetch_depsdev_dependencies(
+            root["groupId"], root["artifactId"], root["version"],
+        )
+        if not fetched.get("ok"):
+            partial = True
+            err = fetched.get("error") or "deps.dev unavailable"
+            if len(errors) < MAX_DEPSDEV_ERRORS_REPORTED:
+                errors.append(
+                    f"{root['groupId']}:{root['artifactId']}:{root['version']}: {err}"
+                )
+            # Still emit a review row for the root itself so callers see it.
+            _add_result(
+                root["groupId"],
+                root["artifactId"],
+                root["version"],
+                via_transitive=False,
+                relation="SELF",
+                root=root,
+            )
+            # Force review on the synthetic root row when graph fetch failed.
+            for row in results:
+                if (
+                    row["groupId"] == root["groupId"]
+                    and row["artifactId"] == root["artifactId"]
+                    and row["version"] == root["version"]
+                ):
+                    if row["verdict"] == "ok":
+                        row["verdict"] = "review"
+                        row["reason"] = f"transitive graph unavailable: {err}"
+                    break
+            continue
+
+        if fetched.get("graphError"):
+            partial = True
+            if len(errors) < MAX_DEPSDEV_ERRORS_REPORTED:
+                errors.append(
+                    f"{root['groupId']}:{root['artifactId']}:{root['version']}: "
+                    f"graph error: {fetched['graphError']}"
+                )
+        if fetched.get("truncated") or fetched.get("partial"):
+            partial = True
+
+        for node in fetched.get("nodes") or []:
+            g = node.get("groupId") or ""
+            a = node.get("artifactId") or ""
+            v = node.get("version") or ""
+            if not g or not a or not v:
+                continue
+            relation = (node.get("relation") or "").upper()
+            via = relation not in ("SELF", "DIRECT", "")
+            # Empty relation on the first node is typically SELF; treat unknown
+            # non-empty as transitive to avoid under-flagging.
+            if relation == "":
+                via = False
+            _add_result(g, a, v, via_transitive=via, relation=relation or "DIRECT", root=root)
+
+    by_verdict = {"ok": 0, "review": 0, "violation": 0}
+    by_category: Dict[str, int] = {}
+    for row in results:
+        v = row.get("verdict") or "review"
+        by_verdict[v] = by_verdict.get(v, 0) + 1
+        cat = row.get("category") or "unknown"
+        by_category[cat] = by_category.get(cat, 0) + 1
+
+    notes = list(_LICENSE_COMPLIANCE_NOTES)
+    if truncated_roots:
+        partial = True
+        notes.append(
+            f"Roots truncated to {MAX_LICENSE_COMPLIANCE_ROOTS} "
+            f"(MAX_LICENSE_COMPLIANCE_ROOTS); results are partial."
+        )
+    if truncated_nodes:
+        notes.append(
+            f"GetVersion calls capped at {MAX_LICENSE_COMPLIANCE_NODES} "
+            f"(MAX_LICENSE_COMPLIANCE_NODES); results are partial."
+        )
+
+    out: Dict[str, Any] = {
+        "policy": policy,
+        "summary": {
+            "total": len(results),
+            "byVerdict": by_verdict,
+            "byCategory": by_category,
+            "violationCount": by_verdict.get("violation", 0),
+            "reviewCount": by_verdict.get("review", 0),
+        },
+        "results": results,
+        "partial": partial,
+        "notes": notes,
+    }
+    if errors:
+        out["errors"] = errors
+    return out
 
 
 def extract_relocation_from_pom(
@@ -6274,6 +6781,22 @@ def handle_get_dependency_license(args: Dict) -> Any:
     return {"results": results}
 
 
+def handle_check_license_compliance(args: Dict) -> Any:
+    """Aggregate transitive licenses and flag policy violations (#289)."""
+    deps = list(args.get("dependencies") or [])
+    if len(deps) > MAX_LICENSE_COMPLIANCE_ROOTS:
+        deps = deps[:MAX_LICENSE_COMPLIANCE_ROOTS]
+    project_license = args.get("projectLicense")
+    disallow = args.get("disallow")
+    if disallow is not None and not isinstance(disallow, list):
+        disallow = [str(disallow)]
+    return check_license_compliance(
+        deps,
+        project_license=project_license,
+        disallow=disallow,
+    )
+
+
 def _build_license_audit(
     license_entries: List[Dict[str, Any]],
 ) -> Dict[str, Any]:
@@ -7189,6 +7712,39 @@ TOOLS = [
         },
     },
     {
+        "name": "check_license_compliance",
+        "description": "Aggregate SPDX licenses across the transitive closure of one or more Maven GAVs (deps.dev GetDependencies + GetVersion) and flag risky/incompatible licenses against a projectLicense posture or an explicit disallow list (SPDX ids and/or categories). Verdicts: ok / review / violation. Missing license metadata degrades to review, never a false ok. Heuristic policy signal — not legal advice; see notes[].",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "dependencies": {
+                    "type": "array",
+                    "maxItems": 20,
+                    "description": "Root GAVs whose transitive graphs are scanned. Version is required. Capped at MAX_LICENSE_COMPLIANCE_ROOTS.",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "groupId": {"type": "string"},
+                            "artifactId": {"type": "string"},
+                            "version": {"type": "string"},
+                        },
+                        "required": ["groupId", "artifactId", "version"],
+                    },
+                },
+                "projectLicense": {
+                    "type": "string",
+                    "description": "Optional project SPDX id or license name. A permissive posture (or omitted projectLicense) defaults to disallowing strong-copyleft, network-copyleft, and proprietary.",
+                },
+                "disallow": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Optional override: SPDX ids and/or category names to flag as violation. When set, replaces the default disallow set entirely.",
+                },
+            },
+            "required": ["dependencies"],
+        },
+    },
+    {
         "name": "search_artifacts",
         "description": "Search Maven Central for artifacts by keyword.",
         "inputSchema": {
@@ -7308,6 +7864,7 @@ TOOL_HANDLERS = {
     "get_dependency_vulnerabilities": handle_get_dependency_vulnerabilities,
     "get_dependency_health": handle_get_dependency_health,
     "get_dependency_license": handle_get_dependency_license,
+    "check_license_compliance": handle_check_license_compliance,
     "search_artifacts": handle_search_artifacts,
     "audit_project_dependencies": handle_audit_project_dependencies,
     "catalog_entry": handle_catalog_entry,
