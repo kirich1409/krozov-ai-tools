@@ -3546,17 +3546,23 @@ def _verify_one(
             # Raw similarity: surface a candidate whose artifactId matches even if
             # the group differs (max == min edit distance over the two forms).
             score = max(_similarity(req_ga, cand_ga), _similarity(req_a, cand_a.lower()))
+            # Threshold-gate BOTH the flag and the emitted list: a free-text Solr
+            # hit with weak similarity is not evidence of hallucination, and
+            # emitting it would make any non-empty-suggestions consumer (the
+            # #283 pre-edit hook historically) de-facto deny-on-bare-absent for
+            # private/new coordinates whose artifactId shares a common token.
             if score >= HALLUCINATION_THRESHOLD:
                 flag = True
-            scored.append({
-                "groupId": cand_g,
-                "artifactId": cand_a,
-                "score": score,
-                "versionCount": cand.get("versionCount", 0) or 0,
-            })
+                scored.append({
+                    "groupId": cand_g,
+                    "artifactId": cand_a,
+                    "score": score,
+                    "versionCount": cand.get("versionCount", 0) or 0,
+                })
         # Flag is computed over the FULL pre-truncation/pre-penalty set above, so
         # de-weighting a high-similarity low-popularity near-miss out of the
-        # emitted top-N never silently suppresses it.
+        # emitted top-N never silently suppresses it. An empty list means "no
+        # close match" — same threshold as likelyHallucination.
         result["likelyHallucination"] = flag
         scored.sort(key=_suggestion_rank, reverse=True)
         result["suggestions"] = scored[:suggest_limit]

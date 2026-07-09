@@ -691,6 +691,27 @@ class AllowCasesTest(unittest.TestCase):
         # Positive control: stub invoked (not a vacuous pass)
         self.assertGreaterEqual(len(_stub_args(self.tmp)), 1, "stub must be invoked (positive control)")
 
+    def test_absent_with_suggestions_but_no_hallucination_allows(self):
+        """absent + weak suggestions without likelyHallucination → ALLOW (#352).
+
+        Pre-#352 the hook denied on any non-empty suggestions list, which made
+        private/new coords with a common artifactId token (Solr free-text hits)
+        de-facto bare-absent denials. Deny requires likelyHallucination==true.
+        """
+        entry = _verify_entry(
+            "absent", "com.mycorp.internal", "utils",
+            hallucination=False,
+            suggestions=[{"groupId": "org.apache.commons", "artifactId": "commons-lang3",
+                          "score": 0.3, "versionCount": 50}],
+        )
+        _make_fixture(self.tmp, {1: {"results": [entry]}})
+        proc = _run_hook(self.tmp, _edit_stdin("build.gradle",
+                                               'implementation "com.mycorp.internal:utils:1.0"'))
+        self.assertEqual(proc.returncode, 0)
+        self.assertIsNone(_parse_decision(proc.stdout),
+                          "absent without likelyHallucination must ALLOW even with suggestions")
+        self.assertGreaterEqual(len(_stub_args(self.tmp)), 1, "stub must be invoked (positive control)")
+
     def test_exists_clean_no_vuln_allows(self):
         """exists + no CVE → allow."""
         _make_fixture(self.tmp, {
@@ -755,11 +776,11 @@ class DenyCasesTest(unittest.TestCase):
         self.assertIn("com.fake", hook_out["permissionDecisionReason"])
         self.assertGreaterEqual(len(_stub_args(self.tmp)), 1)
 
-    def test_absent_with_suggestion_denies_non_imperative(self):
-        """absent + non-empty suggestions → deny; reason phrases as candidates-to-verify."""
+    def test_absent_with_hallucination_and_suggestions_denies_non_imperative(self):
+        """absent + likelyHallucination → deny; reason phrases suggestions as candidates-to-verify."""
         entry = _verify_entry(
             "absent", "com.fake", "fake-lib",
-            hallucination=False,
+            hallucination=True,
             suggestions=[{"groupId": "com.real", "artifactId": "real-lib",
                           "score": 0.9, "versionCount": 50}],
         )
@@ -785,7 +806,7 @@ class DenyCasesTest(unittest.TestCase):
         """
         entry = _verify_entry(
             "absent", "com.fake", "fake-lib",
-            hallucination=False,
+            hallucination=True,
             suggestions=[{
                 "groupId": "com.real;evil<a",
                 "artifactId": "lib=ok",
