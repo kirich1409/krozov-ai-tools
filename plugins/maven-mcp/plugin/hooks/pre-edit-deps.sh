@@ -101,38 +101,31 @@ if [ -n "$COORDS_FILE" ]; then
       ;;
 
     pom.xml)
-      # Match groupId+artifactId pairs; require both present in the fragment.
-      # Extract groupId and artifactId separately, then pair them.
-      G_FILE="${TMPDIR_WORK}/pom_g.txt"
-      A_FILE="${TMPDIR_WORK}/pom_a.txt"
-      V_FILE="${TMPDIR_WORK}/pom_v.txt"
-      printf '%s\n' "$NEW_CONTENT" | grep -oE '<groupId>[A-Za-z0-9._-]+</groupId>' 2>/dev/null | sed 's|<groupId>||;s|</groupId>||' > "$G_FILE" || true
-      printf '%s\n' "$NEW_CONTENT" | grep -oE '<artifactId>[A-Za-z0-9._-]+</artifactId>' 2>/dev/null | sed 's|<artifactId>||;s|</artifactId>||' > "$A_FILE" || true
-      # Version: any non-'<' chars (sanitize step strips non-literal/interpolated values)
-      printf '%s\n' "$NEW_CONTENT" | grep -oE '<version>[^<]+</version>' 2>/dev/null | sed 's|<version>||;s|</version>||' > "$V_FILE" || true
-      # Pair line-by-line: requires same count (g, a, [v]).
-      G_COUNT=0
-      A_COUNT=0
-      G_COUNT=$(wc -l < "$G_FILE" 2>/dev/null || printf '0') || G_COUNT=0
-      A_COUNT=$(wc -l < "$A_FILE" 2>/dev/null || printf '0') || A_COUNT=0
-      G_COUNT=$(printf '%s' "$G_COUNT" | tr -d ' \n') || G_COUNT=0
-      A_COUNT=$(printf '%s' "$A_COUNT" | tr -d ' \n') || A_COUNT=0
-      if [ "$G_COUNT" -eq "$A_COUNT" ] && [ "$G_COUNT" -gt 0 ] 2>/dev/null; then
-        IDX=1
-        while [ "$IDX" -le "$G_COUNT" ]; do
-          GV=$(sed -n "${IDX}p" "$G_FILE" 2>/dev/null) || GV=""
-          AV=$(sed -n "${IDX}p" "$A_FILE" 2>/dev/null) || AV=""
-          VV=$(sed -n "${IDX}p" "$V_FILE" 2>/dev/null) || VV=""
-          if [ -n "$GV" ] && [ -n "$AV" ]; then
-            if [ -n "$VV" ]; then
-              printf '%s:%s:%s\n' "$GV" "$AV" "$VV" >> "$COORDS_FILE" || true
-            else
-              printf '%s:%s\n' "$GV" "$AV" >> "$COORDS_FILE" || true
-            fi
+      # Per-<dependency> block extraction (#351): never pair global parallel
+      # groupId/artifactId/version lists — a version-less dependency would shift
+      # later versions onto earlier coordinates. Only <dependency>…</dependency>
+      # spans are walked, so project/parent/plugin GAVs are skipped.
+      REST=""
+      REST=$(printf '%s\n' "$NEW_CONTENT") || REST=""
+      while :; do
+        case "$REST" in *"<dependency>"*) ;; *) break ;; esac
+        AFTER="${REST#*<dependency>}"
+        case "$AFTER" in *"</dependency>"*) ;; *) break ;; esac
+        # %% peels through the first </dependency> (longest suffix match).
+        DEP_BODY="${AFTER%%</dependency>*}"
+        REST="${AFTER#*</dependency>}"
+        GV=$(printf '%s' "$DEP_BODY" | grep -oE '<groupId>[A-Za-z0-9._-]+</groupId>' 2>/dev/null | head -n1 | sed 's|<groupId>||;s|</groupId>||') || GV=""
+        AV=$(printf '%s' "$DEP_BODY" | grep -oE '<artifactId>[A-Za-z0-9._-]+</artifactId>' 2>/dev/null | head -n1 | sed 's|<artifactId>||;s|</artifactId>||') || AV=""
+        # Version: any non-'<' chars (sanitize step strips non-literal/interpolated values)
+        VV=$(printf '%s' "$DEP_BODY" | grep -oE '<version>[^<]+</version>' 2>/dev/null | head -n1 | sed 's|<version>||;s|</version>||') || VV=""
+        if [ -n "$GV" ] && [ -n "$AV" ]; then
+          if [ -n "$VV" ]; then
+            printf '%s:%s:%s\n' "$GV" "$AV" "$VV" >> "$COORDS_FILE" || true
+          else
+            printf '%s:%s\n' "$GV" "$AV" >> "$COORDS_FILE" || true
           fi
-          IDX=$((IDX + 1))
-        done
-      fi
+        fi
+      done
       ;;
 
     libs.versions.toml)
