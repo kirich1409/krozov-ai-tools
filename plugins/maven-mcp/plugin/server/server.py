@@ -1848,14 +1848,28 @@ def _parse_gradle_plugins_block(content: str, is_settings: bool = False) -> List
 
 
 def _parse_buildscript_classpath(content: str) -> List[Dict]:
-    """Parse buildscript { dependencies { classpath(...) } }"""
+    """Parse buildscript { dependencies { classpath(...) } } using brace-balanced blocks.
+
+    Uses `_find_block` so nested `repositories { }` / `dependencies { }` do not truncate
+    the buildscript body at the first `}` (brace-naive non-greedy regex did).
+    """
     results = []
-    bs_re = re.compile(r'\bbuildscript\s*\{([\s\S]*?)\}', re.DOTALL)
-    for bs_m in bs_re.finditer(content):
-        block = bs_m.group(1)
-        cp_re = re.compile(r'\bclasspath\s*\(["\']([^"\':\s]+):([^"\':\s]+)(?::([^"\']+))?["\']')
-        for m in cp_re.finditer(block):
-            results.append({"groupId": m.group(1), "artifactId": m.group(2), "version": m.group(3)})
+    cp_re = re.compile(
+        r'\bclasspath\s*\(["\']([^"\':\s]+):([^"\':\s]+)(?::([^"\']+))?["\']'
+    )
+    pos = 0
+    while True:
+        found = _find_block(content, "buildscript", pos)
+        if not found:
+            break
+        bs_body, _start, end = found
+        deps = _find_block(bs_body, "dependencies")
+        scan = deps[0] if deps else bs_body
+        for m in cp_re.finditer(scan):
+            results.append(
+                {"groupId": m.group(1), "artifactId": m.group(2), "version": m.group(3)}
+            )
+        pos = end
     return results
 
 
