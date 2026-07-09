@@ -204,6 +204,37 @@ class CompareVersionsTest(unittest.TestCase):
         self.assertLess(server.compare_versions("1.0.0-beta", "1.0.0-beta2"), 0)
         self.assertGreater(server.compare_versions("1.0.0-beta2", "1.0.0-beta"), 0)
 
+    def test_bare_release_outranks_dot_delimited_qualifier(self):
+        # #331: .Final / .RELEASE are qualifiers, not numeric core segments.
+        self.assertGreater(server.compare_versions("1.0.0", "1.0.0.Final"), 0)
+        self.assertLess(server.compare_versions("1.0.0.Final", "1.0.0"), 0)
+        self.assertGreater(server.compare_versions("1.0.0", "1.0.0.RELEASE"), 0)
+        self.assertLess(server.compare_versions("1.0.0.RELEASE", "1.0.0"), 0)
+
+    def test_numeric_fourth_segment_still_part_of_core(self):
+        # #331: pure numeric dotted tails remain in the core.
+        self.assertLess(server.compare_versions("1.0.0", "1.0.0.1"), 0)
+        self.assertGreater(server.compare_versions("1.0.0.1", "1.0.0"), 0)
+
+    def test_bare_release_outranks_no_separator_qualifier(self):
+        # #331: glued / underscore free-text tails are qualifiers.
+        self.assertGreater(server.compare_versions("1.0.0", "1.0.0legacy"), 0)
+        self.assertLess(server.compare_versions("1.0.0legacy", "1.0.0"), 0)
+        self.assertGreater(server.compare_versions("1.0.0", "1.0.0_legacy"), 0)
+        self.assertLess(server.compare_versions("1.0.0_legacy", "1.0.0"), 0)
+
+    def test_symmetric_free_text_suffixes_ignore_incidental_digits(self):
+        # #331: free-text digits must not act as ordinal prerelease numbers.
+        # Lexicographic fallback: "0.8.0-0.6.x-compat" < "0.8.0-compat".
+        self.assertGreater(
+            server.compare_versions("0.8.0-compat", "0.8.0-0.6.x-compat"),
+            0,
+        )
+        self.assertLess(
+            server.compare_versions("0.8.0-0.6.x-compat", "0.8.0-compat"),
+            0,
+        )
+
 
 # ---------------------------------------------------------------------------
 # get_upgrade_type
