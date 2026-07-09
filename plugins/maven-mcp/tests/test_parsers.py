@@ -297,7 +297,13 @@ class TestParseGradleDeps(unittest.TestCase):
         self.assertEqual(by_ga[("g", "h")]["configuration"], "testFixturesImplementation")
         self.assertEqual(by_ga[("i", "j")]["version"], "1.0")
         self.assertEqual(by_ga[("i", "j")]["configuration"], "implementation")
+        self.assertTrue(by_ga[("i", "j")]["isPlatform"])
+        self.assertEqual(by_ga[("i", "j")]["platformKind"], "platform")
         self.assertEqual(by_ga[("k", "l")]["configuration"], "implementation")
+        self.assertTrue(by_ga[("k", "l")]["isPlatform"])
+        self.assertEqual(by_ga[("k", "l")]["platformKind"], "enforcedPlatform")
+        self.assertFalse(by_ga[("a", "b")]["isPlatform"])
+        self.assertIsNone(by_ga[("a", "b")]["platformKind"])
         self.assertEqual(by_ga[("m", "n")]["configuration"], "paidReleaseApi")
         self.assertEqual(
             by_ga[("com.android.tools", "desugar_jdk_libs")]["configuration"],
@@ -312,6 +318,7 @@ class TestParseGradleDeps(unittest.TestCase):
         self.assertEqual(len(catalog), 1)
         self.assertEqual(catalog[0]["configuration"], "debugImplementation")
         self.assertEqual(catalog[0]["catalogRef"], "libs.foo.bar")
+        self.assertFalse(catalog[0]["isPlatform"])
 
 
 # ---------------------------------------------------------------------------
@@ -842,6 +849,40 @@ class TestParseMavenDeps(unittest.TestCase):
         )
         deps = server._parse_maven_deps(pom)
         self.assertEqual(deps[0]["configuration"], "runtimeOnly")
+
+    # #286: dependencyManagement entries must not appear as regular deps
+    def test_skips_dependency_management_entries(self):
+        pom = (
+            "<project>\n"
+            "  <dependencyManagement>\n"
+            "    <dependencies>\n"
+            "      <dependency>\n"
+            "        <groupId>org.springframework.boot</groupId>\n"
+            "        <artifactId>spring-boot-dependencies</artifactId>\n"
+            "        <version>3.2.0</version>\n"
+            "        <type>pom</type>\n"
+            "        <scope>import</scope>\n"
+            "      </dependency>\n"
+            "      <dependency>\n"
+            "        <groupId>com.managed</groupId>\n"
+            "        <artifactId>pin</artifactId>\n"
+            "        <version>9.9.9</version>\n"
+            "      </dependency>\n"
+            "    </dependencies>\n"
+            "  </dependencyManagement>\n"
+            "  <dependencies>\n"
+            "    <dependency>\n"
+            "      <groupId>com.example</groupId>\n"
+            "      <artifactId>lib</artifactId>\n"
+            "      <version>1.0</version>\n"
+            "    </dependency>\n"
+            "  </dependencies>\n"
+            "</project>"
+        )
+        deps = server._parse_maven_deps(pom)
+        self.assertEqual(len(deps), 1)
+        self.assertEqual(deps[0]["groupId"], "com.example")
+        self.assertEqual(deps[0]["artifactId"], "lib")
 
 
 # ---------------------------------------------------------------------------

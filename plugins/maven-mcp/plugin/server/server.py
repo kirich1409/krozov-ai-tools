@@ -101,6 +101,8 @@ _CACHE_DENYLIST = frozenset({"api.github.com", "api.osv.dev"})
 GRADLE_BUILD_FILES = ["build.gradle.kts", "build.gradle"]
 GRADLE_SETTINGS_FILES = ["settings.gradle.kts", "settings.gradle"]
 MAX_MODULE_DEPTH = 5
+# Cap recursive BOM import / parent-property fetches (#286).
+MAX_BOM_DEPTH = 5
 
 # Gradle configuration names matched by shape (#346), not a closed allow-list:
 # variant/flavor prefixes (`debugImplementation`, `paidReleaseApi`, …),
@@ -810,6 +812,291 @@ def check_relocation(
     if pom is None:
         return None
     return extract_relocation_from_pom(pom, group_id, artifact_id, version)
+
+
+# ---------------------------------------------------------------------------
+# BOM / platform expansion (#286)
+# ---------------------------------------------------------------------------
+
+def _parse_pom_properties(pom_xml: str) -> Dict[str, str]:
+    """Parse `<properties>` children via regex. Returns {name: value}."""
+    xml = _strip_xml_comments(pom_xml)
+    props_m = re.search(r"<properties>([\s\S]*?)</properties>", xml)
+    if not props_m:
+        return {}
+    props: Dict[str, str] = {}
+    for m in re.finditer(r"<([a-zA-Z0-9_.-]+)>([^<]*)</\1>", props_m.group(1)):
+        props[m.group(1)] = m.group(2).strip()
+    return props
+
+
+def _pom_project_property_defaults(
+    pom_xml: str, bom_version: Optional[str] = None
+) -> Dict[str, str]:
+    """Build project.* / bare groupId/artifactId/version property defaults from
+    a POM's own coordinates (with parent fallback for groupId/version)."""
+    coords = _parse_maven_project_coords(pom_xml)
+    parent = _parse_maven_parent(pom_xml)
+    gid = coords.get("groupId") or (parent.get("groupId") if parent else None)
+    aid = coords.get("artifactId")
+    ver = (
+        coords.get("version")
+        or bom_version
+        or (parent.get("version") if parent else None)
+    )
+    defaults: Dict[str, str] = {}
+    if gid:
+        defaults["project.groupId"] = gid
+        defaults["groupId"] = gid
+    if aid:
+        defaults["project.artifactId"] = aid
+        defaults["artifactId"] = aid
+    if ver:
+        defaults["project.version"] = ver
+        defaults["version"] = ver
+    return defaults
+
+
+def _interpolate_pom_props(value: Optional[str], props: Dict[str, str]) -> Optional[str]:
+    """Multi-pass `${name}` substitution. Returns None when value is None.
+    Leaves unresolved `${...}` fragments intact for the caller to skip."""
+    if value is None:
+        return None
+    if "${" not in value:
+        return value
+    result = value
+    for _ in range(10):
+        if "${" not in result:
+            break
+
+        def _repl(m: re.Match) -> str:
+            return props.get(m.group(1), m.group(0))
+
+        new = re.sub(r"\$\{([^}]+)\}", _repl, result)
+        if new == result:
+            break
+        result = new
+    return result
+
+
+def _collect_bom_properties(
+    pom_xml: str,
+    bom_version: str,
+    ctx: "ResolutionContext",
+    depth: int = 0,
+) -> Dict[str, str]:
+    """Merge parent POM properties under child (child wins). Parent is fetched
+    by GAV via `fetch_pom` — remote BOMs have no local relativePath."""
+    props: Dict[str, str] = {}
+    parent = _parse_maven_parent(pom_xml)
+    if (
+        parent
+        and parent.get("groupId")
+        and parent.get("artifactId")
+        and parent.get("version")
+        and depth < MAX_BOM_DEPTH
+    ):
+        parent_pom = fetch_pom(
+            parent["groupId"], parent["artifactId"], parent["version"], ctx
+        )
+        if parent_pom:
+            props.update(
+                _collect_bom_properties(
+                    parent_pom, parent["version"], ctx, depth + 1
+                )
+            )
+    props.update(_pom_project_property_defaults(pom_xml, bom_version))
+    props.update(_parse_pom_properties(pom_xml))
+    return props
+
+
+def parse_dependency_management(
+    pom_xml: str, props: Optional[Dict[str, str]] = None
+) -> List[Dict]:
+    """Parse `<dependencyManagement><dependencies><dependency>…` entries (#286).
+
+    Each entry: groupId, artifactId, version, scope (default compile),
+    type (default jar), isImportBom (scope==import and type==pom).
+    Strips XML comments first. When ``props`` is omitted, interpolates using
+    this POM's own `<properties>` plus project.* defaults (no network).
+    """
+    xml = _strip_xml_comments(pom_xml)
+    dm_m = re.search(
+        r"<dependencyManagement>([\s\S]*?)</dependencyManagement>", xml
+    )
+    if not dm_m:
+        return []
+    deps_m = re.search(r"<dependencies>([\s\S]*?)</dependencies>", dm_m.group(1))
+    block = deps_m.group(1) if deps_m else dm_m.group(1)
+    if props is None:
+        props = {}
+        props.update(_pom_project_property_defaults(pom_xml))
+        props.update(_parse_pom_properties(pom_xml))
+    results: List[Dict] = []
+    for m in re.finditer(r"<dependency>([\s\S]*?)</dependency>", block):
+        dep_block = m.group(1)
+        gid_m = re.search(r"<groupId>([^<]+)</groupId>", dep_block)
+        aid_m = re.search(r"<artifactId>([^<]+)</artifactId>", dep_block)
+        if not gid_m or not aid_m:
+            continue
+        group_id = _interpolate_pom_props(gid_m.group(1).strip(), props)
+        artifact_id = _interpolate_pom_props(aid_m.group(1).strip(), props)
+        if not group_id or not artifact_id:
+            continue
+        if "${" in group_id or "${" in artifact_id:
+            continue
+        ver_m = re.search(r"<version>([^<]+)</version>", dep_block)
+        version = (
+            _interpolate_pom_props(ver_m.group(1).strip(), props) if ver_m else None
+        )
+        if version is not None and "${" in version:
+            version = None
+        scope_m = re.search(r"<scope>([^<]+)</scope>", dep_block)
+        scope = scope_m.group(1).strip() if scope_m else "compile"
+        type_m = re.search(r"<type>([^<]+)</type>", dep_block)
+        dep_type = type_m.group(1).strip() if type_m else "jar"
+        results.append({
+            "groupId": group_id,
+            "artifactId": artifact_id,
+            "version": version,
+            "scope": scope,
+            "type": dep_type,
+            "isImportBom": scope == "import" and dep_type == "pom",
+        })
+    return results
+
+
+def expand_bom(
+    group_id: str,
+    artifact_id: str,
+    version: str,
+    ctx: "ResolutionContext",
+    *,
+    _depth: int = 0,
+    _seen: Optional[set] = None,
+) -> List[Dict]:
+    """Fetch a BOM POM and return managed ``[{groupId, artifactId, version}]``.
+
+    Import-scope BOMs are expanded recursively and merged with Maven's
+    first-wins ordering (document order; do not overwrite an existing GA).
+    Direct managed entries in the current BOM follow the same first-wins rule.
+    Depth-capped and cycle-guarded on ``g:a:v``. Missing POM / unresolved
+    ``${}`` versions are skipped — never raises (#286).
+    """
+    if _seen is None:
+        _seen = set()
+    key = f"{group_id}:{artifact_id}:{version}"
+    if _depth > MAX_BOM_DEPTH or key in _seen:
+        return []
+    _seen.add(key)
+    pom = fetch_pom(group_id, artifact_id, version, ctx)
+    if not pom:
+        return []
+    props = _collect_bom_properties(pom, version, ctx, _depth)
+    entries = parse_dependency_management(pom, props=props)
+    managed: List[Dict] = []
+    managed_keys: set = set()
+    for entry in entries:
+        if entry["isImportBom"]:
+            if not entry.get("version"):
+                continue
+            nested = expand_bom(
+                entry["groupId"],
+                entry["artifactId"],
+                entry["version"],
+                ctx,
+                _depth=_depth + 1,
+                _seen=_seen,
+            )
+            for item in nested:
+                ga = (item["groupId"], item["artifactId"])
+                if ga in managed_keys:
+                    continue
+                managed_keys.add(ga)
+                managed.append(item)
+            continue
+        if not entry.get("version"):
+            continue
+        ga = (entry["groupId"], entry["artifactId"])
+        if ga in managed_keys:
+            continue
+        managed_keys.add(ga)
+        managed.append({
+            "groupId": entry["groupId"],
+            "artifactId": entry["artifactId"],
+            "version": entry["version"],
+        })
+    return managed
+
+
+def apply_bom_managed_versions(scan: Dict, ctx: "ResolutionContext") -> Dict:
+    """Apply BOM/platform managed versions onto scanned dependencies (#286).
+
+    Expands each ``isPlatform`` dependency via ``expand_bom`` in declaration
+    order (first-wins), then lets local Maven non-import ``dependencyManagement``
+    pins override imported managed versions. Versionless non-platform deps gain
+    ``effectiveVersion`` + ``managedBy``. Explicit versions win unless the
+    contributing platform was ``enforcedPlatform``.
+    """
+    managed_map: Dict[Tuple[str, str], Dict] = {}
+
+    for dep in scan.get("dependencies") or []:
+        if not dep.get("isPlatform"):
+            continue
+        ver = dep.get("version")
+        gid, aid = dep.get("groupId"), dep.get("artifactId")
+        if not gid or not aid or not ver:
+            continue
+        bom_ref = {"groupId": gid, "artifactId": aid, "version": ver}
+        kind = dep.get("platformKind") or "platform"
+        for item in expand_bom(gid, aid, ver, ctx):
+            ga = (item["groupId"], item["artifactId"])
+            if ga in managed_map:
+                continue
+            managed_map[ga] = {
+                "version": item["version"],
+                "managedBy": dict(bom_ref),
+                "platformKind": kind,
+            }
+
+    # Local non-import pins override imported managed versions (Maven direct
+    # declaration override). First local pin for a GA wins among local pins.
+    local_applied: set = set()
+    for pin in scan.get("managedPins") or []:
+        gid, aid, ver = pin.get("groupId"), pin.get("artifactId"), pin.get("version")
+        if not gid or not aid or not ver:
+            continue
+        ga = (gid, aid)
+        if ga in local_applied:
+            continue
+        local_applied.add(ga)
+        managed_map[ga] = {
+            "version": ver,
+            "managedBy": {"groupId": gid, "artifactId": aid, "version": ver},
+            "platformKind": None,
+        }
+
+    for dep in scan.get("dependencies") or []:
+        if dep.get("isPlatform"):
+            continue
+        gid, aid = dep.get("groupId"), dep.get("artifactId")
+        if not gid or not aid:
+            continue
+        info = managed_map.get((gid, aid))
+        if not info:
+            continue
+        explicit = dep.get("version")
+        if explicit:
+            if (
+                info.get("platformKind") == "enforcedPlatform"
+                and explicit != info["version"]
+            ):
+                dep["effectiveVersion"] = info["version"]
+                dep["managedBy"] = info["managedBy"]
+            continue
+        dep["effectiveVersion"] = info["version"]
+        dep["managedBy"] = info["managedBy"]
+    return scan
 
 
 # ---------------------------------------------------------------------------
@@ -1811,41 +2098,51 @@ def _parse_toml_catalog(content: str) -> Dict:
 
 
 def _parse_gradle_deps(content: str, source_file: str) -> List[Dict]:
-    """Returns list of dep dicts with keys: groupId, artifactId, version, configuration, catalogRef."""
+    """Returns list of dep dicts with keys: groupId, artifactId, version,
+    configuration, catalogRef, isPlatform, platformKind."""
     deps = []
     config_pattern = _GRADLE_CONFIGURATION_PATTERN
 
     # String notation: implementation("group:artifact:version")
-    # Optional platform()/enforcedPlatform() wrapper around the quoted GAV (#346).
+    # Optional platform()/enforcedPlatform() wrapper around the quoted GAV (#346/#286).
     # Version stops at ':' (classifier) or '@' (extension); trailing
     # `:classifier` / `@ext` / `:classifier@ext` are optional and discarded.
     string_re = re.compile(
         rf'\b({config_pattern})\s*[( ]\s*'
-        rf'(?:(?:enforcedPlatform|platform)\s*\(\s*)?'
+        rf'(?:(enforcedPlatform|platform)\s*\(\s*)?'
         rf'["\']'
         rf'([^"\':\s]+):([^"\':\s]+)'
         rf'(?::([^"\':@]+))?(?::[^"\'@]+)?(?:@[^"\']+)?["\']',
     )
     for m in string_re.finditer(content):
+        platform_kind = m.group(2)  # "platform" | "enforcedPlatform" | None
         deps.append({
-            "groupId": m.group(2),
-            "artifactId": m.group(3),
-            "version": m.group(4),
+            "groupId": m.group(3),
+            "artifactId": m.group(4),
+            "version": m.group(5),
             "configuration": m.group(1),
             "catalogRef": None,
+            "isPlatform": platform_kind is not None,
+            "platformKind": platform_kind,
         })
 
-    # Catalog accessor: implementation(libs.foo.bar)
+    # Catalog accessor: implementation(libs.foo.bar) or
+    # implementation(platform(libs.foo.bar)) / enforcedPlatform(libs...) (#286).
     catalog_re = re.compile(
-        rf'\b({config_pattern})\s*\(\s*([a-zA-Z_][a-zA-Z0-9_]*)\.([a-zA-Z0-9.]+)\s*\)',
+        rf'\b({config_pattern})\s*\(\s*'
+        rf'(?:(enforcedPlatform|platform)\s*\(\s*)?'
+        rf'([a-zA-Z_][a-zA-Z0-9_]*)\.([a-zA-Z0-9.]+)\s*\)',
     )
     for m in catalog_re.finditer(content):
+        platform_kind = m.group(2)
         deps.append({
             "groupId": None,
             "artifactId": None,
             "version": None,
             "configuration": m.group(1),
-            "catalogRef": f"{m.group(2)}.{m.group(3)}",
+            "catalogRef": f"{m.group(3)}.{m.group(4)}",
+            "isPlatform": platform_kind is not None,
+            "platformKind": platform_kind,
         })
 
     return deps
@@ -1976,8 +2273,18 @@ def _parse_settings_catalogs(content: str) -> List[Dict]:
 
 
 def _parse_maven_deps(content: str) -> List[Dict]:
+    """Parse regular Maven dependencies (not dependencyManagement).
+
+    Strips `<dependencyManagement>` blocks first so managed pins / import BOMs
+    are not returned as ordinary deps (#286). Bare `<dependency>` snippets
+    (unit-test fixtures without a wrapping `<project>`) still parse.
+    """
+    xml = _strip_xml_comments(content)
+    xml = re.sub(
+        r"<dependencyManagement>[\s\S]*?</dependencyManagement>", "", xml
+    )
     deps = []
-    for m in re.finditer(r"<dependency>([\s\S]*?)</dependency>", content):
+    for m in re.finditer(r"<dependency>([\s\S]*?)</dependency>", xml):
         block = m.group(1)
         gid_m = re.search(r"<groupId>([^<]+)</groupId>", block)
         aid_m = re.search(r"<artifactId>([^<]+)</artifactId>", block)
@@ -1992,7 +2299,12 @@ def _parse_maven_deps(content: str) -> List[Dict]:
         scope_m = re.search(r"<scope>([^<]+)</scope>", block)
         scope = scope_m.group(1).strip() if scope_m else "compile"
         configuration = SCOPE_TO_CONFIG.get(scope, "implementation")
-        deps.append({"groupId": group_id, "artifactId": artifact_id, "version": version, "configuration": configuration})
+        deps.append({
+            "groupId": group_id,
+            "artifactId": artifact_id,
+            "version": version,
+            "configuration": configuration,
+        })
     return deps
 
 
@@ -2579,7 +2891,13 @@ def _detect_build_system(project_root: str) -> str:
     return "unknown"
 
 
-def _scan_maven_recursive(module_path: str, label: Optional[str], acc: List[Dict], depth: int) -> None:
+def _scan_maven_recursive(
+    module_path: str,
+    label: Optional[str],
+    acc: List[Dict],
+    depth: int,
+    managed_pins: Optional[List[Dict]] = None,
+) -> None:
     pom_path = os.path.join(module_path, "pom.xml")
     if not os.path.exists(pom_path):
         return
@@ -2593,12 +2911,33 @@ def _scan_maven_recursive(module_path: str, label: Optional[str], acc: List[Dict
             "source": {"kind": "module-direct", "file": "pom.xml", "module": label},
             "usages": [{"module": label, "configuration": dep["configuration"]}],
         })
+    # Import-scope BOMs → platform-tagged deps; non-import pins → managedPins (#286).
+    for entry in parse_dependency_management(content):
+        if entry["isImportBom"] and entry.get("version"):
+            acc.append({
+                "groupId": entry["groupId"],
+                "artifactId": entry["artifactId"],
+                "version": entry["version"],
+                "isPlatform": True,
+                "platformKind": "platform",
+                "source": {"kind": "module-direct", "file": "pom.xml", "module": label},
+                "usages": [{"module": label, "configuration": "import"}],
+            })
+        elif not entry["isImportBom"] and entry.get("version") and managed_pins is not None:
+            managed_pins.append({
+                "groupId": entry["groupId"],
+                "artifactId": entry["artifactId"],
+                "version": entry["version"],
+                "module": label,
+            })
     if depth >= MAX_MODULE_DEPTH:
         return
     for sub in _parse_maven_modules(content):
         child_path = os.path.join(module_path, sub)
         child_label = sub if label is None else f"{label}/{sub}"
-        _scan_maven_recursive(child_path, child_label, acc, depth + 1)
+        _scan_maven_recursive(
+            child_path, child_label, acc, depth + 1, managed_pins
+        )
 
 
 def _module_path_to_dir(project_root: str, module_path: str) -> str:
@@ -2639,10 +2978,12 @@ def _detect_dead_repo_hints(content: str, file_name: str, module: Optional[str])
 
 
 def scan_project(project_root: str) -> Dict:
-    """Returns {buildSystem, dependencies: [...ScannedDependency], deadRepositoryHints: [...]}."""
+    """Returns {buildSystem, dependencies: [...ScannedDependency],
+    deadRepositoryHints: [...], managedPins: [...]}."""
     build_system = _detect_build_system(project_root)
     dependencies: List[Dict] = []
     dead_repo_hints: List[Dict] = []
+    managed_pins: List[Dict] = []
 
     if build_system == "gradle":
         # Step 1: Read settings file
@@ -2731,14 +3072,26 @@ def scan_project(project_root: str) -> Dict:
                             catalog_entry_map.get(f"{catalog_name}.lib.{dashed_alias}")
                     if entry:
                         entry["usages"].append({"module": module, "configuration": dep["configuration"]})
+                        if dep.get("isPlatform"):
+                            entry["isPlatform"] = True
+                            # Prefer enforcedPlatform if any usage wraps it that way.
+                            if (
+                                dep.get("platformKind") == "enforcedPlatform"
+                                or not entry.get("platformKind")
+                            ):
+                                entry["platformKind"] = dep.get("platformKind")
                 elif dep["groupId"] and dep["artifactId"]:
-                    dependencies.append({
+                    entry = {
                         "groupId": dep["groupId"],
                         "artifactId": dep["artifactId"],
                         "version": dep["version"],
                         "source": {"kind": "module-direct", "file": file_name, "module": module},
                         "usages": [{"module": module, "configuration": dep["configuration"]}],
-                    })
+                    }
+                    if dep.get("isPlatform"):
+                        entry["isPlatform"] = True
+                        entry["platformKind"] = dep.get("platformKind")
+                    dependencies.append(entry)
 
         def process_plugins_block(content: str, file_name: str, module: Optional[str], is_settings: bool) -> None:
             for decl in _parse_gradle_plugins_block(content, is_settings):
@@ -2822,13 +3175,17 @@ def scan_project(project_root: str) -> Dict:
             for dep in _parse_gradle_deps(content, rel_file):
                 if dep["catalogRef"] or not (dep["groupId"] and dep["artifactId"]):
                     continue
-                dependencies.append({
+                entry = {
                     "groupId": dep["groupId"],
                     "artifactId": dep["artifactId"],
                     "version": dep["version"],
                     "source": {"kind": kind, "file": rel_file, "module": None},
                     "usages": [{"module": None, "configuration": dep["configuration"]}],
-                })
+                }
+                if dep.get("isPlatform"):
+                    entry["isPlatform"] = True
+                    entry["platformKind"] = dep.get("platformKind")
+                dependencies.append(entry)
 
         def scan_convention_plugins(src_kotlin_dir: str) -> None:
             if not os.path.isdir(src_kotlin_dir):
@@ -2872,9 +3229,16 @@ def scan_project(project_root: str) -> Dict:
                 scan_convention_plugins(os.path.join(sub_dir, "src", "main", "kotlin"))
 
     elif build_system == "maven":
-        _scan_maven_recursive(project_root, None, dependencies, 0)
+        _scan_maven_recursive(
+            project_root, None, dependencies, 0, managed_pins
+        )
 
-    return {"buildSystem": build_system, "dependencies": dependencies, "deadRepositoryHints": dead_repo_hints}
+    return {
+        "buildSystem": build_system,
+        "dependencies": dependencies,
+        "deadRepositoryHints": dead_repo_hints,
+        "managedPins": managed_pins,
+    }
 
 
 def _source_file_path(source: Dict) -> str:
@@ -2890,27 +3254,36 @@ def flatten_scan_result(scan: Dict) -> Dict:
         source_file = _source_file_path(dep["source"])
         source_kind = dep["source"]["kind"]
         usages = dep.get("usages", [])
-        if not usages:
-            deps.append({
+
+        def _flat_entry(configuration: str, module: Optional[str]) -> Dict:
+            entry = {
                 "groupId": dep["groupId"],
                 "artifactId": dep["artifactId"],
                 "version": dep["version"],
-                "configuration": "(unused)",
-                "module": None,
+                "configuration": configuration,
+                "module": module,
                 "source": source_file,
                 "sourceKind": source_kind,
-            })
+            }
+            if dep.get("isPlatform"):
+                entry["isPlatform"] = True
+                entry["platformKind"] = dep.get("platformKind")
+            if dep.get("effectiveVersion") is not None:
+                entry["effectiveVersion"] = dep["effectiveVersion"]
+            if dep.get("managedBy") is not None:
+                entry["managedBy"] = dep["managedBy"]
+            return entry
+
+        if not usages:
+            deps.append(_flat_entry("(unused)", None))
         else:
             for usage in usages:
-                deps.append({
-                    "groupId": dep["groupId"],
-                    "artifactId": dep["artifactId"],
-                    "version": dep["version"],
-                    "configuration": usage.get("configuration", ""),
-                    "module": usage.get("module"),
-                    "source": source_file,
-                    "sourceKind": source_kind,
-                })
+                deps.append(
+                    _flat_entry(
+                        usage.get("configuration", ""),
+                        usage.get("module"),
+                    )
+                )
     return {
         "buildSystem": scan["buildSystem"],
         "dependencies": deps,
@@ -3075,9 +3448,25 @@ def handle_get_dependency_changes(args: Dict) -> Any:
     )
 
 
+def handle_expand_bom(args: Dict) -> Any:
+    ctx = build_resolution_context(args)
+    group_id = args["groupId"]
+    artifact_id = args["artifactId"]
+    version = args["version"]
+    managed = expand_bom(group_id, artifact_id, version, ctx)
+    return {
+        "groupId": group_id,
+        "artifactId": artifact_id,
+        "version": version,
+        "managed": managed,
+    }
+
+
 def handle_scan_project_dependencies(args: Dict) -> Any:
     project_path = args.get("projectPath") or os.getcwd()
+    ctx = build_resolution_context(args)
     scan = scan_project(project_path)
+    apply_bom_managed_versions(scan, ctx)
     return flatten_scan_result(scan)
 
 
@@ -3292,6 +3681,7 @@ def handle_audit_project_dependencies(args: Dict) -> Any:
 
     ctx = build_resolution_context(args)
     scan = scan_project(project_path)
+    apply_bom_managed_versions(scan, ctx)
 
     def is_included_in_production(dep: Dict) -> bool:
         source = dep["source"]
@@ -3309,8 +3699,11 @@ def handle_audit_project_dependencies(args: Dict) -> Any:
         d for d in scan["dependencies"] if is_included_in_production(d)
     ]
 
-    deps_with_version = [d for d in filtered if d.get("version")]
-    deps_without_version = [d for d in filtered if not d.get("version")]
+    def _effective_version(dep: Dict) -> Optional[str]:
+        return dep.get("version") or dep.get("effectiveVersion")
+
+    deps_with_version = [d for d in filtered if _effective_version(d)]
+    deps_without_version = [d for d in filtered if not _effective_version(d)]
 
     audit_deps: List[Dict] = []
 
@@ -3318,6 +3711,7 @@ def handle_audit_project_dependencies(args: Dict) -> Any:
     metadata_cache: Dict[str, Any] = {}
 
     for dep in deps_with_version:
+        current_version = _effective_version(dep)
         ga_key = f"{dep['groupId']}:{dep['artifactId']}"
         # resolved_from is captured as soon as fetch_metadata succeeds, so an
         # unexpected downstream failure still carries provenance — mirrors the
@@ -3329,12 +3723,12 @@ def handle_audit_project_dependencies(args: Dict) -> Any:
                 metadata_cache[ga_key] = fetch_metadata(dep["groupId"], dep["artifactId"], ctx)
             metadata = metadata_cache[ga_key]
             resolved_from = metadata.get("resolvedFrom")
-            latest = find_latest_version_for_current(metadata["versions"], dep["version"])
-            upgrade_type = get_upgrade_type(dep["version"], latest) if latest else "none"
-            audit_deps.append({
+            latest = find_latest_version_for_current(metadata["versions"], current_version)
+            upgrade_type = get_upgrade_type(current_version, latest) if latest else "none"
+            entry = {
                 "groupId": dep["groupId"],
                 "artifactId": dep["artifactId"],
-                "currentVersion": dep["version"],
+                "currentVersion": current_version,
                 "latestVersion": latest,
                 "upgradeType": upgrade_type,
                 "source": dep["source"],
@@ -3342,7 +3736,15 @@ def handle_audit_project_dependencies(args: Dict) -> Any:
                 "module": (dep.get("usages") or [{}])[0].get("module"),
                 "configuration": (dep.get("usages") or [{}])[0].get("configuration"),
                 "resolvedFrom": resolved_from,
-            })
+            }
+            if dep.get("effectiveVersion") is not None:
+                entry["effectiveVersion"] = dep["effectiveVersion"]
+            if dep.get("managedBy") is not None:
+                entry["managedBy"] = dep["managedBy"]
+            if dep.get("isPlatform"):
+                entry["isPlatform"] = True
+                entry["platformKind"] = dep.get("platformKind")
+            audit_deps.append(entry)
         except Exception as e:
             # str(e) is safe here: fetch_metadata's own messages are redacted
             # at the source (see fetch_metadata), and find_latest_version_for_
@@ -3351,7 +3753,7 @@ def handle_audit_project_dependencies(args: Dict) -> Any:
             error_entry = {
                 "groupId": dep["groupId"],
                 "artifactId": dep["artifactId"],
-                "currentVersion": dep["version"],
+                "currentVersion": current_version,
                 "source": dep["source"],
                 "usages": dep.get("usages", []),
                 "module": (dep.get("usages") or [{}])[0].get("module"),
@@ -3360,17 +3762,25 @@ def handle_audit_project_dependencies(args: Dict) -> Any:
             }
             if resolved_from is not None:
                 error_entry["resolvedFrom"] = resolved_from
+            if dep.get("effectiveVersion") is not None:
+                error_entry["effectiveVersion"] = dep["effectiveVersion"]
+            if dep.get("managedBy") is not None:
+                error_entry["managedBy"] = dep["managedBy"]
             audit_deps.append(error_entry)
 
     for dep in deps_without_version:
-        audit_deps.append({
+        entry = {
             "groupId": dep["groupId"],
             "artifactId": dep["artifactId"],
             "source": dep["source"],
             "usages": dep.get("usages", []),
             "module": (dep.get("usages") or [{}])[0].get("module"),
             "configuration": (dep.get("usages") or [{}])[0].get("configuration"),
-        })
+        }
+        if dep.get("isPlatform"):
+            entry["isPlatform"] = True
+            entry["platformKind"] = dep.get("platformKind")
+        audit_deps.append(entry)
 
     # Vulnerability check — deduplicate per GAV
     if include_vulns and deps_with_version:
@@ -3877,12 +4287,26 @@ TOOLS = [
     },
     {
         "name": "scan_project_dependencies",
-        "description": "Scan a local project directory to extract declared dependencies from build files (Gradle, Maven).",
+        "description": "Scan a local project directory to extract declared dependencies from build files (Gradle, Maven). Applies BOM/platform managed versions (effectiveVersion/managedBy) via network POM fetch when platforms are declared.",
         "inputSchema": {
             "type": "object",
             "properties": {
                 "projectPath": {"type": "string", "description": "Path to the project root. Defaults to current working directory."},
             },
+        },
+    },
+    {
+        "name": "expand_bom",
+        "description": "Expand a Maven BOM (Bill of Materials) into its managed dependency versions. Recursively expands import-scope BOMs with first-wins ordering.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "groupId": {"type": "string", "description": "BOM group ID"},
+                "artifactId": {"type": "string", "description": "BOM artifact ID"},
+                "version": {"type": "string", "description": "BOM version"},
+                "projectPath": {"type": "string", "description": "Project root used to resolve declared repositories. Defaults to the current working directory."},
+            },
+            "required": ["groupId", "artifactId", "version"],
         },
     },
     {
@@ -3990,6 +4414,7 @@ TOOL_HANDLERS = {
     "compare_dependency_versions": handle_compare_dependency_versions,
     "get_dependency_changes": handle_get_dependency_changes,
     "scan_project_dependencies": handle_scan_project_dependencies,
+    "expand_bom": handle_expand_bom,
     "get_dependency_vulnerabilities": handle_get_dependency_vulnerabilities,
     "get_dependency_health": handle_get_dependency_health,
     "search_artifacts": handle_search_artifacts,
