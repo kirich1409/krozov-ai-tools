@@ -10,12 +10,11 @@ urllib.request.urlopen with the _helpers.mock_urlopen sequence builder; the
 patched mock object records the urllib Request objects so URL + header
 assertions read the exact bytes the server sent.
 
-Divergence guardrail (#3): server.py's changelog path is GitHub-releases-ONLY.
-There is no AGP/AndroidX provider and no provider-selection (the TS
-changelog/resolver + agp/androidx providers do not exist in Python), and the
-GitHub path does NOT fall back to a CHANGELOG.md file when no releases match
-(the TS github-provider does). Those behaviours are intentionally NOT tested
-here — only the github-releases path is exercised.
+Provider selection (AndroidX → AGP → GitHub) and the AGP/AndroidX HTML parsers
+live in ``test_changelog_providers.py`` (#308). This module covers the GitHub
+releases branch only. The GitHub path still does NOT fall back to a
+CHANGELOG.md file when no releases match (the retired TS github-provider did) —
+that residual is intentionally out of scope here.
 """
 
 import json
@@ -321,7 +320,7 @@ class TagNormalizationTest(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
-# _get_dependency_changes_impl — GitHub-releases-only changelog path
+# _get_dependency_changes_impl — GitHub releases branch
 # mirrors changelog/__tests__/github-provider.test.ts (github path only)
 # ---------------------------------------------------------------------------
 class DependencyChangesImplTest(unittest.TestCase):

@@ -23,7 +23,7 @@ is a **backstop only** — it proves a function executed, never that behavior wa
 **Follow-up divergences** (TS had it, shipped Python does not — all pre-existing #302 gaps):
 - **#1** HTTP retry/backoff (feature gap)
 - **#2** persistent file cache (feature gap)
-- **#3** AGP/AndroidX release-notes changelog providers + html-to-text + github CHANGELOG.md markdown fallback + `changelog/resolver` provider-selection — server.py has no agp/androidx/html parser and `_get_dependency_changes_impl` is GitHub-releases-only (feature gap)
+- **#3** AGP/AndroidX release-notes changelog providers + html-to-text + `changelog/resolver` provider-selection — **resolved by #308** (`test_changelog_providers.py`). Residual: github CHANGELOG.md markdown fallback still not ported.
 - **#4** HTTP/SSE transport — server.py is stdio-only (feature gap)
 
 **Resolved by this PR** (`fix/maven-repo-resolution`) — both former CORRECTNESS regressions are now **ported**:
@@ -61,22 +61,22 @@ is a **backstop only** — it proves a function executed, never that behavior wa
 | `github/tag-matcher.test.ts` | ported | `test_github.py` (TagNormalization + DependencyChangesImpl tag-normalization) |
 | `github/changelog-parser.test.ts` | diverged → #3 | CHANGELOG.md markdown parser (`parseChangelogSections`) has no server.py equivalent; the Python github path uses release bodies only |
 
-### changelog/ (4) — 1 ported, 1 partial, 2 diverged
+### changelog/ (4) — 3 ported, 1 residual via #3/#308
 | TS test file | Bucket | Python |
 |---|---|---|
 | `changelog/github-provider.test.ts` | ported | `test_github.py` (DependencyChangesImpl) + `test_handlers.py` (TestGetDependencyChanges) — github releases path |
-| `changelog/resolver.test.ts` | partial → `test_github.py` + provider-selection diverged → #3 | github branch ported; agp-vs-androidx-vs-github provider selection not in server.py |
-| `changelog/agp-provider.test.ts` | diverged → #3 | no AGP changelog provider in server.py |
-| `changelog/androidx-provider.test.ts` | diverged → #3 | no AndroidX changelog provider in server.py |
+| `changelog/resolver.test.ts` | ported | `test_changelog_providers.py` (ResolveChangelogTest) — AndroidX → AGP → GitHub (#308) |
+| `changelog/agp-provider.test.ts` | ported | `test_changelog_providers.py` (AgpProviderTest + DependencyChangesAgpAndroidXTest) |
+| `changelog/androidx-provider.test.ts` | ported | `test_changelog_providers.py` (AndroidXProviderTest + DependencyChangesAgpAndroidXTest) |
 
-### agp/ + androidx/ + html/ (5) — all diverged → #3
+### agp/ + androidx/ + html/ (5) — ported via #308; CHANGELOG.md residual remains under #3
 | TS test file | Bucket | Python |
 |---|---|---|
-| `agp/release-notes-parser.test.ts` | diverged → #3 | no AGP release-notes parser in server.py |
-| `agp/url.test.ts` | diverged → #3 | no AGP URL mapping in server.py |
-| `androidx/release-notes-parser.test.ts` | diverged → #3 | no AndroidX release-notes parser in server.py |
-| `androidx/url.test.ts` | diverged → #3 | no AndroidX URL mapping in server.py |
-| `html/to-text.test.ts` | diverged → #3 | no htmlToText util in server.py (only used by agp/androidx providers) |
+| `agp/release-notes-parser.test.ts` | ported | `test_changelog_providers.py` (AgpParserTest) |
+| `agp/url.test.ts` | ported | `test_changelog_providers.py` (AgpUrlTest) |
+| `androidx/release-notes-parser.test.ts` | ported | `test_changelog_providers.py` (AndroidXParserTest) |
+| `androidx/url.test.ts` | ported | `test_changelog_providers.py` (AndroidXUrlTest) |
+| `html/to-text.test.ts` | ported | `test_changelog_providers.py` (HtmlToTextTest) |
 
 ### maven/ + search/ + vulnerabilities/ (4) — all ported
 | TS test file | Bucket | Python |

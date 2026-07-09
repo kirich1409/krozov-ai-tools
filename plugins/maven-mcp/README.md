@@ -16,7 +16,7 @@ The server registers tools that Claude can call during a conversation. It querie
 | `check_version_exists` | Verify if a specific version exists and classify its stability |
 | `check_multiple_dependencies` | Bulk lookup of latest versions for multiple dependencies |
 | `compare_dependency_versions` | Compare current versions against latest (major/minor/patch) |
-| `get_dependency_changes` | Show changes between versions from GitHub releases |
+| `get_dependency_changes` | Show changes between versions (AndroidX/AGP docs or GitHub releases) |
 | `scan_project_dependencies` | Scan Gradle/Maven build files and Gradle version catalogs (`gradle/libs.versions.toml`) for dependencies |
 | `expand_bom` | Expand a Maven BOM into managed dependency versions |
 | `get_transitive_graph` | Resolved transitive dependency graph for a GAV via deps.dev |

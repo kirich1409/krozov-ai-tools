@@ -44,7 +44,7 @@ python3 -m unittest discover -s plugins/maven-mcp/tests -p test_handlers.py
 - **BOM / platform expansion** — `parse_dependency_management`, `expand_bom`, `apply_bom_managed_versions` (#286).
 - **deps.dev transitive graphs** — `fetch_depsdev_dependencies`, `get_transitive_graph`, `detect_dependency_conflicts` (#287).
 - **Version compatibility** — `check_version_compatibility` + shipped `compat-matrices.json` (AGP/KGP/javax→jakarta; Spring Boot via `expand_bom`) (#285).
-- **GitHub & changelog** — `gh_repo_exists` / `gh_fetch_repo` / `gh_fetch_releases` / `gh_fetch_user` / `gh_fetch_issue_stats`, `discover_github_repo` (POM SCM → groupId guess), and `_get_dependency_changes_impl` + `_filter_version_range` (GitHub releases only).
+- **GitHub & changelog** — `gh_repo_exists` / `gh_fetch_repo` / `gh_fetch_releases` / `gh_fetch_user` / `gh_fetch_issue_stats`, `discover_github_repo` (POM SCM → groupId guess), and `_get_dependency_changes_impl` + `_filter_version_range` with provider selection (#308): AndroidX docs → AGP docs → GitHub releases. Minimal stdlib `html_to_text` powers the AGP/AndroidX HTML parsers. GitHub CHANGELOG.md markdown fallback is still not ported.
 - **Vulnerabilities** — OSV.dev batch query (`api.osv.dev/v1/querybatch`).
 - **Tool handlers** — `handle_*`, one per MCP tool, plus the stdio JSON-RPC dispatch loop.
 
