@@ -13,7 +13,8 @@
 # non-empty suggestions exist. NEVER tighten this to bare-absent denial —
 # that would false-block real private dependencies. See plan §Decisions #4.
 #
-# Fail-open is structural: trap 'exit 0' EXIT immediately after set -euo pipefail.
+# Fail-open is structural: trap 'exit 0' EXIT immediately after set -euo pipefail
+# (replaced after mktemp to also rm -rf the work dir; still always exits 0).
 # The script can only ever reach exit 0 (never exit 2, which would hard-block).
 set -euo pipefail
 trap 'exit 0' EXIT
@@ -71,6 +72,8 @@ MAX_COORDS=8
 # Temporary files are cleaned up by the EXIT trap (exit 0 always fires).
 TMPDIR_WORK=""
 TMPDIR_WORK=$(mktemp -d 2>/dev/null) || TMPDIR_WORK=""
+# Replace the fail-open EXIT trap so it also removes the work dir. Still exits 0.
+trap 'rm -rf "$TMPDIR_WORK" 2>/dev/null || true; exit 0' EXIT
 COORDS_FILE=""
 [ -n "$TMPDIR_WORK" ] && COORDS_FILE="${TMPDIR_WORK}/coords.txt"
 
@@ -370,7 +373,7 @@ if [ -n "$VERIFY_RESULT" ]; then
           # Charset-filter suggestion coordinates before embedding
           SUGG_TEXT=$(printf '%s' "$ITEM" | jq -r \
             '.suggestions[0:3][] | "\(.groupId // ""):\(.artifactId // "") (versionCount=\(.versionCount // 0))"' \
-            2>/dev/null | tr -cd 'A-Za-z0-9._:-=()\n ') || SUGG_TEXT=""
+            2>/dev/null | tr -cd 'A-Za-z0-9._:=()\n -') || SUGG_TEXT=""
         fi
 
         REASON_LINE=""

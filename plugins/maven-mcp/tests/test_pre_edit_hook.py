@@ -669,6 +669,64 @@ class DenyCasesTest(unittest.TestCase):
         self.assertNotIn("Replace", reason)
         self.assertNotIn("replace with", reason.lower())
 
+    def test_suggestion_charset_strips_tr_range_metachars(self):
+        """Suggestion tr filter must strip ; and < (not admit them via a :-= range).
+
+        In tr, ':-='' is a range covering ':' ';' '<' '='. The filter must keep
+        '=' (used in 'versionCount=N') and '-' as literals, but never ';'/'<'.
+        """
+        entry = _verify_entry(
+            "absent", "com.fake", "fake-lib",
+            hallucination=False,
+            suggestions=[{
+                "groupId": "com.real;evil<a",
+                "artifactId": "lib=ok",
+                "score": 0.9,
+                "versionCount": 50,
+            }],
+        )
+        _make_fixture(self.tmp, {1: {"results": [entry]}})
+        proc = _run_hook(self.tmp, _edit_stdin(
+            "build.gradle", 'implementation "com.fake:fake-lib:1.0"'))
+        self.assertEqual(proc.returncode, 0)
+        decision = _parse_decision(proc.stdout)
+        self.assertIsNotNone(decision)
+        reason = decision["hookSpecificOutput"]["permissionDecisionReason"]
+        self.assertEqual(
+            decision["hookSpecificOutput"]["permissionDecision"], "deny")
+        # Metacharacters that the broken ':-='' range used to admit.
+        self.assertNotIn(";", reason)
+        self.assertNotIn("<", reason)
+        # Legitimate suggestion content and versionCount=N must survive.
+        self.assertIn("com.realevila", reason)
+        self.assertIn("lib=ok", reason)
+        self.assertIn("versionCount=50", reason)
+
+    def test_tmpdir_cleaned_on_exit(self):
+        """EXIT trap must remove the mktemp -d work dir (no leak per edit)."""
+        entry = _verify_entry("exists", "com.example", "lib")
+        _make_fixture(self.tmp, {1: {"results": [entry]}})
+        hook_tmpdir = tempfile.mkdtemp()
+        try:
+            before = set(os.listdir(hook_tmpdir))
+            proc = _run_hook(
+                self.tmp,
+                _edit_stdin("build.gradle",
+                            'implementation "com.example:lib:1.0"'),
+                extra_env={"TMPDIR": hook_tmpdir},
+            )
+            self.assertEqual(proc.returncode, 0)
+            after = set(os.listdir(hook_tmpdir))
+            self.assertEqual(
+                after, before,
+                "hook must remove its mktemp -d work dir on EXIT; "
+                f"leftover entries: {sorted(after - before)}",
+            )
+            # Positive control: stub ran (edit was guarded, not a vacuous early exit).
+            self.assertGreaterEqual(len(_stub_args(self.tmp)), 1)
+        finally:
+            shutil.rmtree(hook_tmpdir, ignore_errors=True)
+
     def test_deny_full_envelope_structure(self):
         """Full hookSpecificOutput envelope matches the PreToolUse contract exactly."""
         entry = _verify_entry("absent", "com.bad", "hallu",
