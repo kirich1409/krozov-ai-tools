@@ -31,6 +31,13 @@ if _SERVER_DIR not in sys.path:
 # urlopen responses are not written to ~/.cache and do not serve stale data
 # on subsequent runs.  Cache-specific tests re-enable per-test via temp_cache_dir().
 os.environ.setdefault("MAVEN_MCP_CACHE_DISABLE", "1")
+# Hermetic closed-mode defaults (#294): do not inherit the developer's
+# ~/.m2/settings.xml mirrors or offline/base toggles into resolution tests.
+# Tests that need mirrors set MAVEN_MCP_SETTINGS explicitly; offline/base
+# tests use patch.dict.
+os.environ.setdefault("MAVEN_MCP_SETTINGS", "/__maven_mcp_test_no_settings__")
+os.environ.pop("MAVEN_MCP_OFFLINE", None)
+os.environ.pop("MAVEN_MCP_REPOSITORY_BASE", None)
 
 import server  # noqa: E402  (must follow the sys.path shim above)
 
