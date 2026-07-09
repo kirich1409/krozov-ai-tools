@@ -1860,10 +1860,27 @@ def _parse_buildscript_classpath(content: str) -> List[Dict]:
 
 
 def _parse_settings_modules(content: str) -> List[str]:
-    """Extract include(":module") declarations from settings.gradle[.kts]."""
+    """Extract include(":module") / include ':module' declarations from settings.gradle[.kts].
+
+    Accepts parenthesised and Groovy space-form calls, and every quoted argument in a
+    multi-module statement (`include(":app", ":core")` / `include ':app', ':core'`).
+    `includeBuild` is not matched (`\\binclude\\b` requires a word boundary after
+    `include`).
+    """
     results = []
-    for m in re.finditer(r'\binclude\s*\(\s*["\']([^"\']+)["\']\s*\)', content):
-        results.append(m.group(1))
+    for m in re.finditer(r"\binclude\b\s*", content):
+        rest = content[m.end() :]
+        if rest.startswith("("):
+            end = rest.find(")")
+            args = rest[1:] if end == -1 else rest[1:end]
+        else:
+            nl = rest.find("\n")
+            args = rest if nl == -1 else rest[:nl]
+            comment = args.find("//")
+            if comment != -1:
+                args = args[:comment]
+        for q in re.finditer(r"""["']([^"']+)["']""", args):
+            results.append(q.group(1))
     return results
 
 
