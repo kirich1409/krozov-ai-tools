@@ -1264,9 +1264,9 @@ def check_android_kotlin_compatibility(android: Dict, matrices: Dict) -> Tuple[L
             suggestion = None
             if nearest_k:
                 suggestion = {
-                    "kotlin": f"{nearest_k['kgpMin']}–{nearest_k['kgpMax']}",
-                    "gradle": f"{nearest_k['gradleMin']}–{nearest_k['gradleMax']}",
-                    "agp": f"{nearest_k['agpMin']}–{nearest_k['agpMax']}",
+                    "kotlin": f"{nearest_k['kgpMin']}-{nearest_k['kgpMax']}",
+                    "gradle": f"{nearest_k['gradleMin']}-{nearest_k['gradleMax']}",
+                    "agp": f"{nearest_k['agpMin']}-{nearest_k['agpMax']}",
                 }
             conflicts.append({
                 "kind": "kotlin_unknown",
@@ -1281,9 +1281,9 @@ def check_android_kotlin_compatibility(android: Dict, matrices: Dict) -> Tuple[L
                 "https://kotlinlang.org/docs/gradle-configure-project.html"
             )
             suggestion = {
-                "kotlin": f"{kgp_entry['kgpMin']}–{kgp_entry['kgpMax']}",
-                "gradle": f"{kgp_entry['gradleMin']}–{kgp_entry['gradleMax']}",
-                "agp": f"{kgp_entry['agpMin']}–{kgp_entry['agpMax']}",
+                "kotlin": f"{kgp_entry['kgpMin']}-{kgp_entry['kgpMax']}",
+                "gradle": f"{kgp_entry['gradleMin']}-{kgp_entry['gradleMax']}",
+                "agp": f"{kgp_entry['agpMin']}-{kgp_entry['agpMax']}",
             }
             if gradle and not _version_in_closed_range(
                 gradle, kgp_entry["gradleMin"], kgp_entry["gradleMax"]
@@ -1391,7 +1391,10 @@ def check_javax_jakarta_migration(
     notes: List[str] = []
     if not spring_boot:
         return conflicts, notes
-    if not _version_gte(spring_boot, "3.0.0"):
+    # Major-version gate: Boot 3 milestones/RCs (3.0.0-M1) compare < 3.0.0
+    # under compare_versions but already require jakarta.*.
+    boot_major = (_parse_segments(spring_boot) or [0])[0]
+    if boot_major < 3:
         return conflicts, notes
     jmap = matrices.get("jakartaMap") or {}
     ref = (

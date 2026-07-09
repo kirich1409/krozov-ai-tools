@@ -1,6 +1,5 @@
 """Tests for check_version_compatibility (#285)."""
 
-import json
 import os
 import unittest
 import unittest.mock
@@ -140,6 +139,20 @@ class TestJakartaMap(unittest.TestCase):
             server._load_compat_matrices(),
         )
         self.assertEqual(conflicts, [])
+
+    def test_boot3_milestone_still_flags(self):
+        conflicts, _notes = server.check_javax_jakarta_migration(
+            "3.0.0-M1",
+            [
+                {
+                    "groupId": "javax.persistence",
+                    "artifactId": "javax.persistence-api",
+                    "version": "2.2",
+                }
+            ],
+            server._load_compat_matrices(),
+        )
+        self.assertEqual(len(conflicts), 1)
 
 
 class TestSpringBootBomCompat(unittest.TestCase):

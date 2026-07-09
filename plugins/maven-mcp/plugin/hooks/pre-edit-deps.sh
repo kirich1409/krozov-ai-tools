@@ -442,9 +442,10 @@ JDK_VER=$(printf '%s' "$NEW_CONTENT" | grep -oE \
   'jvmToolchain[[:space:]]*\([[:space:]]*[0-9]+' \
   2>/dev/null | grep -oE '[0-9]+' | head -n1) || JDK_VER=""
 if [ -z "$JDK_VER" ]; then
+  # Prefer the last numeric segment so VERSION_1_8 → 8, VERSION_17 → 17.
   JDK_VER=$(printf '%s' "$NEW_CONTENT" | grep -oE \
-    'VERSION_([0-9]+)' \
-    2>/dev/null | grep -oE '[0-9]+' | head -n1) || JDK_VER=""
+    'VERSION_[0-9]+(_[0-9]+)?' \
+    2>/dev/null | head -n1 | grep -oE '[0-9]+$' ) || JDK_VER=""
 fi
 
 HAS_JAVAX=""
