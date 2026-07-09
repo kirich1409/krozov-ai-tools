@@ -1533,18 +1533,18 @@ def detect_dependency_conflicts(
 
     notes = [
         "Conflict detection unions deps.dev graphs for each direct dependency "
-        "resolved in isolation — not a full project-wide Maven/Gradle resolve.",
+        + "resolved in isolation — not a full project-wide Maven/Gradle resolve.",
         "Maven nearest-wins uses BFS depth from each direct root; declaration-"
-        "order tie-breaks inside the same depth are approximated by highest version.",
+        + "order tie-breaks inside the same depth are approximated by highest version.",
         "Gradle highest-wins ignores project ResolutionStrategy / strict versions / "
-        "enforcedPlatform overrides.",
+        + "enforcedPlatform overrides.",
         "Private/unpublished coordinates and deps.dev coverage gaps degrade per-root "
-        "(see errors[]); remaining roots still contribute.",
+        + "(see errors[]); remaining roots still contribute.",
     ]
     if truncated_roots:
         notes.append(
             f"Direct roots truncated to {MAX_CONFLICT_SCAN_ROOTS} "
-            f"(MAX_CONFLICT_SCAN_ROOTS); results are partial."
+            + f"(MAX_CONFLICT_SCAN_ROOTS); results are partial."
         )
 
     return {
