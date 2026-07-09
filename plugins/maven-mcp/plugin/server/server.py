@@ -32,6 +32,9 @@ SERVER_NAME = "maven-mcp"
 SERVER_VERSION = "0.23.0"
 USER_AGENT = "maven-mcp/0.23.0"
 HTTP_TIMEOUT = 15
+# Short timeout for enrichment APIs (OSV / GitHub / deps.dev / android.com).
+# Closed contours must fail fast rather than hang on the full HTTP_TIMEOUT (#296).
+HTTP_TIMEOUT_EXTERNAL = 3
 
 # Bounded retry/backoff (ported from the retired TS `fetchWithRetry`). The TS
 # default was `retries = 1` => 2 total attempts; this matches it. Backoff base
@@ -67,15 +70,22 @@ STABILITY_PATTERNS = [
 
 PRERELEASE_WEIGHT = {"snapshot": 0, "alpha": 1, "beta": 2, "milestone": 3, "rc": 4, "stable": 5}
 
-GITHUB_API = "https://api.github.com"
-OSV_API = "https://api.osv.dev/v1/querybatch"
+# Default public enrichment endpoints. Overridable via MAVEN_MCP_*_BASE (#296).
+GITHUB_API_DEFAULT = "https://api.github.com"
+OSV_API_DEFAULT = "https://api.osv.dev/v1/querybatch"
+OSV_VULN_API_DEFAULT = "https://api.osv.dev/v1/vulns"
+DEPSDEV_API_DEFAULT = "https://api.deps.dev/v3"
+# Back-compat aliases — tests and docs historically referenced these names.
+# Prefer the *_url() / *_base() resolvers at call sites so env overrides apply.
+GITHUB_API = GITHUB_API_DEFAULT
+OSV_API = OSV_API_DEFAULT
+OSV_VULN_API = OSV_VULN_API_DEFAULT
 # OSV.dev documents a maximum of 1000 queries per /v1/querybatch request.
 # query_osv_batch chunks above this so a large monorepo audit cannot fail as a unit.
 OSV_QUERYBATCH_MAX = 1000
 # /v1/querybatch returns only {id, modified} per vuln — severity/summary/fixed
 # require a follow-up GET /v1/vulns/{id} (#338). Cap bounds worst-case fan-out
 # per query_osv_batch call (unique IDs, first-seen order); excess stay bare.
-OSV_VULN_API = "https://api.osv.dev/v1/vulns"
 MAX_OSV_VULN_HYDRATIONS = 100
 SEARCH_API = "https://search.maven.org/solrsearch/select"
 # search_artifacts limit: coerced to int and clamped in the handler before the
@@ -108,7 +118,7 @@ MAX_BOM_DEPTH = 5
 
 # deps.dev GetDependencies (#287). Caching is allowed by their ToS; TTL matches
 # metadata/search (version graphs change, but not constantly).
-DEPSDEV_API = "https://api.deps.dev/v3"
+DEPSDEV_API = DEPSDEV_API_DEFAULT
 TTL_DEPSDEV = 3600  # 1 hour
 # Fan-out / size caps — Wave 0 hardening: never unbounded network or memory.
 MAX_TRANSITIVE_GRAPH_NODES = 2000
@@ -292,7 +302,10 @@ def _read_response_body(resp: Any) -> bytes:
     return body
 
 
-def _request_with_retry(req: urllib.request.Request) -> Tuple[int, bytes]:
+def _request_with_retry(
+    req: urllib.request.Request,
+    timeout: Optional[float] = None,
+) -> Tuple[int, bytes]:
     """Issue ``req`` with bounded retry/backoff on transient failures.
 
     Tri-state contract (relied on by the resolution layer and verify_coordinates):
@@ -302,14 +315,18 @@ def _request_with_retry(req: urllib.request.Request) -> Tuple[int, bytes]:
     level without ever obtaining an HTTP response. A 4xx (incl. 404) is never
     turned into a raise. Retry is fully internal and transparent to callers.
     Oversized bodies raise ``ResponseTooLargeError`` immediately (not retried).
+    ``timeout`` defaults to ``HTTP_TIMEOUT``; enrichment APIs pass
+    ``HTTP_TIMEOUT_EXTERNAL`` (#296).
     """
+    if timeout is None:
+        timeout = HTTP_TIMEOUT
     deadline = time.monotonic() + HTTP_TOTAL_RETRY_BUDGET
     last_result: Optional[Tuple[int, bytes]] = None
     last_exc: Optional[BaseException] = None
     for attempt in range(HTTP_MAX_ATTEMPTS):
         retry_after: Optional[float] = None
         try:
-            with urllib.request.urlopen(req, timeout=HTTP_TIMEOUT) as resp:
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
                 status, body = resp.status, _read_response_body(resp)
                 if not _is_retryable_status(status):
                     return status, body
@@ -352,24 +369,33 @@ def _request_with_retry(req: urllib.request.Request) -> Tuple[int, bytes]:
     raise urllib.error.URLError("HTTP request failed: no response and no transport error")
 
 
-def http_get(url: str, headers: Optional[Dict[str, str]] = None) -> Tuple[int, bytes]:
+def http_get(
+    url: str,
+    headers: Optional[Dict[str, str]] = None,
+    timeout: Optional[float] = None,
+) -> Tuple[int, bytes]:
     """Returns (status_code, body_bytes). Retries transient failures internally
     (see _request_with_retry); raises urllib.error.URLError / socket.timeout only
     when every attempt hit a transport error. Non-http(s) schemes are rejected
     before any network/filesystem open (#348)."""
     _assert_http_url(url)
     req = urllib.request.Request(url, headers=headers or _make_headers())
-    return _request_with_retry(req)
+    return _request_with_retry(req, timeout=timeout)
 
 
-def http_post_json(url: str, payload: Any, headers: Optional[Dict[str, str]] = None) -> Tuple[int, bytes]:
+def http_post_json(
+    url: str,
+    payload: Any,
+    headers: Optional[Dict[str, str]] = None,
+    timeout: Optional[float] = None,
+) -> Tuple[int, bytes]:
     _assert_http_url(url)
     data = json.dumps(payload).encode()
     h = _make_headers({"Content-Type": "application/json"})
     if headers:
         h.update(headers)
     req = urllib.request.Request(url, data=data, headers=h, method="POST")
-    return _request_with_retry(req)
+    return _request_with_retry(req, timeout=timeout)
 
 
 # ---------------------------------------------------------------------------
@@ -517,6 +543,7 @@ def http_get_cached(
     url: str,
     ttl_seconds: float,
     headers: Optional[Dict[str, str]] = None,
+    timeout: Optional[float] = None,
 ) -> Tuple[int, bytes]:
     """Cached GET: returns a cached (200, body) on hit, else delegates to http_get.
 
@@ -535,14 +562,14 @@ def http_get_cached(
     never cached; the caller receives them exactly as http_get would return/raise.
     """
     if _headers_have_authorization(headers):
-        return http_get(url, headers)
+        return http_get(url, headers, timeout=timeout)
     host = urllib.parse.urlparse(url).hostname or ""
     if host in _CACHE_DENYLIST:
-        return http_get(url, headers)
+        return http_get(url, headers, timeout=timeout)
     result = _file_cache.get(url, ttl_seconds)
     if result is not None:
         return result
-    status, body = http_get(url, headers)
+    status, body = http_get(url, headers, timeout=timeout)
     if status == 200:
         _file_cache.set(url, status, body)
     return (status, body)
@@ -824,6 +851,105 @@ def _env_flag(name: str) -> bool:
 def _offline_enabled() -> bool:
     """``MAVEN_MCP_OFFLINE`` — disable all public well-known repo contact (#294)."""
     return _env_flag("MAVEN_MCP_OFFLINE")
+
+
+# ---------------------------------------------------------------------------
+# External enrichment services — air-gapped degradation (#296)
+# ---------------------------------------------------------------------------
+# OSV / GitHub / deps.dev / developer.android.com are unreachable in closed
+# contours. Offline mode short-circuits them (unless an endpoint override points
+# at an internal mirror). Transport failures mark capabilityUnavailable=
+# "unreachable" with a short timeout so tools do not hang.
+
+_ANDROID_DOCS_DEFAULT = "https://developer.android.com"
+
+
+def _env_url_base(name: str, default: str) -> str:
+    """Read an absolute URL base from env, stripping a trailing slash."""
+    raw = (os.environ.get(name) or "").strip()
+    if not raw:
+        return default.rstrip("/")
+    return raw.rstrip("/")
+
+
+def _url_host(url: str) -> str:
+    try:
+        return (urllib.parse.urlsplit(url).hostname or "").lower()
+    except ValueError:
+        return ""
+
+
+def _github_api_base() -> str:
+    """GitHub API root (``MAVEN_MCP_GITHUB_BASE``; GHE uses ``…/api/v3``)."""
+    return _env_url_base("MAVEN_MCP_GITHUB_BASE", GITHUB_API_DEFAULT)
+
+
+def _osv_api_root() -> str:
+    """OSV API root (``MAVEN_MCP_OSV_BASE``). Accepts either ``https://host`` or
+    ``https://host/v1``; querybatch/vulns paths are derived from this."""
+    raw = _env_url_base("MAVEN_MCP_OSV_BASE", "https://api.osv.dev")
+    if raw.endswith("/querybatch"):
+        raw = raw[: -len("/querybatch")].rstrip("/")
+    return raw
+
+
+def _osv_querybatch_url() -> str:
+    root = _osv_api_root()
+    if root.endswith("/v1"):
+        return f"{root}/querybatch"
+    return f"{root}/v1/querybatch"
+
+
+def _osv_vuln_url(vuln_id: str) -> str:
+    root = _osv_api_root()
+    quoted = urllib.parse.quote(vuln_id, safe="-._")
+    if root.endswith("/v1"):
+        return f"{root}/vulns/{quoted}"
+    return f"{root}/v1/vulns/{quoted}"
+
+
+def _depsdev_api_base() -> str:
+    """deps.dev v3 API root (``MAVEN_MCP_DEPSDEV_BASE``)."""
+    return _env_url_base("MAVEN_MCP_DEPSDEV_BASE", DEPSDEV_API_DEFAULT)
+
+
+def _android_docs_base() -> str:
+    """developer.android.com root (``MAVEN_MCP_ANDROID_DOCS_BASE``)."""
+    return _env_url_base("MAVEN_MCP_ANDROID_DOCS_BASE", _ANDROID_DOCS_DEFAULT)
+
+
+def _external_override_active(service: str) -> bool:
+    """True when an env override points away from the public default host."""
+    if service == "osv":
+        return _url_host(_osv_api_root()) != "api.osv.dev"
+    if service == "github":
+        return _url_host(_github_api_base()) != "api.github.com"
+    if service == "depsdev":
+        return _url_host(_depsdev_api_base()) != "api.deps.dev"
+    if service == "android_docs":
+        return _url_host(_android_docs_base()) != "developer.android.com"
+    return False
+
+
+def _external_capability(service: str) -> Optional[str]:
+    """Return ``"offline"`` when this enrichment service must be skipped.
+
+    ``MAVEN_MCP_OFFLINE`` short-circuits public defaults. An endpoint override
+    whose host differs from the public default is treated as an internal mirror
+    and remains callable (still under ``HTTP_TIMEOUT_EXTERNAL``).
+    """
+    if not _offline_enabled():
+        return None
+    if _external_override_active(service):
+        return None
+    return "offline"
+
+
+def _with_capability(result: Dict[str, Any], capability: Optional[str]) -> Dict[str, Any]:
+    """Attach ``capabilityUnavailable`` when set; leave result otherwise unchanged."""
+    if capability:
+        result["capabilityUnavailable"] = capability
+    return result
 
 
 def _repository_base() -> Optional[str]:
@@ -1756,8 +1882,9 @@ def _split_maven_package_name(name: str) -> Optional[Tuple[str, str]]:
 def _depsdev_dependencies_url(group_id: str, artifact_id: str, version: str) -> str:
     """Build the GetDependencies URL. Path segments are percent-encoded."""
     name = _depsdev_package_name(group_id, artifact_id)
+    base = _depsdev_api_base()
     return (
-        f"{DEPSDEV_API}/systems/MAVEN/packages/"
+        f"{base}/systems/MAVEN/packages/"
         f"{urllib.parse.quote(name, safe='')}/versions/"
         f"{urllib.parse.quote(version, safe='')}:dependencies"
     )
@@ -1766,8 +1893,9 @@ def _depsdev_dependencies_url(group_id: str, artifact_id: str, version: str) -> 
 def _depsdev_version_url(group_id: str, artifact_id: str, version: str) -> str:
     """Build the GetVersion URL (licenses live here, not on GetDependencies)."""
     name = _depsdev_package_name(group_id, artifact_id)
+    base = _depsdev_api_base()
     return (
-        f"{DEPSDEV_API}/systems/MAVEN/packages/"
+        f"{base}/systems/MAVEN/packages/"
         f"{urllib.parse.quote(name, safe='')}/versions/"
         f"{urllib.parse.quote(version, safe='')}"
     )
@@ -1791,12 +1919,21 @@ def fetch_depsdev_licenses(
         "licenses": [],
         "error": None,
     }
+    cap = _external_capability("depsdev")
+    if cap:
+        out = dict(empty)
+        out["error"] = "deps.dev unavailable (offline/closed mode)"
+        out["capabilityUnavailable"] = cap
+        return out
     url = _depsdev_version_url(group_id, artifact_id, version)
     try:
-        status, body = http_get_cached(url, TTL_DEPSDEV)
+        status, body = http_get_cached(
+            url, TTL_DEPSDEV, timeout=HTTP_TIMEOUT_EXTERNAL
+        )
     except Exception as e:
         out = dict(empty)
         out["error"] = f"{type(e).__name__}: deps.dev unreachable"
+        out["capabilityUnavailable"] = "unreachable"
         return out
 
     out = dict(empty)
@@ -1858,13 +1995,22 @@ def fetch_depsdev_dependencies(
         "partial": True,
         "truncated": False,
     }
+    cap = _external_capability("depsdev")
+    if cap:
+        out = dict(empty)
+        out["error"] = "deps.dev unavailable (offline/closed mode)"
+        out["capabilityUnavailable"] = cap
+        return out
     url = _depsdev_dependencies_url(group_id, artifact_id, version)
     try:
-        status, body = http_get_cached(url, TTL_DEPSDEV)
+        status, body = http_get_cached(
+            url, TTL_DEPSDEV, timeout=HTTP_TIMEOUT_EXTERNAL
+        )
     except Exception as e:
         # Transport / size-cap / scheme failures — degrade, never raise.
         out = dict(empty)
         out["error"] = f"{type(e).__name__}: deps.dev unreachable"
+        out["capabilityUnavailable"] = "unreachable"
         return out
 
     out = dict(empty)
@@ -2066,6 +2212,8 @@ def get_transitive_graph(
     }
     if fetched.get("graphError"):
         result["graphError"] = fetched["graphError"]
+    if fetched.get("capabilityUnavailable"):
+        result["capabilityUnavailable"] = fetched["capabilityUnavailable"]
     if not fetched["ok"]:
         result["partial"] = True
         result["error"] = fetched.get("error") or "deps.dev unavailable"
@@ -2144,12 +2292,15 @@ def detect_dependency_conflicts(
     errors: List[str] = []
     graphs_ok = 0
     graphs_failed = 0
+    capability: Optional[str] = None
 
     for root in unique_roots:
         fetched = fetch_depsdev_dependencies(
             root["groupId"], root["artifactId"], root["version"]
         )
         root_label = f"{root['groupId']}:{root['artifactId']}:{root['version']}"
+        if fetched.get("capabilityUnavailable") and capability is None:
+            capability = fetched["capabilityUnavailable"]
         if not fetched["ok"]:
             graphs_failed += 1
             if len(errors) < MAX_DEPSDEV_ERRORS_REPORTED:
@@ -2229,7 +2380,7 @@ def detect_dependency_conflicts(
             + f"(MAX_CONFLICT_SCAN_ROOTS); results are partial."
         )
 
-    return {
+    out = {
         "buildSystem": bs_label,
         "strategy": strategy,
         "conflicts": conflicts,
@@ -2240,6 +2391,7 @@ def detect_dependency_conflicts(
         "errors": errors,
         "notes": notes,
     }
+    return _with_capability(out, capability)
 
 
 # ---------------------------------------------------------------------------
@@ -3532,12 +3684,13 @@ def check_license_compliance(
     partial = False
     truncated_nodes = False
     nodes_fetched = 0
+    capability: Optional[str] = None
 
     def _gav_key(g: str, a: str, v: str) -> str:
         return f"{g}:{a}:{v}"
 
     def _ensure_license(g: str, a: str, v: str) -> Dict[str, Any]:
-        nonlocal nodes_fetched, truncated_nodes, partial
+        nonlocal nodes_fetched, truncated_nodes, partial, capability
         key = _gav_key(g, a, v)
         if key in license_cache:
             return license_cache[key]
@@ -3555,6 +3708,8 @@ def check_license_compliance(
             return entry
         nodes_fetched += 1
         entry = fetch_depsdev_licenses(g, a, v)
+        if entry.get("capabilityUnavailable") and capability is None:
+            capability = entry["capabilityUnavailable"]
         license_cache[key] = entry
         return entry
 
@@ -3629,6 +3784,8 @@ def check_license_compliance(
         fetched = fetch_depsdev_dependencies(
             root["groupId"], root["artifactId"], root["version"],
         )
+        if fetched.get("capabilityUnavailable") and capability is None:
+            capability = fetched["capabilityUnavailable"]
         if not fetched.get("ok"):
             partial = True
             err = fetched.get("error") or "deps.dev unavailable"
@@ -3718,7 +3875,7 @@ def check_license_compliance(
     }
     if errors:
         out["errors"] = errors
-    return out
+    return _with_capability(out, capability)
 
 
 def extract_relocation_from_pom(
@@ -3848,9 +4005,15 @@ def scm_host(url: str) -> str:
 
 
 def _gh_get(path: str) -> Optional[Any]:
-    url = f"{GITHUB_API}{path}"
+    if _external_capability("github"):
+        return None
+    if not path.startswith("/"):
+        path = "/" + path
+    url = f"{_github_api_base()}{path}"
     try:
-        status, body = http_get(url, _github_headers())
+        status, body = http_get(
+            url, _github_headers(), timeout=HTTP_TIMEOUT_EXTERNAL
+        )
         if status == 200:
             return json.loads(body)
     except Exception:
@@ -3859,9 +4022,13 @@ def _gh_get(path: str) -> Optional[Any]:
 
 
 def gh_repo_exists(owner: str, repo: str) -> bool:
-    url = f"{GITHUB_API}/repos/{owner}/{repo}"
+    if _external_capability("github"):
+        return False
+    url = f"{_github_api_base()}/repos/{owner}/{repo}"
     try:
-        status, _ = http_get(url, _github_headers())
+        status, _ = http_get(
+            url, _github_headers(), timeout=HTTP_TIMEOUT_EXTERNAL
+        )
         return status == 200
     except Exception:
         return False
@@ -4022,6 +4189,14 @@ ANDROIDX_RELEASES_BASE = "https://developer.android.com/jetpack/androidx/release
 # Release-notes HTML pages change infrequently; match the retired TS 7-day TTL.
 TTL_CHANGELOG_HTML = TTL_POM
 
+
+def _agp_releases_base() -> str:
+    return f"{_android_docs_base()}/build/releases"
+
+
+def _androidx_releases_base() -> str:
+    return f"{_android_docs_base()}/jetpack/androidx/releases"
+
 _AGP_HEADING_RE = re.compile(
     r'<h3[^>]*\s+data-text="Android Gradle plugin ([\d][^\s"]*)"[^>]*>',
     re.IGNORECASE,
@@ -4074,7 +4249,7 @@ def _agp_major_minor(version: str) -> Tuple[str, str]:
 
 def get_agp_releases_url(version: str) -> str:
     major, minor = _agp_major_minor(version)
-    return f"{AGP_RELEASES_BASE}/agp-{major}-{minor}-0-release-notes"
+    return f"{_agp_releases_base()}/agp-{major}-{minor}-0-release-notes"
 
 
 def get_agp_version_url(version: str) -> str:
@@ -4104,7 +4279,7 @@ def get_androidx_slug(group_id: str) -> str:
 
 
 def get_androidx_releases_url(group_id: str) -> str:
-    return f"{ANDROIDX_RELEASES_BASE}/{get_androidx_slug(group_id)}"
+    return f"{_androidx_releases_base()}/{get_androidx_slug(group_id)}"
 
 
 def get_androidx_version_url(group_id: str, version: str) -> str:
@@ -4148,9 +4323,13 @@ def _changelog_entries_from_sections(
 
 def _fetch_agp_changelog(to_version: str) -> Optional[Dict]:
     """Fetch/parse AGP developer.android.com release notes. None on failure."""
+    if _external_capability("android_docs"):
+        return None
     url = get_agp_releases_url(to_version)
     try:
-        status, body = http_get_cached(url, TTL_CHANGELOG_HTML)
+        status, body = http_get_cached(
+            url, TTL_CHANGELOG_HTML, timeout=HTTP_TIMEOUT_EXTERNAL
+        )
     except Exception:
         return None
     if status != 200:
@@ -4169,9 +4348,13 @@ def _fetch_agp_changelog(to_version: str) -> Optional[Dict]:
 
 def _fetch_androidx_changelog(group_id: str) -> Optional[Dict]:
     """Fetch/parse AndroidX developer.android.com release notes. None on failure."""
+    if _external_capability("android_docs"):
+        return None
     url = get_androidx_releases_url(group_id)
     try:
-        status, body = http_get_cached(url, TTL_CHANGELOG_HTML)
+        status, body = http_get_cached(
+            url, TTL_CHANGELOG_HTML, timeout=HTTP_TIMEOUT_EXTERNAL
+        )
     except Exception:
         return None
     if status != 200:
@@ -4255,7 +4438,14 @@ def _get_dependency_changes_impl(group_id: str, artifact_id: str, from_version: 
 
     changelog = _resolve_changelog(group_id, artifact_id, to_version, ctx)
     if not changelog:
-        return {**base, "repositoryNotFound": True}
+        out = {**base, "repositoryNotFound": True}
+        # Offline with no internal mirrors: changelog providers were skipped.
+        for svc in ("android_docs", "github"):
+            cap = _external_capability(svc)
+            if cap:
+                out["capabilityUnavailable"] = cap
+                break
+        return out
 
     entries = changelog.get("entries") or {}
     changes = []
@@ -4343,9 +4533,11 @@ def _is_malicious_id(vuln_id: str) -> bool:
 
 def _fetch_osv_vuln(vuln_id: str) -> Optional[Dict]:
     """GET /v1/vulns/{id}. Returns the parsed vuln dict, or None on any failure."""
-    url = f"{OSV_VULN_API}/{urllib.parse.quote(vuln_id, safe='-._')}"
+    if _external_capability("osv"):
+        return None
+    url = _osv_vuln_url(vuln_id)
     try:
-        status, body = http_get(url)
+        status, body = http_get(url, timeout=HTTP_TIMEOUT_EXTERNAL)
         if status != 200:
             return None
         data = json.loads(body)
@@ -4408,15 +4600,32 @@ def query_osv_batch(deps: List[Dict]) -> List[Dict]:
     (#338). Unique IDs are hydrated once per call (deduped, first-seen order),
     capped at MAX_OSV_VULN_HYDRATIONS; failed/capped IDs keep the bare entry
     (id + malicious still work; severity may be absent).
+
+    When OSV is offline/unreachable (#296), every entry still returns with an
+    empty ``vulnerabilities`` list PLUS ``capabilityUnavailable`` so an empty
+    result is never mistaken for "verified clean".
     """
     if not deps:
         return []
+    cap = _external_capability("osv")
+    if cap:
+        return [
+            {
+                **d,
+                "vulnerabilities": [],
+                "capabilityUnavailable": cap,
+            }
+            for d in deps
+        ]
     # Phase 1: querybatch chunks → (dep, bare vulns_raw) pairs.
     bare_pairs: List[Tuple[Dict, List[Dict]]] = []
+    chunk_unreachable = False
     for start in range(0, len(deps), OSV_QUERYBATCH_MAX):
-        bare_pairs.extend(
-            _query_osv_batch_chunk_bare(deps[start:start + OSV_QUERYBATCH_MAX])
-        )
+        chunk = deps[start:start + OSV_QUERYBATCH_MAX]
+        pairs, unreachable = _query_osv_batch_chunk_bare(chunk)
+        bare_pairs.extend(pairs)
+        if unreachable:
+            chunk_unreachable = True
     # Phase 2: hydrate unique IDs across the whole batch (one GET per id).
     ids_ordered: List[str] = []
     for _, vulns_raw in bare_pairs:
@@ -4438,33 +4647,41 @@ def query_osv_batch(deps: List[Dict]) -> List[Dict]:
             if not full.get("id") and vid:
                 full = {**full, "id": vid}
             vulns.append(_vuln_info_from_osv(full))
-        out.append({**dep, "vulnerabilities": vulns})
+        entry = {**dep, "vulnerabilities": vulns}
+        if chunk_unreachable and not vulns:
+            entry["capabilityUnavailable"] = "unreachable"
+        out.append(entry)
     return out
 
 
-def _query_osv_batch_chunk_bare(deps: List[Dict]) -> List[Tuple[Dict, List[Dict]]]:
-    """POST one ≤OSV_QUERYBATCH_MAX querybatch; return (dep, vulns_raw) pairs.
+def _query_osv_batch_chunk_bare(
+    deps: List[Dict],
+) -> Tuple[List[Tuple[Dict, List[Dict]]], bool]:
+    """POST one ≤OSV_QUERYBATCH_MAX querybatch; return ((dep, vulns_raw)…, unreachable).
 
     On non-200 / error every dep gets an empty vulns_raw list. Does not hydrate
     or filter withdrawn — that happens after /v1/vulns/{id} merge.
+    ``unreachable`` is True on transport failure (not on HTTP non-200).
     """
     queries = [
         {"package": {"name": f"{d['groupId']}:{d['artifactId']}", "ecosystem": "Maven"}, "version": d["version"]}
         for d in deps
     ]
     try:
-        status, body = http_post_json(OSV_API, {"queries": queries})
+        status, body = http_post_json(
+            _osv_querybatch_url(), {"queries": queries}, timeout=HTTP_TIMEOUT_EXTERNAL
+        )
         if status != 200:
-            return [(d, []) for d in deps]
+            return [(d, []) for d in deps], False
         data = json.loads(body)
         results = data.get("results", [])
         out: List[Tuple[Dict, List[Dict]]] = []
         for i, dep in enumerate(deps):
             vulns_raw = (results[i].get("vulns") or []) if i < len(results) else []
             out.append((dep, list(vulns_raw)))
-        return out
+        return out, False
     except Exception:
-        return [(d, []) for d in deps]
+        return [(d, []) for d in deps], True
 
 
 # ---------------------------------------------------------------------------
@@ -6598,6 +6815,7 @@ def handle_get_dependency_vulnerabilities(args: Dict) -> Any:
     # larger restructure here.
     raw = query_osv_batch(query_deps)
     results = []
+    capability: Optional[str] = None
     for i, r in enumerate(raw):
         entry = dict(r)
         if resolutions[i]:
@@ -6606,8 +6824,11 @@ def handle_get_dependency_vulnerabilities(args: Dict) -> Any:
             entry["version"] = original_deps[i]["version"]
             entry["resolvedImplementation"] = resolutions[i]
         entry["vulnerabilityCount"] = len(entry["vulnerabilities"])
+        if entry.get("capabilityUnavailable") and capability is None:
+            capability = entry["capabilityUnavailable"]
         results.append(entry)
-    return {"results": results}
+    out: Dict[str, Any] = {"results": results}
+    return _with_capability(out, capability)
 
 
 def handle_get_dependency_health(args: Dict) -> Any:
@@ -6657,7 +6878,8 @@ def handle_get_dependency_health(args: Dict) -> Any:
                     result["scm"] = {"url": scm_url, "host": scm_host(scm_url)}
 
         cached_repo_meta = None
-        if not gh_repo:
+        github_cap = _external_capability("github")
+        if not gh_repo and not github_cap:
             guess = guess_github_repo(group_id, artifact_id)
             if guess:
                 cached_repo_meta = gh_fetch_repo(guess["owner"], guess["repo"])
@@ -6668,7 +6890,11 @@ def handle_get_dependency_health(args: Dict) -> Any:
             if not pom_licenses:
                 result["signals"].append("no license declared")
             scm = result.get("scm")
-            if scm and scm["host"] != "github":
+            if github_cap:
+                result["signals"].append("GitHub metrics unavailable (offline/closed mode)")
+                result["healthError"] = "GitHub unavailable (offline/closed mode)"
+                result["capabilityUnavailable"] = github_cap
+            elif scm and scm["host"] != "github":
                 result["signals"].append(f"SCM hosted on {scm['host']}; GitHub metrics unavailable")
             else:
                 result["signals"].append("no public GitHub repository found")
@@ -6682,11 +6908,23 @@ def handle_get_dependency_health(args: Dict) -> Any:
         if not result.get("scm"):
             result["scm"] = {"url": result["repository"]["url"], "host": "github"}
 
+        if github_cap:
+            # gh_repo came from POM SCM while GitHub API is offline — keep
+            # repository identity but skip live metrics.
+            if not pom_licenses:
+                result["signals"].append("no license declared")
+            result["signals"].append("GitHub metrics unavailable (offline/closed mode)")
+            result["healthError"] = "GitHub unavailable (offline/closed mode)"
+            result["capabilityUnavailable"] = github_cap
+            results.append(result)
+            continue
+
         repo_meta = cached_repo_meta or gh_fetch_repo(owner, repo)
         if not repo_meta:
             if not pom_licenses:
                 result["signals"].append("no license declared")
             result["healthError"] = "GitHub repository metadata unavailable (rate limit or network)"
+            result["capabilityUnavailable"] = "unreachable"
             results.append(result)
             continue
 
@@ -6976,6 +7214,7 @@ def handle_audit_project_dependencies(args: Dict) -> Any:
         audit_deps.append(entry)
 
     # Vulnerability check — deduplicate per GAV
+    osv_capability: Optional[str] = None
     if include_vulns and deps_with_version:
         gav_map: Dict[str, List[Dict]] = {}
         for a in audit_deps:
@@ -7017,8 +7256,13 @@ def handle_audit_project_dependencies(args: Dict) -> Any:
                 for v in vuln_results[i].get("vulnerabilities", [])
             ]
             resolved = resolved_impls.get(key)
+            entry_cap = vuln_results[i].get("capabilityUnavailable")
+            if entry_cap and osv_capability is None:
+                osv_capability = entry_cap
             for target in targets:
                 target["vulnerabilities"] = mapped_vulns
+                if entry_cap:
+                    target["capabilityUnavailable"] = entry_cap
                 if resolved:
                     target["resolvedImplementation"] = resolved
 
@@ -7075,7 +7319,7 @@ def handle_audit_project_dependencies(args: Dict) -> Any:
         out["licenses"] = licenses_section
     if new_license_categories is not None:
         out["newLicenseCategories"] = new_license_categories
-    return out
+    return _with_capability(out, osv_capability)
 
 
 # ---------------------------------------------------------------------------
