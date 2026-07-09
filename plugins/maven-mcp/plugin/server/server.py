@@ -69,7 +69,17 @@ PRERELEASE_WEIGHT = {"snapshot": 0, "alpha": 1, "beta": 2, "milestone": 3, "rc":
 
 GITHUB_API = "https://api.github.com"
 OSV_API = "https://api.osv.dev/v1/querybatch"
+# OSV.dev documents a maximum of 1000 queries per /v1/querybatch request.
+# query_osv_batch chunks above this so a large monorepo audit cannot fail as a unit.
+OSV_QUERYBATCH_MAX = 1000
 SEARCH_API = "https://search.maven.org/solrsearch/select"
+# search_artifacts limit: coerced to int and clamped in the handler before the
+# Solr URL is built (MCP schema bounds are advisory client metadata only).
+SEARCH_LIMIT_DEFAULT = 10
+SEARCH_LIMIT_MAX = 100
+# get_dependency_vulnerabilities dependency-list cap — same bound and rationale
+# as verify_coordinates (enforced in-handler before any network I/O).
+MAX_VULN_DEPENDENCIES = 100
 
 # Persistent file cache TTLs and capacity (see FileCache below).
 TTL_POM = 7 * 86400     # 7 days — release POMs are immutable once published
@@ -1462,9 +1472,22 @@ def _is_malicious_id(vuln_id: str) -> bool:
 
 
 def query_osv_batch(deps: List[Dict]) -> List[Dict]:
-    """deps: list of {groupId, artifactId, version}. Returns list of {groupId, artifactId, version, vulnerabilities}."""
+    """deps: list of {groupId, artifactId, version}. Returns list of {groupId, artifactId, version, vulnerabilities}.
+
+    Chunks into ≤OSV_QUERYBATCH_MAX queries per POST (OSV.dev documented limit)
+    and concatenates per-chunk results in input order. A failed chunk degrades
+    only that slice to empty vulnerabilities — siblings still resolve.
+    """
     if not deps:
         return []
+    out: List[Dict] = []
+    for start in range(0, len(deps), OSV_QUERYBATCH_MAX):
+        out.extend(_query_osv_batch_chunk(deps[start:start + OSV_QUERYBATCH_MAX]))
+    return out
+
+
+def _query_osv_batch_chunk(deps: List[Dict]) -> List[Dict]:
+    """POST one ≤OSV_QUERYBATCH_MAX querybatch; empty vulns on non-200 / error."""
     queries = [
         {"package": {"name": f"{d['groupId']}:{d['artifactId']}", "ecosystem": "Maven"}, "version": d["version"]}
         for d in deps
@@ -2897,6 +2920,13 @@ def handle_scan_project_dependencies(args: Dict) -> Any:
 
 def handle_get_dependency_vulnerabilities(args: Dict) -> Any:
     original_deps = args["dependencies"]
+    # Caps are ENFORCED here, before any network I/O — an MCP inputSchema's
+    # maxItems is advisory client metadata the server never validates, so the
+    # bound on outbound fan-out (each dep -> OSV query, plus optional marker
+    # POM fetch) lives in code. Truncate an over-long batch (same pattern as
+    # verify_coordinates).
+    if len(original_deps) > MAX_VULN_DEPENDENCIES:
+        original_deps = original_deps[:MAX_VULN_DEPENDENCIES]
     # Only build a ResolutionContext (filesystem read of the project's build
     # files, see discover_repositories) when at least one requested dependency
     # is actually a plugin-marker shape — preserves the original zero-FS-I/O,
@@ -3077,7 +3107,13 @@ def handle_get_dependency_health(args: Dict) -> Any:
 
 def handle_search_artifacts(args: Dict) -> Any:
     query = args["query"]
-    limit = args.get("limit", 10)
+    # Coerce + clamp before the Solr URL is built — schema bounds are advisory
+    # only (same reasoning as verify_coordinates' suggestLimit clamp).
+    try:
+        limit = int(args.get("limit", SEARCH_LIMIT_DEFAULT))
+    except (TypeError, ValueError):
+        limit = SEARCH_LIMIT_DEFAULT
+    limit = max(1, min(limit, SEARCH_LIMIT_MAX))
     results = search_maven_central(query, limit)
     return {"results": results}
 
@@ -3688,6 +3724,7 @@ TOOLS = [
             "properties": {
                 "dependencies": {
                     "type": "array",
+                    "maxItems": 100,
                     "items": {
                         "type": "object",
                         "properties": {
@@ -3733,7 +3770,7 @@ TOOLS = [
             "type": "object",
             "properties": {
                 "query": {"type": "string", "description": "Search query"},
-                "limit": {"type": "integer", "description": "Maximum number of results (default 10)"},
+                "limit": {"type": "integer", "default": 10, "minimum": 1, "maximum": 100, "description": "Maximum number of results. Default 10, clamped to [1, 100]."},
             },
             "required": ["query"],
         },

@@ -653,6 +653,43 @@ class TestQueryOsvBatch(unittest.TestCase):
             "https://osv.dev/vulnerability/OSV-NO-ADVISORY",
         )
 
+    def test_chunks_over_osv_querybatch_max(self):
+        # >OSV_QUERYBATCH_MAX deps -> multiple POSTs, each ≤ the documented
+        # 1000-query limit; results concatenated in input order. Temporarily
+        # lower the constant so the test stays small.
+        n = 5
+        chunk = 2
+        deps = [
+            {"groupId": "com.x", "artifactId": f"a{i}", "version": "1.0.0"}
+            for i in range(n)
+        ]
+        # Three chunks: [0,1], [2,3], [4] — each response tags vulns by index.
+        responses = []
+        for start in range(0, n, chunk):
+            size = min(chunk, n - start)
+            responses.append((200, json.dumps({
+                "results": [
+                    {"vulns": [{"id": f"GHSA-chunk-{start + i}", "summary": "",
+                                "affected": [], "references": []}]}
+                    for i in range(size)
+                ],
+            }).encode()))
+        with unittest.mock.patch.object(server, "OSV_QUERYBATCH_MAX", chunk), \
+                unittest.mock.patch(
+                    "urllib.request.urlopen",
+                    side_effect=mock_urlopen(responses),
+                ) as m:
+            results = server.query_osv_batch(deps)
+        self.assertEqual(m.call_count, 3)
+        for call in m.call_args_list:
+            payload = json.loads(call.args[0].data)
+            self.assertLessEqual(len(payload["queries"]), chunk)
+        self.assertEqual(len(results), n)
+        self.assertEqual(
+            [r["vulnerabilities"][0]["id"] for r in results],
+            [f"GHSA-chunk-{i}" for i in range(n)],
+        )
+
 
 # ---------------------------------------------------------------------------
 # _is_malicious_id / `malicious` flag (#322 Layer 1 — OSSF malicious-package

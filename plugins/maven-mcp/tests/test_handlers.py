@@ -417,6 +417,22 @@ class TestGetDependencyVulnerabilities(unittest.TestCase):
         self.assertEqual(m.call_count, 1)  # only the OSV POST, no POM fetch attempted
         self.assertEqual(result["vulnerabilityCount"], 0)
 
+    def test_caps_truncate_dependencies_over_100(self):
+        # 101 deps -> the HANDLER truncates to 100 before any I/O (same pattern
+        # as verify_coordinates). Mock query_osv_batch to assert it only sees 100.
+        deps = [
+            {"groupId": "com.x", "artifactId": f"a{i}", "version": "1.0.0"}
+            for i in range(101)
+        ]
+        with unittest.mock.patch.object(
+            server, "query_osv_batch",
+            side_effect=lambda ds: [{**d, "vulnerabilities": []} for d in ds],
+        ) as m:
+            out = server.handle_get_dependency_vulnerabilities({"dependencies": deps})
+        self.assertEqual(len(out["results"]), 100)
+        m.assert_called_once()
+        self.assertEqual(len(m.call_args.args[0]), 100)
+
 
 # --- handle_get_dependency_health -------------------------------------------
 
@@ -493,6 +509,28 @@ class TestSearchArtifacts(unittest.TestCase):
         with _patch_urlopen([(503, b"")]):
             out = server.handle_search_artifacts({"query": "lib"})
         self.assertEqual(out["results"], [])
+
+    def test_clamps_limit_over_max(self):
+        # limit=500 -> handler clamps to SEARCH_LIMIT_MAX before the Solr URL.
+        body = {"response": {"docs": []}}
+        with _patch_urlopen([(200, _json(body))]) as m:
+            server.handle_search_artifacts({"query": "lib", "limit": 500})
+        url = m.call_args_list[0].args[0].full_url
+        self.assertIn(f"rows={server.SEARCH_LIMIT_MAX}", url)
+
+    def test_clamps_limit_below_one_and_rejects_non_int(self):
+        # 0 / negative -> 1; non-int -> SEARCH_LIMIT_DEFAULT.
+        body = {"response": {"docs": []}}
+        with _patch_urlopen([(200, _json(body))]) as m:
+            server.handle_search_artifacts({"query": "lib", "limit": 0})
+            server.handle_search_artifacts({"query": "lib", "limit": -5})
+            server.handle_search_artifacts({"query": "lib", "limit": "nope"})
+        self.assertIn("rows=1", m.call_args_list[0].args[0].full_url)
+        self.assertIn("rows=1", m.call_args_list[1].args[0].full_url)
+        self.assertIn(
+            f"rows={server.SEARCH_LIMIT_DEFAULT}",
+            m.call_args_list[2].args[0].full_url,
+        )
 
 
 # --- handle_audit_project_dependencies --------------------------------------
