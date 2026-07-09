@@ -77,7 +77,7 @@ The guard is **structurally fail-open**: any failure — jq absent, no `timeout`
 
 ### PostToolUse reminder (`post-edit-deps.sh`)
 
-Fires after `Edit` or `Write` on build files and reminds you to run `/check-deps` to verify dependency updates. Requires `jq`; silently does nothing if `jq` is not installed.
+Fires after `Edit`, `Write`, or `MultiEdit` on build files when the changed content contains dependency-coordinate shapes, and reminds you to run `/check-deps` to verify dependency updates. Structurally fail-open (same convention as the PreToolUse guard): malformed input or a `jq` failure exits silently with no reminder. Requires `jq`; silently does nothing if `jq` is not installed.
 
 ## Caching
 
