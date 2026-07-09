@@ -104,6 +104,15 @@ MAX_MODULE_DEPTH = 5
 # Cap recursive BOM import / parent-property fetches (#286).
 MAX_BOM_DEPTH = 5
 
+# deps.dev GetDependencies (#287). Caching is allowed by their ToS; TTL matches
+# metadata/search (version graphs change, but not constantly).
+DEPSDEV_API = "https://api.deps.dev/v3"
+TTL_DEPSDEV = 3600  # 1 hour
+# Fan-out / size caps — Wave 0 hardening: never unbounded network or memory.
+MAX_TRANSITIVE_GRAPH_NODES = 2000
+MAX_CONFLICT_SCAN_ROOTS = 50
+MAX_DEPSDEV_ERRORS_REPORTED = 20
+
 # Gradle configuration names matched by shape (#346), not a closed allow-list:
 # variant/flavor prefixes (`debugImplementation`, `paidReleaseApi`, …),
 # source-set forms (`androidTestImplementation`, `testFixturesImplementation`),
@@ -1097,6 +1106,458 @@ def apply_bom_managed_versions(scan: Dict, ctx: "ResolutionContext") -> Dict:
         dep["effectiveVersion"] = info["version"]
         dep["managedBy"] = info["managedBy"]
     return scan
+
+
+# ---------------------------------------------------------------------------
+# deps.dev transitive graphs + conflict detection (#287)
+# ---------------------------------------------------------------------------
+
+def _depsdev_package_name(group_id: str, artifact_id: str) -> str:
+    """Maven package name on deps.dev is ``groupId:artifactId``."""
+    return f"{group_id}:{artifact_id}"
+
+
+def _split_maven_package_name(name: str) -> Optional[Tuple[str, str]]:
+    """Split a deps.dev Maven ``name`` (``g:a``) into groupId/artifactId.
+
+    Returns ``None`` when the name is not a two-part Maven coordinate (e.g.
+    bundled npm-style encodings). Callers skip those nodes.
+    """
+    if not name or ":" not in name:
+        return None
+    parts = name.split(":")
+    if len(parts) != 2 or not parts[0] or not parts[1]:
+        return None
+    return parts[0], parts[1]
+
+
+def _depsdev_dependencies_url(group_id: str, artifact_id: str, version: str) -> str:
+    """Build the GetDependencies URL. Path segments are percent-encoded."""
+    name = _depsdev_package_name(group_id, artifact_id)
+    return (
+        f"{DEPSDEV_API}/systems/MAVEN/packages/"
+        f"{urllib.parse.quote(name, safe='')}/versions/"
+        f"{urllib.parse.quote(version, safe='')}:dependencies"
+    )
+
+
+def fetch_depsdev_dependencies(
+    group_id: str,
+    artifact_id: str,
+    version: str,
+) -> Dict[str, Any]:
+    """Fetch a resolved Maven dependency graph from deps.dev GetDependencies.
+
+    Returns a normalised dict::
+
+        {
+          "ok": bool,
+          "status": int | None,          # HTTP status when a response arrived
+          "error": str | None,           # human-readable degrade reason
+          "graphError": str | None,      # deps.dev graph-level error field
+          "nodes": [{groupId, artifactId, version, relation, errors}],
+          "edges": [{from, to, requirement}],
+          "partial": bool,               # True when truncated or degraded
+          "truncated": bool,             # True when node/edge cap applied
+        }
+
+    Never raises for network/HTTP/parse failures — callers get ``ok=False``
+    with an ``error`` string (graceful degradation AC). Oversized bodies still
+    raise via ``http_get`` / ``ResponseTooLargeError`` only if the transport
+    layer itself raises after retries; those are caught and mapped to ``ok=False``.
+    """
+    empty: Dict[str, Any] = {
+        "ok": False,
+        "status": None,
+        "error": None,
+        "graphError": None,
+        "nodes": [],
+        "edges": [],
+        "partial": True,
+        "truncated": False,
+    }
+    url = _depsdev_dependencies_url(group_id, artifact_id, version)
+    try:
+        status, body = http_get_cached(url, TTL_DEPSDEV)
+    except Exception as e:
+        # Transport / size-cap / scheme failures — degrade, never raise.
+        out = dict(empty)
+        out["error"] = f"{type(e).__name__}: deps.dev unreachable"
+        return out
+
+    out = dict(empty)
+    out["status"] = status
+    if status != 200 or not body:
+        out["error"] = (
+            f"deps.dev returned HTTP {status}"
+            if status is not None
+            else "deps.dev returned empty response"
+        )
+        return out
+
+    try:
+        payload = json.loads(body.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as e:
+        out["error"] = f"deps.dev response not JSON: {type(e).__name__}"
+        return out
+
+    raw_nodes = payload.get("nodes") or []
+    raw_edges = payload.get("edges") or []
+    graph_error = payload.get("error") or None
+    if isinstance(graph_error, str) and not graph_error.strip():
+        graph_error = None
+
+    # Build original-index → output-index for successfully parsed Maven nodes.
+    # deps.dev may emit non-Maven name encodings; skipping those shifts indices,
+    # so edges must be remapped. Truncation drops nodes beyond the fan-out cap.
+    orig_to_out: Dict[int, int] = {}
+    out_nodes: List[Dict[str, Any]] = []
+    truncated = False
+    for i, raw in enumerate(raw_nodes):
+        if len(out_nodes) >= MAX_TRANSITIVE_GRAPH_NODES:
+            truncated = True
+            break
+        vk = raw.get("versionKey") or {}
+        split = _split_maven_package_name(vk.get("name") or "")
+        if not split:
+            continue
+        gid, aid = split
+        node_errors = raw.get("errors") or []
+        if not isinstance(node_errors, list):
+            node_errors = [str(node_errors)]
+        orig_to_out[i] = len(out_nodes)
+        out_nodes.append({
+            "groupId": gid,
+            "artifactId": aid,
+            "version": vk.get("version") or "",
+            "relation": raw.get("relation") or "",
+            "errors": [str(e) for e in node_errors if e],
+        })
+    if len(raw_nodes) > MAX_TRANSITIVE_GRAPH_NODES:
+        truncated = True
+
+    edges: List[Dict[str, Any]] = []
+    for raw in raw_edges:
+        try:
+            frm = int(raw.get("fromNode"))
+            to = int(raw.get("toNode"))
+        except (TypeError, ValueError):
+            continue
+        if frm not in orig_to_out or to not in orig_to_out:
+            if frm >= MAX_TRANSITIVE_GRAPH_NODES or to >= MAX_TRANSITIVE_GRAPH_NODES:
+                truncated = True
+            continue
+        edges.append({
+            "from": orig_to_out[frm],
+            "to": orig_to_out[to],
+            "requirement": raw.get("requirement") or "",
+        })
+
+    out.update({
+        "ok": True,
+        "error": None,
+        "graphError": graph_error,
+        "nodes": out_nodes,
+        "edges": edges,
+        "partial": bool(truncated or graph_error or any(n.get("errors") for n in out_nodes)),
+        "truncated": truncated,
+    })
+    return out
+
+
+def _edge_depth_map(edges: List[Dict], root_index: int = 0) -> Dict[int, int]:
+    """BFS depth from ``root_index`` over directed ``from → to`` edges.
+
+    Used for Maven nearest-wins mediation: the shallowest path wins. Nodes
+    unreachable from the root get no entry (callers treat them as infinite depth).
+    """
+    adj: Dict[int, List[int]] = {}
+    for e in edges:
+        adj.setdefault(e["from"], []).append(e["to"])
+    depths: Dict[int, int] = {root_index: 0}
+    queue: List[int] = [root_index]
+    head = 0
+    while head < len(queue):
+        cur = queue[head]
+        head += 1
+        for nxt in adj.get(cur, []):
+            if nxt in depths:
+                continue
+            depths[nxt] = depths[cur] + 1
+            queue.append(nxt)
+    return depths
+
+
+def resolve_conflict_version(
+    versions: List[str],
+    strategy: str,
+    *,
+    depths_by_version: Optional[Dict[str, int]] = None,
+) -> Optional[str]:
+    """Pick the version a build system would mediate to among ``versions``.
+
+    - ``highest-wins`` (Gradle): highest by ``compare_versions``.
+    - ``nearest-wins`` (Maven): shallowest depth wins; ties broken by highest
+      version (Maven's actual tie-break is declaration order, which we do not
+      have — documented limitation).
+    """
+    uniq = sorted(set(v for v in versions if v), key=functools.cmp_to_key(compare_versions))
+    if not uniq:
+        return None
+    if strategy == "highest-wins":
+        return uniq[-1]
+    # nearest-wins
+    if not depths_by_version:
+        # No depth info — fall back to highest (honest degrade).
+        return uniq[-1]
+    best_v = None
+    best_depth = None
+    for v in uniq:
+        d = depths_by_version.get(v)
+        if d is None:
+            continue
+        if best_depth is None or d < best_depth or (
+            d == best_depth and compare_versions(v, best_v or "") > 0
+        ):
+            best_v = v
+            best_depth = d
+    return best_v if best_v is not None else uniq[-1]
+
+
+def _conflict_risk(versions: List[str], resolved_to: Optional[str]) -> str:
+    """Heuristic risk label for a multi-version GA conflict.
+
+    - ``high``: major-version divergence among candidates, or resolved version
+      is not the highest (classic nearest-wins silent downgrade).
+    - ``medium``: minor divergence.
+    - ``low``: patch-only / unknown.
+    """
+    if not versions or not resolved_to:
+        return "low"
+    uniq = list(dict.fromkeys(versions))
+    highest = max(uniq, key=functools.cmp_to_key(compare_versions))
+    if resolved_to != highest:
+        return "high"
+    kinds = set()
+    for v in uniq:
+        if v == resolved_to:
+            continue
+        kinds.add(get_upgrade_type(v, resolved_to) if compare_versions(resolved_to, v) > 0
+                  else get_upgrade_type(resolved_to, v))
+    if "major" in kinds:
+        return "high"
+    if "minor" in kinds:
+        return "medium"
+    return "low"
+
+
+def strategy_for_build_system(build_system: str) -> str:
+    """Map detected build system to mediation strategy label."""
+    if build_system == "maven":
+        return "nearest-wins"
+    # Gradle (and unknown → Gradle-like highest-wins as the safer default for
+    # modern JVM builds; callers can override via buildSystem arg).
+    return "highest-wins"
+
+
+def get_transitive_graph(
+    group_id: str,
+    artifact_id: str,
+    version: str,
+) -> Dict[str, Any]:
+    """Resolved transitive graph for one GAV via deps.dev (#287)."""
+    fetched = fetch_depsdev_dependencies(group_id, artifact_id, version)
+    result: Dict[str, Any] = {
+        "groupId": group_id,
+        "artifactId": artifact_id,
+        "version": version,
+        "nodes": [
+            {"groupId": n["groupId"], "artifactId": n["artifactId"], "version": n["version"]}
+            for n in fetched["nodes"]
+        ],
+        "edges": [
+            {"from": e["from"], "to": e["to"]}
+            for e in fetched["edges"]
+        ],
+        "partial": fetched["partial"],
+        "truncated": fetched["truncated"],
+    }
+    if fetched.get("graphError"):
+        result["graphError"] = fetched["graphError"]
+    if not fetched["ok"]:
+        result["partial"] = True
+        result["error"] = fetched.get("error") or "deps.dev unavailable"
+        # Surface node-level errors when present even on ok path above; here
+        # the graph is empty.
+    else:
+        # Attach per-node errors only when any exist (keep happy-path lean).
+        node_errors = []
+        for i, n in enumerate(fetched["nodes"]):
+            if n.get("errors"):
+                node_errors.append({"index": i, "errors": n["errors"]})
+        if node_errors:
+            result["nodeErrors"] = node_errors[:MAX_DEPSDEV_ERRORS_REPORTED]
+    return result
+
+
+def detect_dependency_conflicts(
+    project_path: str,
+    build_system: Optional[str] = None,
+    ctx: Optional["ResolutionContext"] = None,
+) -> Dict[str, Any]:
+    """Detect GAs resolved at ≥2 versions across direct deps' transitive graphs.
+
+    For each versioned direct dependency (capped at ``MAX_CONFLICT_SCAN_ROOTS``),
+    fetches the deps.dev graph and unions every ``g:a → {versions…}`` seen.
+    When a GA appears at multiple versions, reports the conflict with the
+    version the active build system's mediation strategy would pick.
+
+    This is an approximation of a full project resolve: deps.dev resolves each
+    root in isolation (no project-wide dependencyManagement / resolutionStrategy
+    / enforcedPlatform). Documented in ``notes``.
+    """
+    if ctx is None:
+        ctx = build_resolution_context({"projectPath": project_path})
+    scan = scan_project(project_path)
+    apply_bom_managed_versions(scan, ctx)
+
+    detected_bs = scan.get("buildSystem") or "unknown"
+    bs = (build_system or detected_bs or "unknown").lower()
+    if bs not in ("maven", "gradle"):
+        # unknown → treat as gradle highest-wins (documented).
+        strategy = strategy_for_build_system(bs)
+        bs_label = detected_bs
+    else:
+        strategy = strategy_for_build_system(bs)
+        bs_label = bs
+
+    def _eff(dep: Dict) -> Optional[str]:
+        return dep.get("version") or dep.get("effectiveVersion")
+
+    roots: List[Dict] = []
+    for dep in scan.get("dependencies") or []:
+        if dep.get("isPlatform"):
+            continue
+        ver = _eff(dep)
+        gid, aid = dep.get("groupId"), dep.get("artifactId")
+        if not gid or not aid or not ver:
+            continue
+        roots.append({"groupId": gid, "artifactId": aid, "version": ver})
+
+    # Dedupe identical GAV roots (same direct declared twice across modules).
+    seen_roots: set = set()
+    unique_roots: List[Dict] = []
+    for r in roots:
+        key = (r["groupId"], r["artifactId"], r["version"])
+        if key in seen_roots:
+            continue
+        seen_roots.add(key)
+        unique_roots.append(r)
+
+    truncated_roots = len(unique_roots) > MAX_CONFLICT_SCAN_ROOTS
+    unique_roots = unique_roots[:MAX_CONFLICT_SCAN_ROOTS]
+
+    # ga -> { version -> {sources: [root gav…], minDepth: int|None } }
+    ga_versions: Dict[Tuple[str, str], Dict[str, Dict[str, Any]]] = {}
+    errors: List[str] = []
+    graphs_ok = 0
+    graphs_failed = 0
+
+    for root in unique_roots:
+        fetched = fetch_depsdev_dependencies(
+            root["groupId"], root["artifactId"], root["version"]
+        )
+        root_label = f"{root['groupId']}:{root['artifactId']}:{root['version']}"
+        if not fetched["ok"]:
+            graphs_failed += 1
+            if len(errors) < MAX_DEPSDEV_ERRORS_REPORTED:
+                errors.append(f"{root_label}: {fetched.get('error') or 'unavailable'}")
+            continue
+        graphs_ok += 1
+        if fetched.get("graphError") and len(errors) < MAX_DEPSDEV_ERRORS_REPORTED:
+            errors.append(f"{root_label}: graph error: {fetched['graphError']}")
+
+        depths = _edge_depth_map(fetched["edges"], 0)
+        for idx, node in enumerate(fetched["nodes"]):
+            ga = (node["groupId"], node["artifactId"])
+            ver = node["version"]
+            if not ver:
+                continue
+            bucket = ga_versions.setdefault(ga, {})
+            info = bucket.setdefault(ver, {"sources": [], "minDepth": None})
+            if root_label not in info["sources"]:
+                info["sources"].append(root_label)
+            d = depths.get(idx)
+            if d is not None and (info["minDepth"] is None or d < info["minDepth"]):
+                info["minDepth"] = d
+
+    conflicts: List[Dict[str, Any]] = []
+    for (gid, aid), ver_map in sorted(ga_versions.items()):
+        versions = list(ver_map.keys())
+        if len(versions) < 2:
+            continue
+        depths_by_version = {
+            v: ver_map[v]["minDepth"]
+            for v in versions
+            if ver_map[v]["minDepth"] is not None
+        }
+        resolved = resolve_conflict_version(
+            versions, strategy, depths_by_version=depths_by_version
+        )
+        sources: List[Dict[str, Any]] = []
+        for v in sorted(versions, key=functools.cmp_to_key(compare_versions)):
+            sources.append({
+                "version": v,
+                "via": ver_map[v]["sources"][:10],
+                "minDepth": ver_map[v]["minDepth"],
+            })
+        conflicts.append({
+            "groupId": gid,
+            "artifactId": aid,
+            "versions": sorted(versions, key=functools.cmp_to_key(compare_versions)),
+            "resolvedTo": resolved,
+            "strategy": strategy,
+            "risk": _conflict_risk(versions, resolved),
+            "sources": sources,
+        })
+
+    # Sort conflicts by risk then GA for stable output.
+    risk_order = {"high": 0, "medium": 1, "low": 2}
+    conflicts.sort(
+        key=lambda c: (
+            risk_order.get(c["risk"], 9),
+            c["groupId"],
+            c["artifactId"],
+        )
+    )
+
+    notes = [
+        "Conflict detection unions deps.dev graphs for each direct dependency "
+        + "resolved in isolation — not a full project-wide Maven/Gradle resolve.",
+        "Maven nearest-wins uses BFS depth from each direct root; declaration-"
+        + "order tie-breaks inside the same depth are approximated by highest version.",
+        "Gradle highest-wins ignores project ResolutionStrategy / strict versions / "
+        + "enforcedPlatform overrides.",
+        "Private/unpublished coordinates and deps.dev coverage gaps degrade per-root "
+        + "(see errors[]); remaining roots still contribute.",
+    ]
+    if truncated_roots:
+        notes.append(
+            f"Direct roots truncated to {MAX_CONFLICT_SCAN_ROOTS} "
+            + f"(MAX_CONFLICT_SCAN_ROOTS); results are partial."
+        )
+
+    return {
+        "buildSystem": bs_label,
+        "strategy": strategy,
+        "conflicts": conflicts,
+        "scannedRoots": len(unique_roots),
+        "graphsFetched": graphs_ok,
+        "graphsFailed": graphs_failed,
+        "partial": bool(truncated_roots or graphs_failed or errors),
+        "errors": errors,
+        "notes": notes,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -3865,6 +4326,19 @@ def handle_expand_bom(args: Dict) -> Any:
     }
 
 
+def handle_get_transitive_graph(args: Dict) -> Any:
+    """MCP handler for ``get_transitive_graph`` (#287)."""
+    return get_transitive_graph(args["groupId"], args["artifactId"], args["version"])
+
+
+def handle_detect_dependency_conflicts(args: Dict) -> Any:
+    """MCP handler for ``detect_dependency_conflicts`` (#287)."""
+    project_path = args.get("projectPath") or os.getcwd()
+    build_system = args.get("buildSystem")
+    ctx = build_resolution_context(args)
+    return detect_dependency_conflicts(project_path, build_system=build_system, ctx=ctx)
+
+
 def handle_scan_project_dependencies(args: Dict) -> Any:
     project_path = args.get("projectPath") or os.getcwd()
     ctx = build_resolution_context(args)
@@ -4736,6 +5210,34 @@ TOOLS = [
         },
     },
     {
+        "name": "get_transitive_graph",
+        "description": "Fetch the resolved transitive dependency graph for a Maven GAV via deps.dev GetDependencies. Returns nodes (g/a/v) and edges (from/to indices). Partial results are flagged when deps.dev is unreachable, returns errors, or the graph is truncated by the node cap.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "groupId": {"type": "string", "description": "Maven group ID"},
+                "artifactId": {"type": "string", "description": "Maven artifact ID"},
+                "version": {"type": "string", "description": "Maven version"},
+            },
+            "required": ["groupId", "artifactId", "version"],
+        },
+    },
+    {
+        "name": "detect_dependency_conflicts",
+        "description": "Detect version conflicts by unioning deps.dev transitive graphs for each direct project dependency. Flags GAs appearing at ≥2 versions and reports the version Maven nearest-wins or Gradle highest-wins would pick. Approximation of a full project resolve — see notes[] for limitations.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "projectPath": {"type": "string", "description": "Path to the project root. Defaults to current working directory."},
+                "buildSystem": {
+                    "type": "string",
+                    "enum": ["maven", "gradle"],
+                    "description": "Override detected build system for mediation strategy (nearest-wins vs highest-wins). Defaults to auto-detect.",
+                },
+            },
+        },
+    },
+    {
         "name": "check_version_compatibility",
         "description": "Check whether a set of versions is mutually compatible. Validates (1) dependency versions against the Spring Boot BOM (spring-boot-dependencies) when springBoot is set, (2) AGP↔Gradle↔JDK and Kotlin Gradle plugin↔Gradle/AGP ranges from a shipped matrix file, and (3) javax→jakarta EE coordinate migration when Spring Boot ≥ 3. Returns conflicts with suggested compatible versions and reference URLs. v1 coverage is intentionally bounded — see notes[] / AGENTS.md; matrices are not scraped at runtime and must be refreshed via the documented procedure in compat-matrices.json.",
         "inputSchema": {
@@ -4879,6 +5381,8 @@ TOOL_HANDLERS = {
     "get_dependency_changes": handle_get_dependency_changes,
     "scan_project_dependencies": handle_scan_project_dependencies,
     "expand_bom": handle_expand_bom,
+    "get_transitive_graph": handle_get_transitive_graph,
+    "detect_dependency_conflicts": handle_detect_dependency_conflicts,
     "check_version_compatibility": handle_check_version_compatibility,
     "get_dependency_vulnerabilities": handle_get_dependency_vulnerabilities,
     "get_dependency_health": handle_get_dependency_health,
