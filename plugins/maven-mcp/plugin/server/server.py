@@ -1213,13 +1213,8 @@ def _repos_for(
 
     # When offline with no repository_base and no mirrors, public fallbacks are
     # suppressed entirely — contacting repo1.maven.org would only hang.
-    # De Morgan form (not nested ``not (...)``) keeps the intent clear and
-    # avoids a CodeQL false-positive on the local.
-    allow_public = (
-        (not ctx.offline) or bool(ctx.repository_base) or bool(ctx.mirrors)
-    )
     public_entries: List[Dict[str, Any]] = []
-    if allow_public:
+    if (not ctx.offline) or ctx.repository_base or ctx.mirrors:
         public_entries = [
             {"name": name, "url": url, "scope": scope, "is_public_fallback": True}
             for name, url in _public_repos(group_id, artifact_id)
@@ -1244,7 +1239,7 @@ def _repos_for(
         {"name": r["name"], "url": r["url"], "scope": scope, "is_public_fallback": False}
         for r in matched
     ]
-    if ctx.public_fallback and allow_public:
+    if ctx.public_fallback and public_entries:
         entries.extend(public_entries)
         return _finalize_repo_entries(_dedup_repos(entries), ctx)
     return _finalize_repo_entries(entries, ctx)
