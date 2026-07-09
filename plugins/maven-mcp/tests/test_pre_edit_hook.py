@@ -458,6 +458,114 @@ class ExtractionTest(unittest.TestCase):
         self.assertGreaterEqual(len(deps), 1)
         self.assertEqual(deps[0]["groupId"], "org.apache.commons")
         self.assertEqual(deps[0]["artifactId"], "commons-lang3")
+        self.assertEqual(deps[0].get("version"), "3.12.0")
+
+    def test_pom_xml_version_not_misattributed_across_deps(self):
+        """Version-less dep must not steal a later dep's version (#351)."""
+        _make_fixture(self.tmp, {
+            1: {"results": [
+                _verify_entry("exists", "com.google.guava", "guava"),
+                _verify_entry("exists", "org.apache.logging.log4j", "log4j-core"),
+            ]},
+        })
+        content = textwrap.dedent("""\
+            <dependencies>
+              <dependency>
+                <groupId>com.google.guava</groupId>
+                <artifactId>guava</artifactId>
+              </dependency>
+              <dependency>
+                <groupId>org.apache.logging.log4j</groupId>
+                <artifactId>log4j-core</artifactId>
+                <version>2.14.1</version>
+              </dependency>
+            </dependencies>
+        """)
+        proc = _run_hook(self.tmp, _edit_stdin("pom.xml", content))
+        self.assertEqual(proc.returncode, 0)
+        args = _stub_args(self.tmp)
+        self.assertGreaterEqual(len(args), 1)
+        deps = args[0]["arguments"].get("dependencies", [])
+        by_ga = {(d["groupId"], d["artifactId"]): d for d in deps}
+        self.assertIn(("com.google.guava", "guava"), by_ga)
+        self.assertIn(("org.apache.logging.log4j", "log4j-core"), by_ga)
+        self.assertNotIn(
+            "version", by_ga[("com.google.guava", "guava")],
+            "BOM-managed guava must stay GA-only; must not inherit log4j's version",
+        )
+        self.assertEqual(
+            by_ga[("org.apache.logging.log4j", "log4j-core")].get("version"),
+            "2.14.1",
+        )
+        # Versioned log4j must reach the vuln check; guava (GA-only) must not.
+        ids = [a["id"] for a in args]
+        self.assertIn(2, ids, "get_dependency_vulnerabilities must run for log4j-core:2.14.1")
+        vuln_deps = next(a["arguments"]["dependencies"] for a in args if a["id"] == 2)
+        vuln_gas = {(d["groupId"], d["artifactId"]) for d in vuln_deps}
+        self.assertIn(("org.apache.logging.log4j", "log4j-core"), vuln_gas)
+        self.assertNotIn(("com.google.guava", "guava"), vuln_gas)
+
+    def test_pom_xml_skips_project_and_parent_coords(self):
+        """Project/parent GAVs outside <dependency> blocks are not verified (#351)."""
+        _make_fixture(self.tmp, {
+            1: {"results": [_verify_entry("exists", "org.apache.commons", "commons-lang3")]},
+        })
+        content = textwrap.dedent("""\
+            <project>
+              <groupId>com.mycompany</groupId>
+              <artifactId>my-app</artifactId>
+              <version>1.0.0-SNAPSHOT</version>
+              <parent>
+                <groupId>org.springframework.boot</groupId>
+                <artifactId>spring-boot-starter-parent</artifactId>
+                <version>3.2.0</version>
+              </parent>
+              <dependencies>
+                <dependency>
+                  <groupId>org.apache.commons</groupId>
+                  <artifactId>commons-lang3</artifactId>
+                  <version>3.12.0</version>
+                </dependency>
+              </dependencies>
+              <build>
+                <plugins>
+                  <plugin>
+                    <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-compiler-plugin</artifactId>
+                    <version>3.11.0</version>
+                  </plugin>
+                </plugins>
+              </build>
+            </project>
+        """)
+        proc = _run_hook(self.tmp, _edit_stdin("pom.xml", content))
+        self.assertEqual(proc.returncode, 0)
+        args = _stub_args(self.tmp)
+        self.assertGreaterEqual(len(args), 1)
+        deps = args[0]["arguments"].get("dependencies", [])
+        gas = {(d["groupId"], d["artifactId"]) for d in deps}
+        self.assertEqual(gas, {("org.apache.commons", "commons-lang3")})
+        self.assertNotIn(("com.mycompany", "my-app"), gas)
+        self.assertNotIn(("org.springframework.boot", "spring-boot-starter-parent"), gas)
+        self.assertNotIn(("org.apache.maven.plugins", "maven-compiler-plugin"), gas)
+
+    def test_pom_xml_project_only_does_not_invoke_stub(self):
+        """Brand-new pom with only project GAV → no verify call (#351)."""
+        _make_fixture(self.tmp, {1: {"results": []}})
+        content = textwrap.dedent("""\
+            <project>
+              <groupId>com.mycompany</groupId>
+              <artifactId>brand-new-app</artifactId>
+              <version>0.1.0-SNAPSHOT</version>
+            </project>
+        """)
+        proc = _run_hook(self.tmp, _edit_stdin("pom.xml", content))
+        self.assertEqual(proc.returncode, 0)
+        args_path = os.path.join(self.tmp, "server", "stub_args.json")
+        self.assertFalse(
+            os.path.exists(args_path),
+            "stub must not be invoked when only project coordinates are present",
+        )
 
     # ── libs.versions.toml ───────────────────────────────────────────────────
 
