@@ -4556,14 +4556,12 @@ def validate_catalog(
             })
         # Catalog accessors are not available in subprojects { } / buildscript { }.
         for block_name in ("subprojects", "buildscript"):
-            found = _find_block(build_content, block_name, 0)
-            # _find_block may only find one; scan all occurrences.
             pos = 0
             while True:
                 found = _find_block(build_content, block_name, pos)
                 if not found:
                     break
-                body, start, end = found
+                body, _start, end = found
                 if re.search(r"\blibs\.[a-zA-Z_]", body) or re.search(
                     r"\balias\s*\(\s*libs\.", body
                 ):
