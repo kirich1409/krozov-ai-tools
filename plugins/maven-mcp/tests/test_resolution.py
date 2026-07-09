@@ -18,7 +18,7 @@ import os
 import unittest
 import unittest.mock
 
-from _helpers import server, mock_urlopen, http_error, temp_project
+from _helpers import server, mock_urlopen, http_error, temp_project, write_fake_gradlew, mock_gradle_resolve
 
 
 CUSTOM_URL = "https://nexus.example.com/m2"
@@ -567,13 +567,22 @@ class TestProvenanceReporting(unittest.TestCase):
             "build.gradle.kts": 'dependencies { implementation("com.acme:lib:1.0.0") }',
         }
         with temp_project(files) as root:
-            with unittest.mock.patch(
-                "urllib.request.urlopen",
-                side_effect=mock_urlopen([(200, _meta(["1.0.0", "2.0.0"]))]),
-            ):
-                out = server.handle_audit_project_dependencies({
-                    "projectPath": root, "includeVulnerabilities": False,
-                })
+            write_fake_gradlew(root)
+            resolved = [{
+                "groupId": "com.acme",
+                "artifactId": "lib",
+                "version": "1.0.0",
+                "resolvedBy": "gradle",
+                "usages": [{"module": None, "configuration": "implementation"}],
+            }]
+            with mock_gradle_resolve(resolved):
+                with unittest.mock.patch(
+                    "urllib.request.urlopen",
+                    side_effect=mock_urlopen([(200, _meta(["1.0.0", "2.0.0"]))]),
+                ):
+                    out = server.handle_audit_project_dependencies({
+                        "projectPath": root, "includeVulnerabilities": False,
+                    })
         self._assert_declared(out["dependencies"][0]["resolvedFrom"])
 
     def test_get_dependency_changes_impl_includes_resolved_from(self):
@@ -922,16 +931,25 @@ class TestAuditDownstreamErrorResolvedFrom(unittest.TestCase):
             "build.gradle.kts": 'dependencies { implementation("com.acme:lib:1.0.0") }',
         }
         with temp_project(files) as root:
-            with unittest.mock.patch(
-                "urllib.request.urlopen",
-                side_effect=mock_urlopen([(200, _meta(["1.0.0", "2.0.0"]))]),
-            ):
+            write_fake_gradlew(root)
+            resolved = [{
+                "groupId": "com.acme",
+                "artifactId": "lib",
+                "version": "1.0.0",
+                "resolvedBy": "gradle",
+                "usages": [{"module": None, "configuration": "implementation"}],
+            }]
+            with mock_gradle_resolve(resolved):
                 with unittest.mock.patch(
-                    "server.get_upgrade_type", side_effect=RuntimeError("boom")
+                    "urllib.request.urlopen",
+                    side_effect=mock_urlopen([(200, _meta(["1.0.0", "2.0.0"]))]),
                 ):
-                    out = server.handle_audit_project_dependencies({
-                        "projectPath": root, "includeVulnerabilities": False,
-                    })
+                    with unittest.mock.patch(
+                        "server.get_upgrade_type", side_effect=RuntimeError("boom")
+                    ):
+                        out = server.handle_audit_project_dependencies({
+                            "projectPath": root, "includeVulnerabilities": False,
+                        })
         entry = out["dependencies"][0]
         self.assertNotIn("latestVersion", entry)  # degraded entry, same as before
         self.assertIsNotNone(entry.get("resolvedFrom"))

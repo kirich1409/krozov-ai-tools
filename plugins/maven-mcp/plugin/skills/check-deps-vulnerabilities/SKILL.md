@@ -5,14 +5,14 @@ description: >-
   "scan CVEs", "check dependency vulnerabilities", "are my dependencies
   vulnerable", "security audit dependencies", "find CVEs in deps", "OSV scan",
   or wants to know which Maven/Gradle dependencies have known CVE/GHSA
-  advisories. Scans build files (including Gradle/Maven submodules) and reports
-  vulnerabilities via OSV.dev.
+  advisories. Resolves the Gradle project via gradlew and reports vulnerabilities via OSV.dev.
 ---
 
 # Check Dependency Vulnerabilities
 
-Scan the current Maven/Gradle project for known CVE/GHSA advisories on declared
-dependencies and offer remediation through targeted version updates.
+Scan the current Gradle project for known CVE/GHSA advisories on Gradle-resolved direct
+production dependencies and offer remediation through targeted version updates. Requires
+`gradlew` at the project root.
 
 ## Step 1 — Collect coordinates via MCP (preferred)
 
@@ -87,10 +87,11 @@ When the user picks option 1 or 2:
 State when relevant:
 
 - Test / build / annotation-processor configurations excluded by default.
-- Transitive dependencies are not scanned — only scanner-declared coordinates.
+- Direct Gradle-resolved coordinates only — not the full transitive closure.
 - OSV coverage for unresolved Gradle plugin markers is limited; the MCP tool resolves
   markers to implementation GAVs when possible.
 - Composite builds via `includeBuild` may be incomplete.
+- Versions come from Gradle resolution (`resolvedBy: "gradle"`), not build-file text parsing.
 
 ## Fallback (MCP unavailable only)
 

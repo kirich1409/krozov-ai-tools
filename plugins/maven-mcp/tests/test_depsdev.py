@@ -5,7 +5,7 @@ import unittest
 import unittest.mock
 import urllib.error
 
-from _helpers import mock_urlopen, server, temp_project
+from _helpers import mock_gradle_resolve, mock_urlopen, server, temp_project, write_fake_gradlew
 
 
 def _vk(name: str, version: str, system: str = "MAVEN") -> dict:
@@ -307,17 +307,35 @@ class TestDetectDependencyConflicts(unittest.TestCase):
             """,
         }
         with temp_project(files) as root:
-            with unittest.mock.patch(
-                "urllib.request.urlopen",
-                side_effect=mock_urlopen([
-                    (200, self._left_graph()),
-                    (200, self._right_graph()),
-                ]),
-            ):
-                out = server.handle_detect_dependency_conflicts({
-                    "projectPath": root,
-                    "buildSystem": "gradle",
-                })
+            write_fake_gradlew(root)
+            resolved = [
+                {
+                    "groupId": "com.example",
+                    "artifactId": "left",
+                    "version": "1.0",
+                    "resolvedBy": "gradle",
+                    "usages": [{"module": None, "configuration": "implementation"}],
+                },
+                {
+                    "groupId": "com.example",
+                    "artifactId": "right",
+                    "version": "1.0",
+                    "resolvedBy": "gradle",
+                    "usages": [{"module": None, "configuration": "implementation"}],
+                },
+            ]
+            with mock_gradle_resolve(resolved):
+                with unittest.mock.patch(
+                    "urllib.request.urlopen",
+                    side_effect=mock_urlopen([
+                        (200, self._left_graph()),
+                        (200, self._right_graph()),
+                    ]),
+                ):
+                    out = server.handle_detect_dependency_conflicts({
+                        "projectPath": root,
+                        "buildSystem": "gradle",
+                    })
         self.assertEqual(out["strategy"], "highest-wins")
         c = next(
             x for x in out["conflicts"]

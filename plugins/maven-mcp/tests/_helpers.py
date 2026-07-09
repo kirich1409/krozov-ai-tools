@@ -53,7 +53,16 @@ import server  # noqa: E402  (must follow the sys.path shim above)
 # Public test API re-exported for ``from _helpers import ...``. Listing
 # ``server`` makes the shimmed import above an intentional re-export rather
 # than an unused import.
-__all__ = ["server", "mock_urlopen", "http_error", "temp_project", "empty_ctx", "temp_cache_dir"]
+__all__ = [
+    "server",
+    "mock_urlopen",
+    "http_error",
+    "temp_project",
+    "empty_ctx",
+    "temp_cache_dir",
+    "write_fake_gradlew",
+    "mock_gradle_resolve",
+]
 
 
 def empty_ctx(public_fallback: bool = False) -> "server.ResolutionContext":
@@ -200,6 +209,35 @@ def temp_project(files: Dict[str, str]):
             with open(path, "w", encoding="utf-8") as fh:
                 fh.write(content)
         yield root
+
+
+def write_fake_gradlew(root: str) -> str:
+    """Create an executable stub ``gradlew`` in ``root`` for Gradle scan tests."""
+    path = os.path.join(root, "gradlew")
+    with open(path, "w", encoding="utf-8") as fh:
+        fh.write("#!/bin/sh\nexit 0\n")
+    os.chmod(path, 0o755)
+    return path
+
+
+@contextlib.contextmanager
+def mock_gradle_resolve(
+    dependencies: Optional[List[Dict]] = None,
+    *,
+    errors: Optional[List[str]] = None,
+    notes: Optional[List[str]] = None,
+):
+    """Patch ``server._gradle_resolve_dependencies`` to return fixture output."""
+
+    def _fake_resolve(_project_root: str) -> Dict:
+        return {
+            "dependencies": list(dependencies or []),
+            "notes": list(notes or []),
+            "errors": list(errors or []),
+        }
+
+    with unittest.mock.patch.object(server, "_gradle_resolve_dependencies", _fake_resolve):
+        yield
 
 
 @contextlib.contextmanager

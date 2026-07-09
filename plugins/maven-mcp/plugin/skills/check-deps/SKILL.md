@@ -4,7 +4,8 @@ description: >-
   Use when the user asks to "check deps", "check dependencies",
   "outdated dependencies", "update dependencies", "are my deps up to date", "scan for updates",
   "find outdated libraries", "upgrade dependencies", or wants to know which Maven/Gradle
-  dependencies have newer versions available. Scans build files and reports available updates.
+  dependencies have newer versions available. Resolves the Gradle project via gradlew and
+  reports available updates.
 ---
 
 # Check Dependencies
@@ -21,9 +22,10 @@ Call **`audit_project_dependencies`** with:
 - `includeVulnerabilities` — `true` by default; set `false` if the user only wants updates
 - `productionOnly` — `true` by default; set `false` to include test-scoped deps
 
-This single call scans build files (catalogs, modules, plugin DSL, buildscript, Maven POMs,
-`buildSrc` / `build-logic`), resolves latest versions against project repos, and optionally
-queries OSV.
+This single call resolves production dependencies through Gradle (`./gradlew dependencies` /
+`buildEnvironment`), merges build-file provenance (catalogs, module paths, plugin DSL), looks
+up latest versions against project repos, and optionally queries OSV. Requires `gradlew` at
+the project root.
 
 Alternatively, when you only need the declared list first:
 
@@ -42,6 +44,10 @@ From the audit / compare results, only include entries where an upgrade is avail
 - **module-direct** — module, file, artifact, current → latest, configuration; flag catalog drift
 - **plugins-dsl** — split settings `pluginManagement` vs root/module `plugins {}`
 - **buildscript-classpath** — artifact, current → latest, file; note legacy style
+- **gradle-resolved** — Gradle-resolved direct dependency with no matching build-file provenance
+
+When `resolvedBy: "gradle"` is present on the scan/audit result, versions are Gradle-resolved
+(effective versions from BOM/platform/constraints), not regex-guessed from build files.
 
 **Terminal branch — nothing outdated and no vulnerabilities:**
 
@@ -107,9 +113,9 @@ Surface failures immediately. Attempt trivial fixes; otherwise revert that entry
 ## Constraints and non-goals
 
 - Major version bumps require explicit per-entry confirmation.
-- Transitive dependencies are not enumerated — only what the scanner returns.
+- Direct production dependencies only — Gradle `dependencies` tree roots, not full transitive closure.
 - This skill does not auto-select unstable/pre-release versions (server uses prefer-stable).
-- Multi-catalog `from("g:a:v")` form may be incomplete in the scanner.
+- Requires a Gradle wrapper (`gradlew`); Maven-only projects are out of scope for this scan path.
 
 ## Fallback (MCP unavailable only)
 
