@@ -40,8 +40,10 @@ FILE_PATH=$(printf '%s' "$HOOK_INPUT" | jq -r '.tool_input.file_path // empty' 2
 BASENAME=""
 BASENAME=$(basename "$FILE_PATH" 2>/dev/null) || BASENAME=""
 
+# *.versions.toml covers libs.versions.toml and custom catalog filenames
+# declared via versionCatalogs { create("x") { from(files(...)) } } (#359).
 case "$BASENAME" in
-  build.gradle|build.gradle.kts|settings.gradle|settings.gradle.kts|pom.xml|libs.versions.toml) ;;
+  build.gradle|build.gradle.kts|settings.gradle|settings.gradle.kts|pom.xml|*.versions.toml) ;;
   *) exit 0 ;;
 esac
 
@@ -98,6 +100,75 @@ if [ -n "$COORDS_FILE" ]; then
       # Single-quoted form: 'g:a' or 'g:a:v' — pattern built via variable to avoid quoting hell
       grep -oE "${_Q}[A-Za-z0-9._-]+:[A-Za-z0-9._-]+(:[^${_Q}]+)?${_Q}" "$GRADLE_TMP" 2>/dev/null | \
         tr -d "${_Q}" >> "$COORDS_FILE" || true
+
+      # Plugins DSL (#359): id("com.foo") [version "1.0"] → marker
+      # com.foo:com.foo.gradle.plugin[:1.0]. Parenthesised and Groovy space forms;
+      # double- and single-quoted ids/versions.
+      _emit_plugin_marker() {
+        _pid="$1"
+        _pver="$2"
+        [ -n "$_pid" ] || return 0
+        if [ -n "$_pver" ]; then
+          printf '%s:%s.gradle.plugin:%s\n' "$_pid" "$_pid" "$_pver" >> "$COORDS_FILE" || true
+        else
+          printf '%s:%s.gradle.plugin\n' "$_pid" "$_pid" >> "$COORDS_FILE" || true
+        fi
+      }
+      # id("…") / id('…') with optional version "…" / '…' on the same line
+      grep -oE 'id[[:space:]]*\([[:space:]]*"[A-Za-z0-9._-]+"[[:space:]]*\)([[:space:]]+version[[:space:]]+"[^"]+")?' "$GRADLE_TMP" 2>/dev/null | while IFS= read -r _pline; do
+        _pid=$(printf '%s' "$_pline" | sed -nE 's/.*id[[:space:]]*\([[:space:]]*"([^"]+)".*/\1/p') || _pid=""
+        _pver=$(printf '%s' "$_pline" | sed -nE 's/.*version[[:space:]]+"([^"]+)".*/\1/p') || _pver=""
+        _emit_plugin_marker "$_pid" "$_pver"
+      done || true
+      grep -oE "id[[:space:]]*\\([[:space:]]*${_Q}[A-Za-z0-9._-]+${_Q}[[:space:]]*\\)([[:space:]]+version[[:space:]]+${_Q}[^${_Q}]+${_Q})?" "$GRADLE_TMP" 2>/dev/null | while IFS= read -r _pline; do
+        _pid=$(printf '%s' "$_pline" | sed -nE "s/.*id[[:space:]]*\\([[:space:]]*${_Q}([^${_Q}]+)${_Q}.*/\\1/p") || _pid=""
+        _pver=$(printf '%s' "$_pline" | sed -nE "s/.*version[[:space:]]+${_Q}([^${_Q}]+)${_Q}.*/\\1/p") || _pver=""
+        _emit_plugin_marker "$_pid" "$_pver"
+      done || true
+      # Groovy: id '…' version '…' (no parentheses)
+      grep -oE 'id[[:space:]]+"[A-Za-z0-9._-]+"([[:space:]]+version[[:space:]]+"[^"]+")?' "$GRADLE_TMP" 2>/dev/null | while IFS= read -r _pline; do
+        _pid=$(printf '%s' "$_pline" | sed -nE 's/.*id[[:space:]]+"([^"]+)".*/\1/p') || _pid=""
+        _pver=$(printf '%s' "$_pline" | sed -nE 's/.*version[[:space:]]+"([^"]+)".*/\1/p') || _pver=""
+        _emit_plugin_marker "$_pid" "$_pver"
+      done || true
+      grep -oE "id[[:space:]]+${_Q}[A-Za-z0-9._-]+${_Q}([[:space:]]+version[[:space:]]+${_Q}[^${_Q}]+${_Q})?" "$GRADLE_TMP" 2>/dev/null | while IFS= read -r _pline; do
+        _pid=$(printf '%s' "$_pline" | sed -nE "s/.*id[[:space:]]+${_Q}([^${_Q}]+)${_Q}.*/\\1/p") || _pid=""
+        _pver=$(printf '%s' "$_pline" | sed -nE "s/.*version[[:space:]]+${_Q}([^${_Q}]+)${_Q}.*/\\1/p") || _pver=""
+        _emit_plugin_marker "$_pid" "$_pver"
+      done || true
+
+      # Map / named-arg form (#359): group = "g", name = "a"[, version = "v"]
+      # Also Groovy colon form: group: 'g', name: 'a'. Either key order.
+      _emit_map_dep() {
+        _mg="$1"; _ma="$2"; _mv="$3"
+        [ -n "$_mg" ] && [ -n "$_ma" ] || return 0
+        if [ -n "$_mv" ]; then
+          printf '%s:%s:%s\n' "$_mg" "$_ma" "$_mv" >> "$COORDS_FILE" || true
+        else
+          printf '%s:%s\n' "$_mg" "$_ma" >> "$COORDS_FILE" || true
+        fi
+      }
+      # group then name (double-quoted, = or :)
+      grep -oE 'group[[:space:]]*[=:][[:space:]]*"[A-Za-z0-9._-]+"[[:space:]]*,[[:space:]]*name[[:space:]]*[=:][[:space:]]*"[A-Za-z0-9._-]+"([[:space:]]*,[[:space:]]*version[[:space:]]*[=:][[:space:]]*"[^"]+")?' "$GRADLE_TMP" 2>/dev/null | while IFS= read -r _mline; do
+        _mg=$(printf '%s' "$_mline" | sed -nE 's/.*group[[:space:]]*[=:][[:space:]]*"([^"]+)".*/\1/p') || _mg=""
+        _ma=$(printf '%s' "$_mline" | sed -nE 's/.*name[[:space:]]*[=:][[:space:]]*"([^"]+)".*/\1/p') || _ma=""
+        _mv=$(printf '%s' "$_mline" | sed -nE 's/.*version[[:space:]]*[=:][[:space:]]*"([^"]+)".*/\1/p') || _mv=""
+        _emit_map_dep "$_mg" "$_ma" "$_mv"
+      done || true
+      # name then group (double-quoted)
+      grep -oE 'name[[:space:]]*[=:][[:space:]]*"[A-Za-z0-9._-]+"[[:space:]]*,[[:space:]]*group[[:space:]]*[=:][[:space:]]*"[A-Za-z0-9._-]+"([[:space:]]*,[[:space:]]*version[[:space:]]*[=:][[:space:]]*"[^"]+")?' "$GRADLE_TMP" 2>/dev/null | while IFS= read -r _mline; do
+        _mg=$(printf '%s' "$_mline" | sed -nE 's/.*group[[:space:]]*[=:][[:space:]]*"([^"]+)".*/\1/p') || _mg=""
+        _ma=$(printf '%s' "$_mline" | sed -nE 's/.*name[[:space:]]*[=:][[:space:]]*"([^"]+)".*/\1/p') || _ma=""
+        _mv=$(printf '%s' "$_mline" | sed -nE 's/.*version[[:space:]]*[=:][[:space:]]*"([^"]+)".*/\1/p') || _mv=""
+        _emit_map_dep "$_mg" "$_ma" "$_mv"
+      done || true
+      # group then name (single-quoted)
+      grep -oE "group[[:space:]]*[=:][[:space:]]*${_Q}[A-Za-z0-9._-]+${_Q}[[:space:]]*,[[:space:]]*name[[:space:]]*[=:][[:space:]]*${_Q}[A-Za-z0-9._-]+${_Q}([[:space:]]*,[[:space:]]*version[[:space:]]*[=:][[:space:]]*${_Q}[^${_Q}]+${_Q})?" "$GRADLE_TMP" 2>/dev/null | while IFS= read -r _mline; do
+        _mg=$(printf '%s' "$_mline" | sed -nE "s/.*group[[:space:]]*[=:][[:space:]]*${_Q}([^${_Q}]+)${_Q}.*/\\1/p") || _mg=""
+        _ma=$(printf '%s' "$_mline" | sed -nE "s/.*name[[:space:]]*[=:][[:space:]]*${_Q}([^${_Q}]+)${_Q}.*/\\1/p") || _ma=""
+        _mv=$(printf '%s' "$_mline" | sed -nE "s/.*version[[:space:]]*[=:][[:space:]]*${_Q}([^${_Q}]+)${_Q}.*/\\1/p") || _mv=""
+        _emit_map_dep "$_mg" "$_ma" "$_mv"
+      done || true
       ;;
 
     pom.xml)
@@ -128,7 +199,7 @@ if [ -n "$COORDS_FILE" ]; then
       done
       ;;
 
-    libs.versions.toml)
+    *.versions.toml)
       # TOML [libraries] tables use double-quoted strings only (single-quote strings
       # are not valid TOML syntax for these values).
       # module = "g:a" (most common form; [[:space:]] for POSIX ERE portability)
@@ -140,6 +211,26 @@ if [ -n "$COORDS_FILE" ]; then
       printf '%s\n' "$NEW_CONTENT" | \
         grep -oE '"[A-Za-z0-9._-]+:[A-Za-z0-9._-]+:[^"]+"' 2>/dev/null | \
         tr -d '"' >> "$COORDS_FILE" || true
+      # [plugins] id = "com.foo" → marker com.foo:com.foo.gradle.plugin (#359)
+      printf '%s\n' "$NEW_CONTENT" | \
+        grep -oE 'id[[:space:]]*=[[:space:]]*"[A-Za-z0-9._-]+"' 2>/dev/null | while IFS= read -r _tid; do
+          _pid=$(printf '%s' "$_tid" | sed -nE 's/.*id[[:space:]]*=[[:space:]]*"([^"]+)".*/\1/p') || _pid=""
+          [ -n "$_pid" ] || continue
+          printf '%s:%s.gradle.plugin\n' "$_pid" "$_pid" >> "$COORDS_FILE" || true
+        done || true
+      # [plugins] shorthand alias = "id:version" where version starts with a digit
+      # (distinguishes from library "group:artifact" two-part shorthand).
+      printf '%s\n' "$NEW_CONTENT" | \
+        grep -oE '"[A-Za-z0-9._-]+:[0-9][^"]*"' 2>/dev/null | tr -d '"' | while IFS= read -r _tsh; do
+          # Exactly two colon-separated components (id:version), not g:a:v
+          case "$_tsh" in
+            *:*:*) continue ;;
+          esac
+          _pid=$(printf '%s' "$_tsh" | cut -d: -f1) || _pid=""
+          _pver=$(printf '%s' "$_tsh" | cut -d: -f2) || _pver=""
+          [ -n "$_pid" ] && [ -n "$_pver" ] || continue
+          printf '%s:%s.gradle.plugin:%s\n' "$_pid" "$_pid" "$_pver" >> "$COORDS_FILE" || true
+        done || true
       ;;
   esac
 fi
