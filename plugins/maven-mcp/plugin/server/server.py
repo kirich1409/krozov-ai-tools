@@ -3505,8 +3505,118 @@ def discover_github_repo(group_id: str, artifact_id: str, version: str, ctx: "Re
 
 
 # ---------------------------------------------------------------------------
-# GitHub changelog / releases for get_dependency_changes
+# Changelog providers for get_dependency_changes (#308)
+# Order: AndroidX docs → AGP docs → GitHub releases (mirrors retired TS resolver).
 # ---------------------------------------------------------------------------
+
+AGP_GROUP_ID = "com.android.tools.build"
+AGP_RELEASES_BASE = "https://developer.android.com/build/releases"
+ANDROIDX_RELEASES_BASE = "https://developer.android.com/jetpack/androidx/releases"
+# Release-notes HTML pages change infrequently; match the retired TS 7-day TTL.
+TTL_CHANGELOG_HTML = TTL_POM
+
+_AGP_HEADING_RE = re.compile(
+    r'<h3[^>]*\s+data-text="Android Gradle plugin ([\d][^\s"]*)"[^>]*>',
+    re.IGNORECASE,
+)
+_ANDROIDX_VERSION_HEADING_RE = re.compile(
+    r"<h[23][^>]*>\s*Version\s+([\d][^\s<]*)\s*</h[23]>",
+    re.IGNORECASE,
+)
+
+
+def html_to_text(html: str) -> str:
+    """Minimal HTML→text for Android docs release notes (stdlib only, #308).
+
+    Mirrors the retired TS ``html/to-text``: list/br/p formatting, iterative tag
+    strip (handles smuggled nested tags), then a small entity unescape set.
+    """
+    formatted = re.sub(r"<li[^>]*>", "- ", html, flags=re.IGNORECASE)
+    formatted = re.sub(r"</li>", "\n", formatted, flags=re.IGNORECASE)
+    formatted = re.sub(r"<br\s*/?>", "\n", formatted, flags=re.IGNORECASE)
+    formatted = re.sub(r"</p>", "\n\n", formatted, flags=re.IGNORECASE)
+    # Loop so forms like ``<<script>script>`` lose the outer tag first and the
+    # inner tag becomes visible to the next pass (same as the TS stripTags loop).
+    result = formatted
+    while True:
+        prev = result
+        result = re.sub(r"<[^>]*>", "", result)
+        if result == prev:
+            break
+    result = (
+        result.replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&quot;", '"')
+        .replace("&#39;", "'")
+        .replace("&amp;", "&")
+    )
+    result = re.sub(r"\n{3,}", "\n\n", result)
+    return result.strip()
+
+
+def is_agp_artifact(group_id: str) -> bool:
+    return group_id == AGP_GROUP_ID
+
+
+def _agp_major_minor(version: str) -> Tuple[str, str]:
+    parts = version.split(".")
+    major = parts[0] if parts else ""
+    minor = parts[1] if len(parts) > 1 else "0"
+    return major, minor
+
+
+def get_agp_releases_url(version: str) -> str:
+    major, minor = _agp_major_minor(version)
+    return f"{AGP_RELEASES_BASE}/agp-{major}-{minor}-0-release-notes"
+
+
+def get_agp_version_url(version: str) -> str:
+    return f"{get_agp_releases_url(version)}#fixed-issues-agp-{version}"
+
+
+def parse_agp_release_notes(html: str) -> Dict[str, str]:
+    """Parse AGP release-notes HTML into version → plain-text body."""
+    headings: List[Tuple[str, int, int]] = []
+    for match in _AGP_HEADING_RE.finditer(html):
+        headings.append((match.group(1), match.start(), match.end()))
+    sections: Dict[str, str] = {}
+    for i, (version, _start, end) in enumerate(headings):
+        content_end = headings[i + 1][1] if i + 1 < len(headings) else len(html)
+        body = html_to_text(html[end:content_end])
+        if body:
+            sections[version] = body
+    return sections
+
+
+def is_androidx_artifact(group_id: str) -> bool:
+    return group_id.startswith("androidx.")
+
+
+def get_androidx_slug(group_id: str) -> str:
+    return group_id[len("androidx.") :].replace(".", "-")
+
+
+def get_androidx_releases_url(group_id: str) -> str:
+    return f"{ANDROIDX_RELEASES_BASE}/{get_androidx_slug(group_id)}"
+
+
+def get_androidx_version_url(group_id: str, version: str) -> str:
+    return f"{get_androidx_releases_url(group_id)}#{version}"
+
+
+def parse_androidx_release_notes(html: str) -> Dict[str, str]:
+    """Parse AndroidX release-notes HTML into version → plain-text body."""
+    headings: List[Tuple[str, int, int]] = []
+    for match in _ANDROIDX_VERSION_HEADING_RE.finditer(html):
+        headings.append((match.group(1), match.start(), match.end()))
+    sections: Dict[str, str] = {}
+    for i, (version, _start, end) in enumerate(headings):
+        content_end = headings[i + 1][1] if i + 1 < len(headings) else len(html)
+        body = html_to_text(html[end:content_end])
+        if body:
+            sections[version] = body
+    return sections
+
 
 def _filter_version_range(versions: List[str], from_v: str, to_v: str) -> List[str]:
     """Return versions between from_v (exclusive) and to_v (inclusive)."""
@@ -3517,6 +3627,105 @@ def _filter_version_range(versions: List[str], from_v: str, to_v: str) -> List[s
         if gt_from and le_to:
             result.append(v)
     return result
+
+
+def _changelog_entries_from_sections(
+    sections: Dict[str, str],
+    version_url_fn: Callable[[str], str],
+) -> Dict[str, Dict]:
+    entries: Dict[str, Dict] = {}
+    for version, body in sections.items():
+        entries[version] = {"body": body, "releaseUrl": version_url_fn(version)}
+    return entries
+
+
+def _fetch_agp_changelog(to_version: str) -> Optional[Dict]:
+    """Fetch/parse AGP developer.android.com release notes. None on failure."""
+    url = get_agp_releases_url(to_version)
+    try:
+        status, body = http_get_cached(url, TTL_CHANGELOG_HTML)
+    except Exception:
+        return None
+    if status != 200:
+        return None
+    try:
+        sections = parse_agp_release_notes(body.decode("utf-8", errors="replace"))
+    except Exception:
+        return None
+    if not sections:
+        return None
+    return {
+        "repositoryUrl": url,
+        "entries": _changelog_entries_from_sections(sections, get_agp_version_url),
+    }
+
+
+def _fetch_androidx_changelog(group_id: str) -> Optional[Dict]:
+    """Fetch/parse AndroidX developer.android.com release notes. None on failure."""
+    url = get_androidx_releases_url(group_id)
+    try:
+        status, body = http_get_cached(url, TTL_CHANGELOG_HTML)
+    except Exception:
+        return None
+    if status != 200:
+        return None
+    try:
+        sections = parse_androidx_release_notes(body.decode("utf-8", errors="replace"))
+    except Exception:
+        return None
+    if not sections:
+        return None
+    return {
+        "repositoryUrl": url,
+        "entries": _changelog_entries_from_sections(
+            sections, lambda v: get_androidx_version_url(group_id, v)
+        ),
+    }
+
+
+def _fetch_github_changelog(
+    group_id: str, artifact_id: str, to_version: str, ctx: "ResolutionContext"
+) -> Optional[Dict]:
+    """GitHub releases path (no CHANGELOG.md fallback — intentional Python MVP)."""
+    gh_repo = discover_github_repo(group_id, artifact_id, to_version, ctx)
+    if not gh_repo:
+        return None
+    owner, repo = gh_repo["owner"], gh_repo["repo"]
+    releases = gh_fetch_releases(owner, repo)
+    entries: Dict[str, Dict] = {}
+    for rel in releases:
+        tag = rel.get("tag_name", "")
+        # Strip leading non-digits (v / release- / artifact- prefixes).
+        candidate = re.sub(r"^[^0-9]*", "", tag)
+        key = candidate if candidate else tag
+        entry: Dict = {}
+        if rel.get("html_url"):
+            entry["releaseUrl"] = rel["html_url"]
+        if rel.get("body"):
+            entry["body"] = rel["body"]
+        # Keep bare version keys even without body so range mapping stays stable.
+        entries[key] = entry
+        if tag != key:
+            entries[tag] = entry
+    return {
+        "repositoryUrl": f"https://github.com/{owner}/{repo}",
+        "entries": entries,
+    }
+
+
+def _resolve_changelog(
+    group_id: str, artifact_id: str, to_version: str, ctx: "ResolutionContext"
+) -> Optional[Dict]:
+    """Provider selection: AndroidX → AGP → GitHub (first non-null wins)."""
+    if is_androidx_artifact(group_id):
+        result = _fetch_androidx_changelog(group_id)
+        if result is not None:
+            return result
+    if is_agp_artifact(group_id):
+        result = _fetch_agp_changelog(to_version)
+        if result is not None:
+            return result
+    return _fetch_github_changelog(group_id, artifact_id, to_version, ctx)
 
 
 def _get_dependency_changes_impl(group_id: str, artifact_id: str, from_version: str, to_version: str, ctx: "ResolutionContext") -> Dict:
@@ -3537,42 +3746,32 @@ def _get_dependency_changes_impl(group_id: str, artifact_id: str, from_version: 
     if not versions_in_range:
         return {**base, "error": f"No versions found between {from_version} and {to_version}"}
 
-    gh_repo = discover_github_repo(group_id, artifact_id, to_version, ctx)
-    if not gh_repo:
+    changelog = _resolve_changelog(group_id, artifact_id, to_version, ctx)
+    if not changelog:
         return {**base, "repositoryNotFound": True}
 
-    owner, repo = gh_repo["owner"], gh_repo["repo"]
-    releases = gh_fetch_releases(owner, repo)
-
-    # Build a map from version string to release info
-    release_map: Dict[str, Dict] = {}
-    for rel in releases:
-        tag = rel.get("tag_name", "")
-        # Try to match tag to version: strip leading 'v' or prefix
-        candidate = re.sub(r"^[^0-9]*", "", tag)
-        if candidate in versions_in_range:
-            release_map[candidate] = rel
-        elif tag in versions_in_range:
-            release_map[tag] = rel
-
+    entries = changelog.get("entries") or {}
     changes = []
     for v in versions_in_range:
-        rel = release_map.get(v)
-        if rel:
+        entry = entries.get(v)
+        if entry:
             change = {"version": v}
-            if rel.get("html_url"):
-                change["releaseUrl"] = rel["html_url"]
-            if rel.get("body"):
-                change["body"] = rel["body"]
+            if entry.get("releaseUrl"):
+                change["releaseUrl"] = entry["releaseUrl"]
+            if entry.get("body"):
+                change["body"] = entry["body"]
             changes.append(change)
         else:
             changes.append({"version": v})
 
-    return {
+    out = {
         **base,
-        "repositoryUrl": f"https://github.com/{owner}/{repo}",
+        "repositoryUrl": changelog["repositoryUrl"],
         "changes": changes,
     }
+    if changelog.get("changelogUrl"):
+        out["changelogUrl"] = changelog["changelogUrl"]
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -6290,7 +6489,7 @@ TOOLS = [
     },
     {
         "name": "get_dependency_changes",
-        "description": "Get changelog/release notes for a dependency between two versions by fetching GitHub releases.",
+        "description": "Get changelog/release notes between two versions (AndroidX/AGP developer docs when applicable, else GitHub releases).",
         "inputSchema": {
             "type": "object",
             "properties": {

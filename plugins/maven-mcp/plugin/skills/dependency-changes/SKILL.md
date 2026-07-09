@@ -20,11 +20,13 @@ changelog data.
    - `toVersion` (inclusive)
    - optional `projectPath`
 
-   The server discovers the GitHub repo and fetches releases using `GITHUB_TOKEN`
-   server-side when present — never pass the token in headers yourself.
+   Provider order: AndroidX developer docs (for `androidx.*`), AGP release notes
+   (for `com.android.tools.build`), then GitHub releases. `GITHUB_TOKEN` is used
+   server-side for the GitHub path when present — never pass the token in headers
+   yourself.
 
 3. Present the tool result: versions in range, release notes / bodies, links. If notes are
-   sparse, still show the version list plus GitHub releases / Maven Central URLs from the
+   sparse, still show the version list plus docs / GitHub / Maven Central URLs from the
    response. Collapse the middle when many versions are returned.
 
 ## Context: used after check-deps
@@ -34,7 +36,8 @@ current → latest versions from that table without re-asking.
 
 ## Error handling
 
-- **No GitHub repo / no notes** — say so and provide the Maven Central artifact URL.
+- **No docs page / no GitHub repo / no notes** — say so and provide the Maven Central
+  (or Google Maven) artifact URL.
 - **Rate limited** — note the limit; retry via `get_dependency_changes` (server-side token)
   rather than attaching a token to a client request.
 - **Artifact not found** — suggest checking spelling; do not invent changelog text.
