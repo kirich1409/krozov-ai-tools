@@ -109,6 +109,45 @@ class HttpGetTest(unittest.TestCase):
         self.assertEqual(headers["accept"], "application/json")
         self.assertEqual(headers["user-agent"], server.USER_AGENT)
 
+    def test_rejects_file_scheme_without_urlopen(self):
+        # #348: default urllib opener honors file:// — must never reach urlopen.
+        with unittest.mock.patch("urllib.request.urlopen") as urlopen:
+            with self.assertRaises(urllib.error.URLError) as cm:
+                server.http_get("file:///etc/hostname")
+        urlopen.assert_not_called()
+        self.assertIn("file", str(cm.exception.reason).lower())
+
+    def test_rejects_uppercase_file_scheme_without_urlopen(self):
+        with unittest.mock.patch("urllib.request.urlopen") as urlopen:
+            with self.assertRaises(urllib.error.URLError) as cm:
+                server.http_get("FILE:///etc/hostname")
+        urlopen.assert_not_called()
+        self.assertIn("file", str(cm.exception.reason).lower())
+
+    def test_rejects_ftp_and_other_non_http_schemes(self):
+        with unittest.mock.patch("urllib.request.urlopen") as urlopen:
+            for url in (
+                "ftp://example.test/pub/maven-metadata.xml",
+                "data:text/plain,hi",
+                "javascript:alert(1)",
+                "/relative/path",
+                "example.test/no-scheme",
+            ):
+                with self.subTest(url=url):
+                    with self.assertRaises(urllib.error.URLError):
+                        server.http_get(url)
+        urlopen.assert_not_called()
+
+    def test_allows_http_scheme(self):
+        with unittest.mock.patch(
+            "urllib.request.urlopen",
+            side_effect=mock_urlopen([(200, b"ok")]),
+        ) as urlopen:
+            status, body = server.http_get("http://example.test/x")
+        self.assertEqual(status, 200)
+        self.assertEqual(body, b"ok")
+        self.assertEqual(urlopen.call_count, 1)
+
 
 class HttpPostJsonTest(unittest.TestCase):
     def test_encodes_json_body_and_sets_content_type(self):
@@ -133,6 +172,12 @@ class HttpPostJsonTest(unittest.TestCase):
             status, body = server.http_post_json("https://example.test/osv", {})
         self.assertEqual(status, 200)
         self.assertEqual(body, b'{"ok":true}')
+
+    def test_rejects_file_scheme_without_urlopen(self):
+        with unittest.mock.patch("urllib.request.urlopen") as urlopen:
+            with self.assertRaises(urllib.error.URLError):
+                server.http_post_json("file:///tmp/x", {})
+        urlopen.assert_not_called()
 
     def test_persistent_5xx_returns_code_and_empty_bytes_after_cap(self):
         url = "https://example.test/osv"

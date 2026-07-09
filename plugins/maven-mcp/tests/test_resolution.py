@@ -154,6 +154,47 @@ class TestProjectFirstRouting(unittest.TestCase):
         self.assertEqual([r["url"] for r in repos], [server.MAVEN_CENTRAL_URL])
         self.assertTrue(repos[0]["is_public_fallback"])
 
+    def test_uppercase_file_scheme_is_non_queryable(self):
+        # #348: startswith("file://") was case-sensitive; FILE:// must still
+        # be treated as non-queryable so it falls back to public rather than
+        # being passed to http_get (which would open a local path).
+        ctx = server.ResolutionContext(
+            "/tmp",
+            {
+                "dependency": [
+                    {
+                        "name": "x",
+                        "url": "FILE:///etc",
+                        "scope": "dependency",
+                    }
+                ],
+                "plugin": [],
+            },
+            False,
+        )
+        repos = server._repos_for("com.example", "artifact", ctx)
+        self.assertEqual([r["url"] for r in repos], [server.MAVEN_CENTRAL_URL])
+        self.assertTrue(repos[0]["is_public_fallback"])
+
+    def test_mixed_case_file_scheme_is_non_queryable(self):
+        ctx = server.ResolutionContext(
+            "/tmp",
+            {
+                "dependency": [
+                    {
+                        "name": "x",
+                        "url": "File:///var/maven",
+                        "scope": "dependency",
+                    }
+                ],
+                "plugin": [],
+            },
+            False,
+        )
+        repos = server._repos_for("com.example", "artifact", ctx)
+        self.assertEqual([r["url"] for r in repos], [server.MAVEN_CENTRAL_URL])
+        self.assertTrue(repos[0]["is_public_fallback"])
+
 
 # ---------------------------------------------------------------------------
 # #320 — repository content / group filtering
