@@ -15,11 +15,34 @@ jobs:
       contents: write
 
     steps:
+      # Full history so we can verify the tag commit is reachable from main
+      # (shallow tag-only checkout would make merge-base checks meaningless).
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Verify tag commit is reachable from main
+        working-directory: .
+        run: |
+          set -euo pipefail
+          git fetch origin main
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+            echo "::error::Tag ${GITHUB_REF_NAME} points at ${GITHUB_SHA}, which is not an ancestor of origin/main. Refuse to release an unreviewed branch commit."
+            exit 1
+          fi
+          echo "Tag ${GITHUB_REF_NAME} (${GITHUB_SHA}) is reachable from origin/main."
 
       - name: Verify all versions match tag
         working-directory: .
         run: bash scripts/validate.sh --check-tag "${GITHUB_REF_NAME#v}"
+
+      # Oldest supported runtime (3.9 per plugins/maven-mcp/AGENTS.md). CI
+      # already matrices 3.9+3.13; the release gate must also pin 3.9 so a
+      # 3.9-only break cannot ship behind a system-python green check (#358).
+      - name: Setup Python 3.9
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.9"
 
       # working-directory: . overrides the job's defaults.run.working-directory
       # (plugins/maven-mcp); without it the -s path would double-resolve to

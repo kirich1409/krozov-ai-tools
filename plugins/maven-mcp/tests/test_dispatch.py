@@ -175,5 +175,129 @@ class InvalidParamsTest(unittest.TestCase):
         self.assertEqual(out[0]["id"], 3)
 
 
+class McpProtocolTest(unittest.TestCase):
+    """Real initialize / tools/list / tools/call path through main() (#358)."""
+
+    def test_initialize_returns_server_info(self):
+        out = _run_main(
+            [
+                json.dumps(
+                    {
+                        "jsonrpc": "2.0",
+                        "id": 1,
+                        "method": "initialize",
+                        "params": {
+                            "protocolVersion": "2024-11-05",
+                            "capabilities": {},
+                            "clientInfo": {"name": "test", "version": "0"},
+                        },
+                    }
+                )
+            ]
+        )
+        self.assertEqual(len(out), 1)
+        result = out[0]["result"]
+        self.assertEqual(result["protocolVersion"], "2024-11-05")
+        self.assertEqual(result["serverInfo"]["name"], server.SERVER_NAME)
+        self.assertEqual(result["serverInfo"]["version"], server.SERVER_VERSION)
+        self.assertIn("tools", result["capabilities"])
+
+    def test_tools_list_returns_shipped_tools(self):
+        out = _run_main(
+            [json.dumps({"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}})]
+        )
+        self.assertEqual(len(out), 1)
+        tools = out[0]["result"]["tools"]
+        self.assertEqual(tools, server.TOOLS)
+        names = [t["name"] for t in tools]
+        self.assertEqual(names, list(server.TOOL_HANDLERS.keys()))
+
+    def test_tools_call_wraps_handler_result_in_text_content(self):
+        # Pin the MCP unwrap contract hooks rely on: .result.content[0].text
+        # is JSON of the handler's return value, correlated by request id.
+        def _fake_handler(arguments):
+            return {"ok": True, "echo": arguments}
+
+        with unittest.mock.patch.dict(
+            server.TOOL_HANDLERS, {"scan_project_dependencies": _fake_handler}
+        ):
+            out = _run_main(
+                [
+                    json.dumps(
+                        {
+                            "jsonrpc": "2.0",
+                            "id": 42,
+                            "method": "tools/call",
+                            "params": {
+                                "name": "scan_project_dependencies",
+                                "arguments": {"projectPath": "/tmp/proj"},
+                            },
+                        }
+                    )
+                ]
+            )
+        self.assertEqual(out[0]["id"], 42)
+        content = out[0]["result"]["content"]
+        self.assertEqual(content[0]["type"], "text")
+        self.assertEqual(
+            json.loads(content[0]["text"]),
+            {"ok": True, "echo": {"projectPath": "/tmp/proj"}},
+        )
+
+    def test_tools_call_unknown_tool_is_method_not_found(self):
+        out = _run_main(
+            [
+                json.dumps(
+                    {
+                        "jsonrpc": "2.0",
+                        "id": 7,
+                        "method": "tools/call",
+                        "params": {"name": "no_such_tool", "arguments": {}},
+                    }
+                )
+            ]
+        )
+        self.assertEqual(out[0]["id"], 7)
+        self.assertEqual(out[0]["error"]["code"], -32601)
+        self.assertIn("Unknown tool", out[0]["error"]["message"])
+
+    def test_initialize_tools_list_tools_call_session_over_stdio(self):
+        # End-to-end stdio session: initialize → tools/list → tools/call.
+        def _fake_handler(_arguments):
+            return {"ping": "pong"}
+
+        with unittest.mock.patch.dict(
+            server.TOOL_HANDLERS, {"search_artifacts": _fake_handler}
+        ):
+            out = _run_main(
+                [
+                    json.dumps(
+                        {
+                            "jsonrpc": "2.0",
+                            "id": 1,
+                            "method": "initialize",
+                            "params": {"protocolVersion": "2024-11-05"},
+                        }
+                    ),
+                    json.dumps({"jsonrpc": "2.0", "id": 2, "method": "tools/list"}),
+                    json.dumps(
+                        {
+                            "jsonrpc": "2.0",
+                            "id": 3,
+                            "method": "tools/call",
+                            "params": {
+                                "name": "search_artifacts",
+                                "arguments": {"query": "okhttp"},
+                            },
+                        }
+                    ),
+                ]
+            )
+        self.assertEqual([r["id"] for r in out], [1, 2, 3])
+        self.assertEqual(out[0]["result"]["serverInfo"]["name"], server.SERVER_NAME)
+        self.assertEqual(len(out[1]["result"]["tools"]), len(server.TOOLS))
+        self.assertEqual(json.loads(out[2]["result"]["content"][0]["text"]), {"ping": "pong"})
+
+
 if __name__ == "__main__":
     unittest.main()
