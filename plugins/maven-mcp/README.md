@@ -18,10 +18,15 @@ The server registers tools that Claude can call during a conversation. It querie
 | `compare_dependency_versions` | Compare current versions against latest (major/minor/patch) |
 | `get_dependency_changes` | Show changes between versions from GitHub releases |
 | `scan_project_dependencies` | Scan Gradle/Maven build files and Gradle version catalogs (`gradle/libs.versions.toml`) for dependencies |
+| `expand_bom` | Expand a Maven BOM into managed dependency versions |
+| `get_transitive_graph` | Resolved transitive dependency graph for a GAV via deps.dev |
+| `detect_dependency_conflicts` | Flag GAs resolved at multiple versions (Maven nearest-wins / Gradle highest-wins) |
+| `check_version_compatibility` | Check Spring Boot / AGP / Kotlin / javax→jakarta compatibility |
 | `get_dependency_vulnerabilities` | Check for known CVEs via OSV.dev |
 | `get_dependency_health` | Assess adoption-worthiness: version/stability, GitHub activity, issue dynamics, license, owner — raw signals for a verdict |
 | `search_artifacts` | Search Maven Central |
 | `audit_project_dependencies` | Full audit: scan + version compare + vulnerability check |
+| `verify_coordinates` | Tri-state existence check + did-you-mean for hallucinated coordinates |
 
 ### Skills
 
