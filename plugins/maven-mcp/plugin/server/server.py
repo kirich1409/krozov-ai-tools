@@ -960,8 +960,12 @@ def _with_capability(result: Dict[str, Any], capability: Optional[str]) -> Dict[
 # an HTTP proxy. Defaults stay secure: verification ON, no proxy unless env
 # says so. Escape hatch MAVEN_MCP_INSECURE_TLS is explicit and warned.
 
-_INSECURE_TLS_WARNED = False
-_ssl_context_cache: Optional[Tuple[str, "ssl.SSLContext"]] = None
+# Mutable TLS state (dict, not rebinding module globals) so CodeQL does not
+# flag the memo/warn flags as unused globals under ``global`` writes.
+_TLS_STATE: Dict[str, Any] = {
+    "insecure_warned": False,
+    "ssl_context_cache": None,  # Optional[Tuple[str, ssl.SSLContext]]
+}
 
 
 def _insecure_tls_enabled() -> bool:
@@ -988,10 +992,9 @@ def _ca_cert_files() -> List[str]:
 
 
 def _warn_insecure_tls_once() -> None:
-    global _INSECURE_TLS_WARNED
-    if _INSECURE_TLS_WARNED:
+    if _TLS_STATE["insecure_warned"]:
         return
-    _INSECURE_TLS_WARNED = True
+    _TLS_STATE["insecure_warned"] = True
     _logger.warning(
         "MAVEN_MCP_INSECURE_TLS is enabled: TLS certificate verification is "
         "DISABLED for all HTTP(S) requests. Use only as an explicit escape "
@@ -1012,9 +1015,8 @@ def _ssl_config_fingerprint() -> str:
 
 def _reset_ssl_context_cache() -> None:
     """Test helper: drop the memoized SSL context."""
-    global _ssl_context_cache, _INSECURE_TLS_WARNED
-    _ssl_context_cache = None
-    _INSECURE_TLS_WARNED = False
+    _TLS_STATE["ssl_context_cache"] = None
+    _TLS_STATE["insecure_warned"] = False
 
 
 def _ssl_context() -> "ssl.SSLContext":
@@ -1022,10 +1024,10 @@ def _ssl_context() -> "ssl.SSLContext":
 
     Verification stays ON unless ``MAVEN_MCP_INSECURE_TLS`` is explicitly set.
     """
-    global _ssl_context_cache
     fp = _ssl_config_fingerprint()
-    if _ssl_context_cache is not None and _ssl_context_cache[0] == fp:
-        return _ssl_context_cache[1]
+    cached = _TLS_STATE["ssl_context_cache"]
+    if cached is not None and cached[0] == fp:
+        return cached[1]
     if _insecure_tls_enabled():
         _warn_insecure_tls_once()
         ctx = ssl._create_unverified_context()
@@ -1043,7 +1045,7 @@ def _ssl_context() -> "ssl.SSLContext":
                 _logger.warning(
                     "Failed to load CA bundle %s: %s", ca_path, type(e).__name__
                 )
-    _ssl_context_cache = (fp, ctx)
+    _TLS_STATE["ssl_context_cache"] = (fp, ctx)
     return ctx
 
 
