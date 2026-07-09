@@ -182,8 +182,9 @@ Content-Type: application/json
 }
 ```
 
-For each result with non-empty `vulns`, derive severity from CVSS score and fixed version
-as described in the `/check-deps-vulnerabilities` skill.
+`/v1/querybatch` returns only `{id, modified}` — hydrate via `GET /v1/vulns/{id}`
+(or use `get_dependency_vulnerabilities`, which already does) before deriving
+severity/fixed version as described in `/check-deps-vulnerabilities`.
 
 ## Step 6 — Build the report
 

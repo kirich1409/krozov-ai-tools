@@ -28,6 +28,27 @@ import unittest.mock
 from _helpers import server, mock_urlopen, http_error, empty_ctx, temp_project
 
 
+def _osv_batch_bare(vuln_id_lists):
+    """Build a real-shaped /v1/querybatch body: only ``{id, modified}`` per vuln.
+
+    ``vuln_id_lists`` is a list parallel to the queries array; each entry is a
+    list of vuln id strings (empty = no vulns for that query).
+    """
+    results = []
+    for ids in vuln_id_lists:
+        results.append({
+            "vulns": [
+                {"id": vid, "modified": "2024-01-01T00:00:00Z"} for vid in ids
+            ],
+        })
+    return json.dumps({"results": results}).encode()
+
+
+def _osv_vuln_get(vuln):
+    """Build a /v1/vulns/{id} response body from a full vuln dict."""
+    return json.dumps(vuln).encode()
+
+
 def _metadata_xml(versions, latest=None, release=None, last_updated=None):
     """Build a maven-metadata.xml body (bytes) with the given version list."""
     vtags = "".join("<version>%s</version>" % v for v in versions)
@@ -491,36 +512,36 @@ class TestSearchMavenCentral(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
-# query_osv_batch (server.py:689) + severity/fixed-version extraction
+# query_osv_batch + /v1/vulns/{id} hydration (#338) + severity extraction
 # Mirrors src/vulnerabilities/__tests__/osv-client.test.ts
-# OSV uses http_post_json semantics (POST + JSON body + Content-Type).
+# Real OSV querybatch returns only {id, modified}; full fields come from GET.
 # ---------------------------------------------------------------------------
 class TestQueryOsvBatch(unittest.TestCase):
     def test_returns_vulnerabilities_for_affected_packages(self):
-        # Mirrors osv-client.test.ts "returns vulnerabilities for affected packages".
-        body = json.dumps({
-            "results": [
-                {"vulns": [{
-                    "id": "GHSA-1234-abcd",
-                    "summary": "Remote code execution",
-                    "severity": [{"type": "CVSS_V3",
-                                  "score": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H"}],
-                    "database_specific": {"severity": "CRITICAL"},
-                    "affected": [{"ranges": [{"type": "ECOSYSTEM",
-                                  "events": [{"introduced": "0"}, {"fixed": "2.0.1"}]}]}],
-                    "references": [{"type": "ADVISORY",
-                                   "url": "https://github.com/advisories/GHSA-1234-abcd"}],
-                }]},
-                {"vulns": []},
-            ]
-        }).encode()
+        # querybatch is bare; severity/fixed/url come from GET /v1/vulns/{id}.
+        batch = _osv_batch_bare([["GHSA-1234-abcd"], []])
+        full = {
+            "id": "GHSA-1234-abcd",
+            "summary": "Remote code execution",
+            "severity": [{"type": "CVSS_V3",
+                          "score": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H"}],
+            "database_specific": {"severity": "CRITICAL"},
+            "affected": [{"ranges": [{"type": "ECOSYSTEM",
+                          "events": [{"introduced": "0"}, {"fixed": "2.0.1"}]}]}],
+            "references": [{"type": "ADVISORY",
+                           "url": "https://github.com/advisories/GHSA-1234-abcd"}],
+        }
         with unittest.mock.patch(
-            "urllib.request.urlopen", side_effect=mock_urlopen([(200, body)])
-        ):
+            "urllib.request.urlopen",
+            side_effect=mock_urlopen([(200, batch), (200, _osv_vuln_get(full))]),
+        ) as m:
             results = server.query_osv_batch([
                 {"groupId": "com.example", "artifactId": "lib", "version": "2.0.0"},
                 {"groupId": "io.safe", "artifactId": "safe-lib", "version": "1.0.0"},
             ])
+        self.assertEqual(m.call_count, 2)
+        self.assertEqual(m.call_args_list[1].args[0].full_url,
+                         f"{server.OSV_VULN_API}/GHSA-1234-abcd")
         self.assertEqual(len(results), 2)
         self.assertEqual(len(results[0]["vulnerabilities"]), 1)
         v = results[0]["vulnerabilities"][0]
@@ -533,7 +554,7 @@ class TestQueryOsvBatch(unittest.TestCase):
     def test_post_body_shape_and_content_type(self):
         # Mirrors osv-client.test.ts "sends correct request format". Asserts the
         # POST URL, JSON body shape, and Content-Type header (http_post_json).
-        body = json.dumps({"results": [{"vulns": []}]}).encode()
+        body = _osv_batch_bare([[]])
         with unittest.mock.patch(
             "urllib.request.urlopen", side_effect=mock_urlopen([(200, body)])
         ) as m:
@@ -550,7 +571,7 @@ class TestQueryOsvBatch(unittest.TestCase):
         self.assertEqual(payload["queries"][0]["version"], "2.3.0")
 
     def test_empty_deps_short_circuits_without_request(self):
-        # No deps -> [] and no network call at all (server.py:691).
+        # No deps -> [] and no network call at all.
         with unittest.mock.patch("urllib.request.urlopen") as m:
             self.assertEqual(server.query_osv_batch([]), [])
         m.assert_not_called()
@@ -569,13 +590,15 @@ class TestQueryOsvBatch(unittest.TestCase):
 
     def test_normalizes_moderate_severity_to_medium(self):
         # Mirrors osv-client.test.ts "normalizes MODERATE severity to MEDIUM".
-        body = json.dumps({"results": [{"vulns": [{
+        batch = _osv_batch_bare([["GHSA-mod-erat-eeee"]])
+        full = {
             "id": "GHSA-mod-erat-eeee", "summary": "moderate",
             "database_specific": {"severity": "MODERATE"},
             "affected": [], "references": [],
-        }]}]}).encode()
+        }
         with unittest.mock.patch(
-            "urllib.request.urlopen", side_effect=mock_urlopen([(200, body)])
+            "urllib.request.urlopen",
+            side_effect=mock_urlopen([(200, batch), (200, _osv_vuln_get(full))]),
         ):
             results = server.query_osv_batch([
                 {"groupId": "com.example", "artifactId": "lib", "version": "1.0.0"},
@@ -586,13 +609,15 @@ class TestQueryOsvBatch(unittest.TestCase):
         # Mirrors osv-client.test.ts "rejects unknown severity strings".
         # In Python an unrecognized database_specific severity falls through to
         # the CVSS array (none here) -> the "severity" key is omitted entirely.
-        body = json.dumps({"results": [{"vulns": [{
+        batch = _osv_batch_bare([["GHSA-unkn-own1"]])
+        full = {
             "id": "GHSA-unkn-own1", "summary": "unknown",
             "database_specific": {"severity": "BOGUS"},
             "affected": [], "references": [],
-        }]}]}).encode()
+        }
         with unittest.mock.patch(
-            "urllib.request.urlopen", side_effect=mock_urlopen([(200, body)])
+            "urllib.request.urlopen",
+            side_effect=mock_urlopen([(200, batch), (200, _osv_vuln_get(full))]),
         ):
             results = server.query_osv_batch([
                 {"groupId": "com.example", "artifactId": "lib", "version": "1.0.0"},
@@ -605,13 +630,15 @@ class TestQueryOsvBatch(unittest.TestCase):
         # OSV puts a CVSS *vector string* in `score`, which float() cannot parse,
         # so this numeric-score branch only fires on numeric data -- exercised
         # here directly to cover _cvss_to_severity (9.8 -> CRITICAL).
-        body = json.dumps({"results": [{"vulns": [{
+        batch = _osv_batch_bare([["GHSA-cvss-only0"]])
+        full = {
             "id": "GHSA-cvss-only0", "summary": "cvss only",
             "severity": [{"type": "CVSS_V3", "score": "9.8"}],
             "affected": [], "references": [],
-        }]}]}).encode()
+        }
         with unittest.mock.patch(
-            "urllib.request.urlopen", side_effect=mock_urlopen([(200, body)])
+            "urllib.request.urlopen",
+            side_effect=mock_urlopen([(200, batch), (200, _osv_vuln_get(full))]),
         ):
             results = server.query_osv_batch([
                 {"groupId": "com.example", "artifactId": "lib", "version": "1.0.0"},
@@ -619,16 +646,26 @@ class TestQueryOsvBatch(unittest.TestCase):
         self.assertEqual(results[0]["vulnerabilities"][0]["severity"], "CRITICAL")
 
     def test_filters_out_withdrawn_vulnerabilities(self):
-        # Mirrors osv-client.test.ts "filters out withdrawn vulnerabilities".
-        body = json.dumps({"results": [{"vulns": [
-            {"id": "GHSA-active-active", "summary": "active",
-             "database_specific": {"severity": "HIGH"}, "affected": [], "references": []},
-            {"id": "GHSA-with-drawn", "summary": "withdrawn",
-             "database_specific": {"severity": "CRITICAL"},
-             "withdrawn": "2024-01-01T00:00:00Z", "affected": [], "references": []},
-        ]}]}).encode()
+        # Withdrawn is only present on the hydrated /v1/vulns record.
+        batch = _osv_batch_bare([["GHSA-active-active", "GHSA-with-drawn"]])
+        active = {
+            "id": "GHSA-active-active", "summary": "active",
+            "database_specific": {"severity": "HIGH"},
+            "affected": [], "references": [],
+        }
+        withdrawn = {
+            "id": "GHSA-with-drawn", "summary": "withdrawn",
+            "database_specific": {"severity": "CRITICAL"},
+            "withdrawn": "2024-01-01T00:00:00Z",
+            "affected": [], "references": [],
+        }
         with unittest.mock.patch(
-            "urllib.request.urlopen", side_effect=mock_urlopen([(200, body)])
+            "urllib.request.urlopen",
+            side_effect=mock_urlopen([
+                (200, batch),
+                (200, _osv_vuln_get(active)),
+                (200, _osv_vuln_get(withdrawn)),
+            ]),
         ):
             results = server.query_osv_batch([
                 {"groupId": "com.example", "artifactId": "lib", "version": "1.0.0"},
@@ -638,12 +675,15 @@ class TestQueryOsvBatch(unittest.TestCase):
 
     def test_advisory_url_fallback_to_osv_dev(self):
         # No ADVISORY reference -> _extract_url falls back to the osv.dev URL.
-        body = json.dumps({"results": [{"vulns": [{
+        batch = _osv_batch_bare([["OSV-NO-ADVISORY"]])
+        full = {
             "id": "OSV-NO-ADVISORY", "summary": "no advisory ref",
-            "database_specific": {"severity": "LOW"}, "affected": [], "references": [],
-        }]}]}).encode()
+            "database_specific": {"severity": "LOW"},
+            "affected": [], "references": [],
+        }
         with unittest.mock.patch(
-            "urllib.request.urlopen", side_effect=mock_urlopen([(200, body)])
+            "urllib.request.urlopen",
+            side_effect=mock_urlopen([(200, batch), (200, _osv_vuln_get(full))]),
         ):
             results = server.query_osv_batch([
                 {"groupId": "com.example", "artifactId": "lib", "version": "1.0.0"},
@@ -653,35 +693,97 @@ class TestQueryOsvBatch(unittest.TestCase):
             "https://osv.dev/vulnerability/OSV-NO-ADVISORY",
         )
 
+    def test_hydration_failure_keeps_bare_id(self):
+        # GET /v1/vulns/{id} non-200 -> keep id/malicious from querybatch; no severity.
+        batch = _osv_batch_bare([["GHSA-fail-hydrate"]])
+        with unittest.mock.patch(
+            "urllib.request.urlopen",
+            side_effect=mock_urlopen([(200, batch), (500, b"")]),
+        ):
+            results = server.query_osv_batch([
+                {"groupId": "com.example", "artifactId": "lib", "version": "1.0.0"},
+            ])
+        v = results[0]["vulnerabilities"][0]
+        self.assertEqual(v["id"], "GHSA-fail-hydrate")
+        self.assertNotIn("severity", v)
+        self.assertFalse(v["malicious"])
+
+    def test_dedupes_hydration_across_deps(self):
+        # Same vuln id on two deps -> one GET /v1/vulns/{id}, both get severity.
+        batch = _osv_batch_bare([["GHSA-shared-id"], ["GHSA-shared-id"]])
+        full = {
+            "id": "GHSA-shared-id", "summary": "shared",
+            "database_specific": {"severity": "HIGH"},
+            "affected": [], "references": [],
+        }
+        with unittest.mock.patch(
+            "urllib.request.urlopen",
+            side_effect=mock_urlopen([(200, batch), (200, _osv_vuln_get(full))]),
+        ) as m:
+            results = server.query_osv_batch([
+                {"groupId": "com.a", "artifactId": "x", "version": "1.0.0"},
+                {"groupId": "com.b", "artifactId": "y", "version": "2.0.0"},
+            ])
+        self.assertEqual(m.call_count, 2)  # 1 POST + 1 GET
+        self.assertEqual(results[0]["vulnerabilities"][0]["severity"], "HIGH")
+        self.assertEqual(results[1]["vulnerabilities"][0]["severity"], "HIGH")
+
+    def test_hydration_cap_skips_excess_ids(self):
+        # Beyond MAX_OSV_VULN_HYDRATIONS unique IDs stay bare (no severity).
+        batch = _osv_batch_bare([["GHSA-cap-0", "GHSA-cap-1", "GHSA-cap-2"]])
+        full0 = {
+            "id": "GHSA-cap-0", "summary": "first",
+            "database_specific": {"severity": "CRITICAL"},
+            "affected": [], "references": [],
+        }
+        with unittest.mock.patch.object(server, "MAX_OSV_VULN_HYDRATIONS", 1), \
+                unittest.mock.patch(
+                    "urllib.request.urlopen",
+                    side_effect=mock_urlopen([
+                        (200, batch),
+                        (200, _osv_vuln_get(full0)),
+                    ]),
+                ) as m:
+            results = server.query_osv_batch([
+                {"groupId": "com.example", "artifactId": "lib", "version": "1.0.0"},
+            ])
+        self.assertEqual(m.call_count, 2)  # 1 POST + 1 GET (cap)
+        vulns = results[0]["vulnerabilities"]
+        self.assertEqual(len(vulns), 3)
+        self.assertEqual(vulns[0]["severity"], "CRITICAL")
+        self.assertNotIn("severity", vulns[1])
+        self.assertNotIn("severity", vulns[2])
+
     def test_chunks_over_osv_querybatch_max(self):
         # >OSV_QUERYBATCH_MAX deps -> multiple POSTs, each ≤ the documented
         # 1000-query limit; results concatenated in input order. Temporarily
-        # lower the constant so the test stays small.
+        # lower the constant so the test stays small. Hydration GETs follow.
         n = 5
         chunk = 2
         deps = [
             {"groupId": "com.x", "artifactId": f"a{i}", "version": "1.0.0"}
             for i in range(n)
         ]
-        # Three chunks: [0,1], [2,3], [4] — each response tags vulns by index.
+        # Three chunks: [0,1], [2,3], [4] — bare ids, then one GET each.
         responses = []
         for start in range(0, n, chunk):
             size = min(chunk, n - start)
-            responses.append((200, json.dumps({
-                "results": [
-                    {"vulns": [{"id": f"GHSA-chunk-{start + i}", "summary": "",
-                                "affected": [], "references": []}]}
-                    for i in range(size)
-                ],
-            }).encode()))
+            responses.append((200, _osv_batch_bare(
+                [[f"GHSA-chunk-{start + i}"] for i in range(size)]
+            )))
+        for i in range(n):
+            responses.append((200, _osv_vuln_get({
+                "id": f"GHSA-chunk-{i}", "summary": "",
+                "affected": [], "references": [],
+            })))
         with unittest.mock.patch.object(server, "OSV_QUERYBATCH_MAX", chunk), \
                 unittest.mock.patch(
                     "urllib.request.urlopen",
                     side_effect=mock_urlopen(responses),
                 ) as m:
             results = server.query_osv_batch(deps)
-        self.assertEqual(m.call_count, 3)
-        for call in m.call_args_list:
+        self.assertEqual(m.call_count, 3 + n)  # 3 POSTs + 5 GETs
+        for call in m.call_args_list[:3]:
             payload = json.loads(call.args[0].data)
             self.assertLessEqual(len(payload["queries"]), chunk)
         self.assertEqual(len(results), n)
@@ -710,15 +812,25 @@ class TestMaliciousFlag(unittest.TestCase):
     def test_query_osv_batch_flags_malicious_entry(self):
         # A MAL- id (the real OSSF-reported Maven typosquat this plan verified
         # live) -> malicious: true; ordinary GHSA id in the same batch response
-        # -> malicious: false. Mix preserved per-entry.
-        body = json.dumps({"results": [{"vulns": [
-            {"id": "MAL-2025-2552", "summary": "malicious package",
-             "affected": [], "references": []},
-            {"id": "GHSA-1234-abcd", "summary": "ordinary CVE",
-             "database_specific": {"severity": "HIGH"}, "affected": [], "references": []},
-        ]}]}).encode()
+        # -> malicious: false. Mix preserved per-entry. malicious is derived
+        # from the querybatch id prefix and does not require hydration.
+        batch = _osv_batch_bare([["MAL-2025-2552", "GHSA-1234-abcd"]])
+        mal_full = {
+            "id": "MAL-2025-2552", "summary": "malicious package",
+            "affected": [], "references": [],
+        }
+        ghsa_full = {
+            "id": "GHSA-1234-abcd", "summary": "ordinary CVE",
+            "database_specific": {"severity": "HIGH"},
+            "affected": [], "references": [],
+        }
         with unittest.mock.patch(
-            "urllib.request.urlopen", side_effect=mock_urlopen([(200, body)])
+            "urllib.request.urlopen",
+            side_effect=mock_urlopen([
+                (200, batch),
+                (200, _osv_vuln_get(mal_full)),
+                (200, _osv_vuln_get(ghsa_full)),
+            ]),
         ):
             results = server.query_osv_batch([
                 {"groupId": "io.github.leetcrunch", "artifactId": "scribejava-core", "version": "1.0.0"},
@@ -727,29 +839,35 @@ class TestMaliciousFlag(unittest.TestCase):
         self.assertEqual(len(vulns), 2)
         self.assertTrue(vulns[0]["malicious"])
         self.assertFalse(vulns[1]["malicious"])
+        self.assertEqual(vulns[1]["severity"], "HIGH")
 
     def test_query_osv_batch_missing_id_is_not_malicious(self):
         # An empty "id" (never actually omitted by OSV -- id is always present
-        # on a real querybatch entry) must not be misread as malicious.
-        body = json.dumps({"results": [{"vulns": [
-            {"id": "", "summary": "no real id", "affected": [], "references": []},
+        # on a real querybatch entry) must not be misread as malicious. Empty
+        # id also skips hydration (nothing to GET).
+        batch = json.dumps({"results": [{"vulns": [
+            {"id": "", "modified": "2024-01-01T00:00:00Z"},
         ]}]}).encode()
         with unittest.mock.patch(
-            "urllib.request.urlopen", side_effect=mock_urlopen([(200, body)])
-        ):
+            "urllib.request.urlopen", side_effect=mock_urlopen([(200, batch)])
+        ) as m:
             results = server.query_osv_batch([
                 {"groupId": "com.example", "artifactId": "lib", "version": "1.0.0"},
             ])
+        self.assertEqual(m.call_count, 1)  # POST only
         self.assertFalse(results[0]["vulnerabilities"][0]["malicious"])
 
     def test_get_dependency_vulnerabilities_surfaces_malicious_unchanged(self):
         # handle_get_dependency_vulnerabilities consumes query_osv_batch output
         # via `entry = dict(r)` -- malicious flows through with no handler change.
-        body = json.dumps({"results": [{"vulns": [
-            {"id": "MAL-2025-2552", "summary": "malicious", "affected": [], "references": []},
-        ]}]}).encode()
+        batch = _osv_batch_bare([["MAL-2025-2552"]])
+        full = {
+            "id": "MAL-2025-2552", "summary": "malicious",
+            "affected": [], "references": [],
+        }
         with unittest.mock.patch(
-            "urllib.request.urlopen", side_effect=mock_urlopen([(200, body)])
+            "urllib.request.urlopen",
+            side_effect=mock_urlopen([(200, batch), (200, _osv_vuln_get(full))]),
         ):
             out = server.handle_get_dependency_vulnerabilities({
                 "dependencies": [
@@ -763,16 +881,22 @@ class TestMaliciousFlag(unittest.TestCase):
         # dict (id/severity/fixedVersion) rather than forwarding query_osv_batch's
         # vuln_info unchanged -- malicious must be explicitly threaded through.
         gradle = "dependencies {\n    implementation 'io.github.leetcrunch:scribejava-core:1.0.0'\n}\n"
-        osv_body = json.dumps({"results": [{"vulns": [
-            {"id": "MAL-2025-2552", "summary": "malicious", "affected": [], "references": []},
-        ]}]}).encode()
+        batch = _osv_batch_bare([["MAL-2025-2552"]])
+        full = {
+            "id": "MAL-2025-2552", "summary": "malicious",
+            "affected": [], "references": [],
+        }
         with temp_project({"build.gradle": gradle}) as root, \
                 unittest.mock.patch.object(
                     server, "fetch_metadata",
                     return_value={"versions": ["1.0.0"], "resolvedFrom": None},
                 ), \
                 unittest.mock.patch(
-                    "urllib.request.urlopen", side_effect=mock_urlopen([(200, osv_body)])
+                    "urllib.request.urlopen",
+                    side_effect=mock_urlopen([
+                        (200, batch),
+                        (200, _osv_vuln_get(full)),
+                    ]),
                 ):
             out = server.handle_audit_project_dependencies({"projectPath": root})
         vulnerable = [d for d in out["dependencies"] if d.get("vulnerabilities")]

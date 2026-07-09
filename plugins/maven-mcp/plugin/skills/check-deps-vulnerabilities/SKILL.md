@@ -130,39 +130,30 @@ Content-Type: application/json
 OSV.dev accepts up to 1000 entries per batch. If there are more, split into multiple
 requests and merge results.
 
-**Response:**
+**Important:** `/v1/querybatch` returns only `{id, modified}` per vulnerability.
+The MCP server hydrates each unique id via `GET https://api.osv.dev/v1/vulns/{id}`
+before extracting severity/summary/fixedVersion. Prefer the
+`get_dependency_vulnerabilities` tool (which already hydrates) over calling
+querybatch yourself.
+
+**Bare querybatch response shape (before hydration):**
 ```json
 {
   "results": [
     {
       "vulns": [
-        {
-          "id": "GHSA-xxxx-xxxx-xxxx",
-          "summary": "...",
-          "severity": [{"type": "CVSS_V3", "score": "CVSS:3.1/AV:N/..."}],
-          "affected": [
-            {
-              "ranges": [
-                {
-                  "type": "ECOSYSTEM",
-                  "events": [
-                    {"introduced": "0"},
-                    {"fixed": "2.17.1"}
-                  ]
-                }
-              ]
-            }
-          ]
-        }
+        {"id": "GHSA-xxxx-xxxx-xxxx", "modified": "2024-01-01T00:00:00Z"}
       ]
     }
   ]
 }
 ```
 
-The `results` array corresponds 1:1 to the `queries` array. For each result:
+**Hydrated record** (`GET /v1/vulns/{id}`) carries `summary`, `severity`,
+`database_specific`, `affected`, and `references`. The `results` array from
+querybatch corresponds 1:1 to the `queries` array. For each result:
 - If `vulns` is empty or missing, the dependency has no known advisories.
-- For each vuln, extract:
+- For each vuln (after hydration), extract:
   - `id` — advisory identifier (GHSA-... or CVE-...)
   - `summary` — short description
   - `severity` — derive from CVSS score: ≥9.0 CRITICAL, ≥7.0 HIGH, ≥4.0 MEDIUM,

@@ -40,6 +40,21 @@ def _json(obj):
     return json.dumps(obj).encode("utf-8")
 
 
+def _osv_batch_bare(vuln_id_lists):
+    """Real-shaped /v1/querybatch body: only ``{id, modified}`` per vuln."""
+    return _json({
+        "results": [
+            {"vulns": [{"id": vid, "modified": "2024-01-01T00:00:00Z"} for vid in ids]}
+            for ids in vuln_id_lists
+        ],
+    })
+
+
+def _osv_vuln_get(vuln):
+    """Full /v1/vulns/{id} response body."""
+    return _json(vuln)
+
+
 def _patch_urlopen(responses):
     return unittest.mock.patch("urllib.request.urlopen", side_effect=mock_urlopen(responses))
 
@@ -278,7 +293,9 @@ class TestGetDependencyVulnerabilities(unittest.TestCase):
     """mirrors src/tools/__tests__/get-dependency-vulnerabilities.test.ts"""
 
     def test_reports_vulnerability(self):
-        osv = {"results": [{"vulns": [{
+        # querybatch is bare; severity/fixed come from GET /v1/vulns/{id} (#338).
+        batch = _osv_batch_bare([["GHSA-xxxx"]])
+        full = {
             "id": "GHSA-xxxx",
             "summary": "bad bug",
             "severity": [{"type": "CVSS_V3", "score": "9.8"}],
@@ -286,8 +303,8 @@ class TestGetDependencyVulnerabilities(unittest.TestCase):
                 {"introduced": "0"}, {"fixed": "1.2.3"},
             ]}]}],
             "references": [{"type": "ADVISORY", "url": "https://advisory/x"}],
-        }]}]}
-        with _patch_urlopen([(200, _json(osv))]):
+        }
+        with _patch_urlopen([(200, batch), (200, _osv_vuln_get(full))]):
             out = server.handle_get_dependency_vulnerabilities({
                 "dependencies": [
                     {"groupId": "com.example", "artifactId": "lib", "version": "1.0.0"},
@@ -318,7 +335,8 @@ class TestGetDependencyVulnerabilities(unittest.TestCase):
             "<version>1.2.3</version>"
             "</dependency></dependencies></project>"
         ).encode()
-        osv = {"results": [{"vulns": [{
+        batch = _osv_batch_bare([["GHSA-yyyy"]])
+        full = {
             "id": "GHSA-yyyy",
             "summary": "bad bug in impl",
             "severity": [{"type": "CVSS_V3", "score": "9.8"}],
@@ -326,9 +344,13 @@ class TestGetDependencyVulnerabilities(unittest.TestCase):
                 {"introduced": "0"}, {"fixed": "1.2.4"},
             ]}]}],
             "references": [{"type": "ADVISORY", "url": "https://advisory/y"}],
-        }]}]}
+        }
         with temp_project({"README.md": "no build files"}) as root:
-            with _patch_urlopen([(200, marker_pom), (200, _json(osv))]):
+            with _patch_urlopen([
+                (200, marker_pom),
+                (200, batch),
+                (200, _osv_vuln_get(full)),
+            ]):
                 out = server.handle_get_dependency_vulnerabilities({
                     "projectPath": root,
                     "dependencies": [
@@ -351,10 +373,10 @@ class TestGetDependencyVulnerabilities(unittest.TestCase):
         self.assertEqual(result["vulnerabilities"][0]["fixedVersion"], "1.2.4")
 
     def test_non_marker_dependency_shape_unchanged(self):
-        # Regression: a normal dependency makes exactly one network call (the
-        # OSV POST) — no POM fetch — and the result carries no
-        # resolvedImplementation key, mirroring test_reports_vulnerability.
-        osv = {"results": [{"vulns": [{
+        # Regression: a normal dependency makes OSV POST + one hydration GET
+        # (no POM fetch) and the result carries no resolvedImplementation key.
+        batch = _osv_batch_bare([["GHSA-xxxx"]])
+        full = {
             "id": "GHSA-xxxx",
             "summary": "bad bug",
             "severity": [{"type": "CVSS_V3", "score": "9.8"}],
@@ -362,15 +384,15 @@ class TestGetDependencyVulnerabilities(unittest.TestCase):
                 {"introduced": "0"}, {"fixed": "1.2.3"},
             ]}]}],
             "references": [{"type": "ADVISORY", "url": "https://advisory/x"}],
-        }]}]}
-        with _patch_urlopen([(200, _json(osv))]) as m:
+        }
+        with _patch_urlopen([(200, batch), (200, _osv_vuln_get(full))]) as m:
             out = server.handle_get_dependency_vulnerabilities({
                 "dependencies": [
                     {"groupId": "com.example", "artifactId": "lib", "version": "1.0.0"},
                 ],
             })
         result = out["results"][0]
-        self.assertEqual(m.call_count, 1)
+        self.assertEqual(m.call_count, 2)  # POST querybatch + GET /v1/vulns
         self.assertNotIn("resolvedImplementation", result)
         self.assertEqual(result["vulnerabilityCount"], 1)
         self.assertEqual(result["vulnerabilities"][0]["fixedVersion"], "1.2.3")
@@ -583,7 +605,8 @@ class TestAuditProjectDependencies(unittest.TestCase):
             "<version>1.2.3</version>"
             "</dependency></dependencies></project>"
         ).encode()
-        osv = {"results": [{"vulns": [{
+        batch = _osv_batch_bare([["GHSA-zzzz"]])
+        full = {
             "id": "GHSA-zzzz",
             "summary": "bad plugin impl bug",
             "severity": [{"type": "CVSS_V3", "score": "9.8"}],
@@ -591,16 +614,17 @@ class TestAuditProjectDependencies(unittest.TestCase):
                 {"introduced": "0"}, {"fixed": "1.2.4"},
             ]}]}],
             "references": [{"type": "ADVISORY", "url": "https://advisory/z"}],
-        }]}]}
+        }
         # scan (local) -> fetch_metadata queries EVERY repo in the plugin-scope
         # public fallback and merges (Gradle Plugin Portal, then Maven Central:
         # 2 calls) -> resolve marker pom (first-hit, Gradle Plugin Portal: 1
-        # call) -> OSV POST (1 call).
+        # call) -> OSV POST (1) -> GET /v1/vulns/{id} (1).
         responses = [
             (200, _meta(["1.0.0"])),
             http_error("https://repo1.maven.org/...", 404, "Not Found"),
             (200, marker_pom),
-            (200, _json(osv)),
+            (200, batch),
+            (200, _osv_vuln_get(full)),
         ]
         with temp_project({"build.gradle.kts": build_file}) as root:
             with _patch_urlopen(responses):
