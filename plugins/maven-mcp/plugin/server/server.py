@@ -173,6 +173,38 @@ def _parse_retry_after(headers: Any) -> Optional[float]:
     return min(secs, HTTP_RETRY_AFTER_MAX)
 
 
+# urllib's default opener registers handlers for file:// and ftp://. Repo URLs
+# are captured verbatim from build files, so a declared ``file:///...`` (or
+# uppercase ``FILE://``) must never reach urlopen. Only http/https are allowed.
+_ALLOWED_URL_SCHEMES = frozenset({"http", "https"})
+
+
+def _url_scheme(url: str) -> str:
+    """Return the URL scheme lowercased, or ``""`` if missing/unparseable."""
+    try:
+        return urllib.parse.urlsplit(url).scheme.lower()
+    except ValueError:
+        return ""
+
+
+def _assert_http_url(url: str) -> None:
+    """Raise ``URLError`` unless ``url`` uses an allowed http(s) scheme.
+
+    Checked before Request construction so the default opener never honors
+    ``file://`` / ``ftp://`` / other non-HTTP schemes (#348).
+    """
+    scheme = _url_scheme(url)
+    if scheme not in _ALLOWED_URL_SCHEMES:
+        raise urllib.error.URLError(
+            f"URL scheme not allowed: {scheme or '(none)'} (only http/https)"
+        )
+
+
+def _is_file_url(url: str) -> bool:
+    """True when ``url`` is a ``file:`` URL (scheme compared case-insensitively)."""
+    return _url_scheme(url) == "file"
+
+
 def _request_with_retry(req: urllib.request.Request) -> Tuple[int, bytes]:
     """Issue ``req`` with bounded retry/backoff on transient failures.
 
@@ -232,12 +264,15 @@ def _request_with_retry(req: urllib.request.Request) -> Tuple[int, bytes]:
 def http_get(url: str, headers: Optional[Dict[str, str]] = None) -> Tuple[int, bytes]:
     """Returns (status_code, body_bytes). Retries transient failures internally
     (see _request_with_retry); raises urllib.error.URLError / socket.timeout only
-    when every attempt hit a transport error."""
+    when every attempt hit a transport error. Non-http(s) schemes are rejected
+    before any network/filesystem open (#348)."""
+    _assert_http_url(url)
     req = urllib.request.Request(url, headers=headers or _make_headers())
     return _request_with_retry(req)
 
 
 def http_post_json(url: str, payload: Any, headers: Optional[Dict[str, str]] = None) -> Tuple[int, bytes]:
+    _assert_http_url(url)
     data = json.dumps(payload).encode()
     h = _make_headers({"Content-Type": "application/json"})
     if headers:
@@ -492,7 +527,9 @@ def _repos_for(
     declared scope (deduped by URL)."""
     scope = "plugin" if artifact_id.endswith(".gradle.plugin") else "dependency"
     declared = ctx.scoped_repos.get(scope, [])
-    queryable = [r for r in declared if not r["url"].startswith("file://")]
+    # mavenLocal / file:// markers are non-queryable; scheme check is
+    # case-insensitive so ``FILE://`` cannot bypass the guard (#348).
+    queryable = [r for r in declared if not _is_file_url(r["url"])]
 
     public_entries = [
         {"name": name, "url": url, "scope": scope, "is_public_fallback": True}
