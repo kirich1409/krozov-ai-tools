@@ -16,6 +16,7 @@ import os
 import random
 import re
 import socket
+import ssl
 import sys
 import tempfile
 import time
@@ -326,7 +327,7 @@ def _request_with_retry(
     for attempt in range(HTTP_MAX_ATTEMPTS):
         retry_after: Optional[float] = None
         try:
-            with urllib.request.urlopen(req, timeout=timeout) as resp:
+            with _urlopen(req, timeout) as resp:
                 status, body = resp.status, _read_response_body(resp)
                 if not _is_retryable_status(status):
                     return status, body
@@ -950,6 +951,190 @@ def _with_capability(result: Dict[str, Any], capability: Optional[str]) -> Dict[
     if capability:
         result["capabilityUnavailable"] = capability
     return result
+
+
+# ---------------------------------------------------------------------------
+# TLS (internal CA) + HTTP(S) proxy (#298)
+# ---------------------------------------------------------------------------
+# Closed contours often terminate TLS with a private CA and route egress via
+# an HTTP proxy. Defaults stay secure: verification ON, no proxy unless env
+# says so. Escape hatch MAVEN_MCP_INSECURE_TLS is explicit and warned.
+
+# Mutable TLS state (dict, not rebinding module globals) so CodeQL does not
+# flag the memo/warn flags as unused globals under ``global`` writes.
+_TLS_STATE: Dict[str, Any] = {
+    "insecure_warned": False,
+    "ssl_context_cache": None,  # Optional[Tuple[str, ssl.SSLContext]]
+}
+
+
+def _insecure_tls_enabled() -> bool:
+    """``MAVEN_MCP_INSECURE_TLS`` — disable TLS verification (off by default)."""
+    return _env_flag("MAVEN_MCP_INSECURE_TLS")
+
+
+def _ca_cert_files() -> List[str]:
+    """Ordered CA bundle paths to trust in addition to the system store.
+
+    ``MAVEN_MCP_CA_CERT`` is the primary knob; ``SSL_CERT_FILE`` and
+    ``NODE_EXTRA_CA_CERTS`` are also honored so existing enterprise / Node
+    tooling env can be reused without a second copy of the bundle.
+    """
+    paths: List[str] = []
+    for name in ("MAVEN_MCP_CA_CERT", "SSL_CERT_FILE", "NODE_EXTRA_CA_CERTS"):
+        raw = (os.environ.get(name) or "").strip()
+        if not raw:
+            continue
+        expanded = os.path.expanduser(raw)
+        if expanded not in paths:
+            paths.append(expanded)
+    return paths
+
+
+def _warn_insecure_tls_once() -> None:
+    if _TLS_STATE["insecure_warned"]:
+        return
+    _TLS_STATE["insecure_warned"] = True
+    _logger.warning(
+        "MAVEN_MCP_INSECURE_TLS is enabled: TLS certificate verification is "
+        "DISABLED for all HTTP(S) requests. Use only as an explicit escape "
+        "hatch; prefer MAVEN_MCP_CA_CERT with your internal CA bundle."
+    )
+
+
+def _ssl_config_fingerprint() -> str:
+    parts = ["insecure=%s" % ("1" if _insecure_tls_enabled() else "0")]
+    for p in _ca_cert_files():
+        try:
+            st = os.stat(p)
+            parts.append("%s:%s:%s" % (p, st.st_mtime_ns, st.st_size))
+        except OSError:
+            parts.append("%s:missing" % p)
+    return "|".join(parts)
+
+
+def _reset_ssl_context_cache() -> None:
+    """Test helper: drop the memoized SSL context."""
+    _TLS_STATE["ssl_context_cache"] = None
+    _TLS_STATE["insecure_warned"] = False
+
+
+def _ssl_context() -> "ssl.SSLContext":
+    """SSL context for outbound HTTPS: system CAs + optional internal bundle.
+
+    Verification stays ON unless ``MAVEN_MCP_INSECURE_TLS`` is explicitly set.
+    """
+    fp = _ssl_config_fingerprint()
+    cached = _TLS_STATE["ssl_context_cache"]
+    if cached is not None and cached[0] == fp:
+        return cached[1]
+    if _insecure_tls_enabled():
+        _warn_insecure_tls_once()
+        ctx = ssl._create_unverified_context()
+    else:
+        ctx = ssl.create_default_context()
+        for ca_path in _ca_cert_files():
+            if not os.path.isfile(ca_path):
+                _logger.warning(
+                    "CA certificate path not found (%s); ignoring", ca_path
+                )
+                continue
+            try:
+                ctx.load_verify_locations(cafile=ca_path)
+            except (ssl.SSLError, OSError) as e:
+                _logger.warning(
+                    "Failed to load CA bundle %s: %s", ca_path, type(e).__name__
+                )
+    _TLS_STATE["ssl_context_cache"] = (fp, ctx)
+    return ctx
+
+
+def _env_proxy_url(scheme: str) -> Optional[str]:
+    """Read proxy URL for ``scheme`` from env (uppercase then lowercase)."""
+    upper = "%s_PROXY" % scheme.upper()
+    lower = "%s_proxy" % scheme.lower()
+    raw = (os.environ.get(upper) or os.environ.get(lower) or "").strip()
+    return raw or None
+
+
+def _explicit_env_proxies() -> Optional[Dict[str, str]]:
+    """Proxies from HTTP(S)_PROXY / ALL_PROXY when any is set; else ``None``.
+
+    Returning ``None`` leaves urllib's default discovery alone (no custom
+    ``ProxyHandler``). When set, we build an opener that prefers these env
+    vars (predictable in closed contours).
+    """
+    http = _env_proxy_url("http")
+    https = _env_proxy_url("https")
+    all_proxy = _env_proxy_url("all")
+    if not http and not https and not all_proxy:
+        return None
+    proxies: Dict[str, str] = {}
+    if http or all_proxy:
+        proxies["http"] = http or all_proxy  # type: ignore[assignment]
+    if https or http or all_proxy:
+        # Prefer HTTPS_PROXY; fall back to HTTP_PROXY / ALL_PROXY for CONNECT.
+        proxies["https"] = https or http or all_proxy  # type: ignore[assignment]
+    return proxies
+
+
+def _no_proxy_list() -> List[str]:
+    raw = (os.environ.get("NO_PROXY") or os.environ.get("no_proxy") or "").strip()
+    if not raw:
+        return []
+    return [p.strip() for p in raw.split(",") if p.strip()]
+
+
+def _hostname_matches_no_proxy(host: str, pattern: str) -> bool:
+    """Match ``host`` against a single NO_PROXY entry."""
+    host = (host or "").lower().rstrip(".")
+    pattern = (pattern or "").lower().strip()
+    if not host or not pattern:
+        return False
+    if pattern == "*":
+        return True
+    pat = pattern[1:] if pattern.startswith(".") else pattern
+    if host == pat:
+        return True
+    return host.endswith("." + pat)
+
+
+def _proxy_bypass_host(host: str) -> bool:
+    """True when ``host`` is excluded by ``NO_PROXY`` / ``no_proxy``."""
+    host = (host or "").lower().rstrip(".")
+    if not host:
+        return False
+    if host in ("localhost", "127.0.0.1", "::1"):
+        return True
+    for entry in _no_proxy_list():
+        if _hostname_matches_no_proxy(host, entry):
+            return True
+    return False
+
+
+def _urlopen(req: urllib.request.Request, timeout: float):
+    """Open ``req`` with TLS context + optional explicit proxy env (#298).
+
+    Tests patch ``urllib.request.urlopen``; the no-custom-proxy path calls it
+    directly so existing mocks keep working. When HTTP(S)_PROXY is set and the
+    host is not excluded by NO_PROXY, a dedicated opener applies
+    ``ProxyHandler`` + ``HTTPSHandler(context=…)``.
+    """
+    url = req.full_url
+    scheme = _url_scheme(url)
+    context = _ssl_context() if scheme == "https" else None
+    proxies = _explicit_env_proxies()
+    host = _url_host(url) if proxies else ""
+    use_proxy = bool(proxies) and bool(host) and not _proxy_bypass_host(host)
+    if use_proxy:
+        handlers: List[Any] = [urllib.request.ProxyHandler(proxies)]
+        if context is not None:
+            handlers.append(urllib.request.HTTPSHandler(context=context))
+        opener = urllib.request.build_opener(*handlers)
+        return opener.open(req, timeout=timeout)
+    if context is not None:
+        return urllib.request.urlopen(req, timeout=timeout, context=context)
+    return urllib.request.urlopen(req, timeout=timeout)
 
 
 def _repository_base() -> Optional[str]:

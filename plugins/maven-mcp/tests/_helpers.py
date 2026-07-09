@@ -38,6 +38,14 @@ os.environ.setdefault("MAVEN_MCP_CACHE_DISABLE", "1")
 os.environ.setdefault("MAVEN_MCP_SETTINGS", "/__maven_mcp_test_no_settings__")
 os.environ.pop("MAVEN_MCP_OFFLINE", None)
 os.environ.pop("MAVEN_MCP_REPOSITORY_BASE", None)
+# Hermetic TLS/proxy defaults (#298): do not inherit developer proxy/CA/insecure.
+os.environ.pop("MAVEN_MCP_CA_CERT", None)
+os.environ.pop("MAVEN_MCP_INSECURE_TLS", None)
+for _proxy_key in (
+    "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY",
+    "http_proxy", "https_proxy", "all_proxy", "no_proxy",
+):
+    os.environ.pop(_proxy_key, None)
 
 import server  # noqa: E402  (must follow the sys.path shim above)
 
