@@ -1,7 +1,7 @@
 """Tests for BOM / platform expansion (#286)."""
 
 import unittest
-from unittest import mock
+import unittest.mock
 
 from _helpers import empty_ctx, mock_urlopen, server, temp_project
 
@@ -102,7 +102,7 @@ class TestExpandBom(unittest.TestCase):
         )
         inner = _bom_pom(_dep("com.example", "lib", "1.2.3"))
         ctx = empty_ctx()
-        with mock.patch(
+        with unittest.mock.patch(
             "urllib.request.urlopen",
             side_effect=mock_urlopen([(200, outer), (200, inner)]),
         ):
@@ -117,7 +117,7 @@ class TestExpandBom(unittest.TestCase):
         )
         inner = _bom_pom(_dep("com.example", "lib", "1.0.0"))
         ctx = empty_ctx()
-        with mock.patch(
+        with unittest.mock.patch(
             "urllib.request.urlopen",
             side_effect=mock_urlopen([(200, outer), (200, inner)]),
         ):
@@ -127,7 +127,7 @@ class TestExpandBom(unittest.TestCase):
 
     def test_missing_pom_returns_empty(self):
         ctx = empty_ctx()
-        with mock.patch(
+        with unittest.mock.patch(
             "urllib.request.urlopen",
             side_effect=mock_urlopen([(404, b"")]),
         ):
@@ -137,7 +137,7 @@ class TestExpandBom(unittest.TestCase):
     def test_handle_expand_bom_echoes_coordinate(self):
         bom = _bom_pom(_dep("com.example", "lib", "1.0.0"))
         with temp_project({"README.md": "x"}) as root:
-            with mock.patch(
+            with unittest.mock.patch(
                 "urllib.request.urlopen",
                 side_effect=mock_urlopen([(200, bom)]),
             ):
@@ -190,7 +190,7 @@ class TestApplyBomManagedVersions(unittest.TestCase):
             "deadRepositoryHints": [],
         }
         ctx = empty_ctx()
-        with mock.patch(
+        with unittest.mock.patch(
             "urllib.request.urlopen",
             side_effect=mock_urlopen([(200, bom)]),
         ):
@@ -225,7 +225,7 @@ class TestApplyBomManagedVersions(unittest.TestCase):
             "deadRepositoryHints": [],
         }
         ctx = empty_ctx()
-        with mock.patch(
+        with unittest.mock.patch(
             "urllib.request.urlopen",
             side_effect=mock_urlopen([(200, bom)]),
         ):
@@ -247,7 +247,7 @@ class TestScanAuditBomIntegration(unittest.TestCase):
             ),
         }
         with temp_project(files) as root:
-            with mock.patch(
+            with unittest.mock.patch(
                 "urllib.request.urlopen",
                 side_effect=mock_urlopen([(200, bom)]),
             ):
@@ -286,7 +286,7 @@ class TestScanAuditBomIntegration(unittest.TestCase):
             "</project>"
         )
         with temp_project({"pom.xml": pom}) as root:
-            with mock.patch(
+            with unittest.mock.patch(
                 "urllib.request.urlopen",
                 side_effect=mock_urlopen([(200, bom)]),
             ):
@@ -323,7 +323,7 @@ class TestScanAuditBomIntegration(unittest.TestCase):
             (200, meta),  # metadata for com.example:lib
         ]
         with temp_project(files) as root:
-            with mock.patch(
+            with unittest.mock.patch(
                 "urllib.request.urlopen",
                 side_effect=mock_urlopen(responses),
             ):
