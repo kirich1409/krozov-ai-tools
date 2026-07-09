@@ -457,6 +457,42 @@ class TestParseBuildscriptClasspath(unittest.TestCase):
         self.assertIn("gradle", artifacts)
         self.assertIn("kotlin-gradle-plugin", artifacts)
 
+    # #344: nested repositories {} must not truncate before classpath
+    def test_nested_repositories_before_classpath(self):
+        content = (
+            'buildscript {\n'
+            '    repositories { google() }\n'
+            '    dependencies {\n'
+            '        classpath("com.android.tools.build:gradle:8.5.0")\n'
+            '    }\n'
+            '}'
+        )
+        result = server._parse_buildscript_classpath(content)
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0]["groupId"], "com.android.tools.build")
+        self.assertEqual(result[0]["artifactId"], "gradle")
+        self.assertEqual(result[0]["version"], "8.5.0")
+
+    # #344: nested credentials {} inside repositories still reaches classpath
+    def test_deeply_nested_braces_before_classpath(self):
+        content = (
+            'buildscript {\n'
+            '    repositories {\n'
+            '        maven {\n'
+            '            url = uri("https://example.com")\n'
+            '            credentials { username = "u"; password = "p" }\n'
+            '        }\n'
+            '    }\n'
+            '    dependencies {\n'
+            '        classpath("org.jetbrains.kotlin:kotlin-gradle-plugin:2.1.0")\n'
+            '    }\n'
+            '}'
+        )
+        result = server._parse_buildscript_classpath(content)
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0]["artifactId"], "kotlin-gradle-plugin")
+        self.assertEqual(result[0]["version"], "2.1.0")
+
 
 # ---------------------------------------------------------------------------
 # _parse_settings_modules
