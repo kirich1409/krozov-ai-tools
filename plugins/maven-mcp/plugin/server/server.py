@@ -72,6 +72,11 @@ OSV_API = "https://api.osv.dev/v1/querybatch"
 # OSV.dev documents a maximum of 1000 queries per /v1/querybatch request.
 # query_osv_batch chunks above this so a large monorepo audit cannot fail as a unit.
 OSV_QUERYBATCH_MAX = 1000
+# /v1/querybatch returns only {id, modified} per vuln — severity/summary/fixed
+# require a follow-up GET /v1/vulns/{id} (#338). Cap bounds worst-case fan-out
+# per query_osv_batch call (unique IDs, first-seen order); excess stay bare.
+OSV_VULN_API = "https://api.osv.dev/v1/vulns"
+MAX_OSV_VULN_HYDRATIONS = 100
 SEARCH_API = "https://search.maven.org/solrsearch/select"
 # search_artifacts limit: coerced to int and clamped in the handler before the
 # Solr URL is built (MCP schema bounds are advisory client metadata only).
@@ -1471,23 +1476,113 @@ def _is_malicious_id(vuln_id: str) -> bool:
     return vuln_id.startswith("MAL-")
 
 
+def _fetch_osv_vuln(vuln_id: str) -> Optional[Dict]:
+    """GET /v1/vulns/{id}. Returns the parsed vuln dict, or None on any failure."""
+    url = f"{OSV_VULN_API}/{urllib.parse.quote(vuln_id, safe='-._')}"
+    try:
+        status, body = http_get(url)
+        if status != 200:
+            return None
+        data = json.loads(body)
+        return data if isinstance(data, dict) else None
+    except Exception:
+        return None
+
+
+def _hydrate_osv_vulns(vuln_ids: List[str]) -> Dict[str, Dict]:
+    """Fetch full OSV records for unique IDs (first-seen order), capped.
+
+    Returns id → full vuln dict for successful hydrations only. IDs skipped by
+    the cap or failed fetches are absent — callers keep the bare querybatch
+    entry for those. Counts each network attempt toward MAX_OSV_VULN_HYDRATIONS
+    (same operational-bound pattern as MAX_GATED_SOLR_CALLS_PER_BATCH).
+    """
+    out: Dict[str, Dict] = {}
+    seen: set = set()
+    attempts = 0
+    for vid in vuln_ids:
+        if not vid or vid in seen:
+            continue
+        seen.add(vid)
+        if attempts >= MAX_OSV_VULN_HYDRATIONS:
+            continue
+        attempts += 1
+        full = _fetch_osv_vuln(vid)
+        if full is not None:
+            out[vid] = full
+    return out
+
+
+def _vuln_info_from_osv(v: Dict) -> Dict:
+    """Build the public per-vuln dict from a (possibly hydrated) OSV record."""
+    vuln_id = v.get("id", "")
+    vuln_info: Dict = {
+        "id": vuln_id,
+        "summary": v.get("summary", ""),
+        "url": _extract_url(v),
+        "malicious": _is_malicious_id(vuln_id),
+    }
+    sev = _extract_severity(v)
+    if sev:
+        vuln_info["severity"] = sev
+    fixed = _extract_fixed_version(v)
+    if fixed:
+        vuln_info["fixedVersion"] = fixed
+    return vuln_info
+
+
 def query_osv_batch(deps: List[Dict]) -> List[Dict]:
     """deps: list of {groupId, artifactId, version}. Returns list of {groupId, artifactId, version, vulnerabilities}.
 
     Chunks into ≤OSV_QUERYBATCH_MAX queries per POST (OSV.dev documented limit)
     and concatenates per-chunk results in input order. A failed chunk degrades
     only that slice to empty vulnerabilities — siblings still resolve.
+
+    /v1/querybatch returns only ``{id, modified}`` per vuln; severity, summary,
+    references, and fixed-version ranges require a follow-up GET /v1/vulns/{id}
+    (#338). Unique IDs are hydrated once per call (deduped, first-seen order),
+    capped at MAX_OSV_VULN_HYDRATIONS; failed/capped IDs keep the bare entry
+    (id + malicious still work; severity may be absent).
     """
     if not deps:
         return []
-    out: List[Dict] = []
+    # Phase 1: querybatch chunks → (dep, bare vulns_raw) pairs.
+    bare_pairs: List[Tuple[Dict, List[Dict]]] = []
     for start in range(0, len(deps), OSV_QUERYBATCH_MAX):
-        out.extend(_query_osv_batch_chunk(deps[start:start + OSV_QUERYBATCH_MAX]))
+        bare_pairs.extend(
+            _query_osv_batch_chunk_bare(deps[start:start + OSV_QUERYBATCH_MAX])
+        )
+    # Phase 2: hydrate unique IDs across the whole batch (one GET per id).
+    ids_ordered: List[str] = []
+    for _, vulns_raw in bare_pairs:
+        for v in vulns_raw:
+            vid = v.get("id") or ""
+            if vid:
+                ids_ordered.append(vid)
+    hydrated = _hydrate_osv_vulns(ids_ordered)
+    # Phase 3: merge hydrated records and extract public fields.
+    out: List[Dict] = []
+    for dep, vulns_raw in bare_pairs:
+        vulns = []
+        for v in vulns_raw:
+            vid = v.get("id") or ""
+            full = hydrated.get(vid, v)
+            if full.get("withdrawn") is not None:
+                continue
+            # Prefer hydrated id when present; bare querybatch always has id.
+            if not full.get("id") and vid:
+                full = {**full, "id": vid}
+            vulns.append(_vuln_info_from_osv(full))
+        out.append({**dep, "vulnerabilities": vulns})
     return out
 
 
-def _query_osv_batch_chunk(deps: List[Dict]) -> List[Dict]:
-    """POST one ≤OSV_QUERYBATCH_MAX querybatch; empty vulns on non-200 / error."""
+def _query_osv_batch_chunk_bare(deps: List[Dict]) -> List[Tuple[Dict, List[Dict]]]:
+    """POST one ≤OSV_QUERYBATCH_MAX querybatch; return (dep, vulns_raw) pairs.
+
+    On non-200 / error every dep gets an empty vulns_raw list. Does not hydrate
+    or filter withdrawn — that happens after /v1/vulns/{id} merge.
+    """
     queries = [
         {"package": {"name": f"{d['groupId']}:{d['artifactId']}", "ecosystem": "Maven"}, "version": d["version"]}
         for d in deps
@@ -1495,32 +1590,16 @@ def _query_osv_batch_chunk(deps: List[Dict]) -> List[Dict]:
     try:
         status, body = http_post_json(OSV_API, {"queries": queries})
         if status != 200:
-            return [{**d, "vulnerabilities": []} for d in deps]
+            return [(d, []) for d in deps]
         data = json.loads(body)
         results = data.get("results", [])
-        out = []
+        out: List[Tuple[Dict, List[Dict]]] = []
         for i, dep in enumerate(deps):
             vulns_raw = (results[i].get("vulns") or []) if i < len(results) else []
-            vulns_raw = [v for v in vulns_raw if v.get("withdrawn") is None]
-            vulns = []
-            for v in vulns_raw:
-                vuln_info = {
-                    "id": v.get("id", ""),
-                    "summary": v.get("summary", ""),
-                    "url": _extract_url(v),
-                }
-                vuln_info["malicious"] = _is_malicious_id(v.get("id", ""))
-                sev = _extract_severity(v)
-                if sev:
-                    vuln_info["severity"] = sev
-                fixed = _extract_fixed_version(v)
-                if fixed:
-                    vuln_info["fixedVersion"] = fixed
-                vulns.append(vuln_info)
-            out.append({**dep, "vulnerabilities": vulns})
+            out.append((dep, list(vulns_raw)))
         return out
     except Exception:
-        return [{**d, "vulnerabilities": []} for d in deps]
+        return [(d, []) for d in deps]
 
 
 # ---------------------------------------------------------------------------
