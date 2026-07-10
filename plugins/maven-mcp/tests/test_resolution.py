@@ -573,7 +573,7 @@ class TestProvenanceReporting(unittest.TestCase):
                 "artifactId": "lib",
                 "version": "1.0.0",
                 "resolvedBy": "gradle",
-                "usages": [{"module": None, "configuration": "implementation"}],
+                "usages": [{"module": None, "configuration": "releaseRuntimeClasspath"}],
             }]
             with mock_gradle_resolve(resolved):
                 with unittest.mock.patch(
@@ -937,7 +937,7 @@ class TestAuditDownstreamErrorResolvedFrom(unittest.TestCase):
                 "artifactId": "lib",
                 "version": "1.0.0",
                 "resolvedBy": "gradle",
-                "usages": [{"module": None, "configuration": "implementation"}],
+                "usages": [{"module": None, "configuration": "releaseRuntimeClasspath"}],
             }]
             with mock_gradle_resolve(resolved):
                 with unittest.mock.patch(

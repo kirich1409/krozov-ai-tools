@@ -893,7 +893,7 @@ class TestMaliciousFlag(unittest.TestCase):
                 "artifactId": "scribejava-core",
                 "version": "1.0.0",
                 "resolvedBy": "gradle",
-                "usages": [{"module": None, "configuration": "implementation"}],
+                "usages": [{"module": None, "configuration": "releaseRuntimeClasspath"}],
             }]
             with mock_gradle_resolve(resolved), \
                     unittest.mock.patch.object(

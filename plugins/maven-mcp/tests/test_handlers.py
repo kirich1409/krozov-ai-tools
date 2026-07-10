@@ -635,7 +635,7 @@ class TestAuditProjectDependencies(unittest.TestCase):
                 "resolvedBy": "gradle",
                 "usages": [{"module": None, "configuration": "plugin-dsl"}],
             }]
-            with mock_gradle_resolve(resolved):
+            with mock_gradle_resolve(resolved, production_count=1):
                 with _patch_urlopen(responses):
                     out = server.handle_audit_project_dependencies({"projectPath": root})
         plugin_entries = [

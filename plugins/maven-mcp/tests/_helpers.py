@@ -226,8 +226,20 @@ def mock_gradle_resolve(
     *,
     errors: Optional[List[str]] = None,
     notes: Optional[List[str]] = None,
+    production_count: Optional[int] = None,
 ):
     """Patch ``server._gradle_resolve_dependencies`` to return fixture output."""
+
+    def _production_count(deps: List[Dict]) -> int:
+        count = 0
+        for dep in deps:
+            for usage in dep.get("usages") or []:
+                if server._is_production_runtime_configuration(
+                    usage.get("configuration", "")
+                ):
+                    count += 1
+                    break
+        return count
 
     def _fake_resolve(_project_root: str) -> Dict:
         deps = list(dependencies if dependencies is not None else [])
@@ -240,12 +252,17 @@ def mock_gradle_resolve(
                 "artifactId": "fixture",
                 "version": "1.0",
                 "resolvedBy": "gradle",
-                "usages": [{"module": None, "configuration": "runtimeClasspath"}],
+                "usages": [{"module": None, "configuration": "releaseRuntimeClasspath"}],
             }]
         return {
             "dependencies": deps,
             "notes": list(notes or []),
             "errors": err,
+            "productionCount": (
+                production_count
+                if production_count is not None
+                else _production_count(deps)
+            ),
         }
 
     with unittest.mock.patch.object(server, "_gradle_resolve_dependencies", _fake_resolve):

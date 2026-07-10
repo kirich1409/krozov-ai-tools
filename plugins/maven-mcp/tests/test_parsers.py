@@ -1368,7 +1368,7 @@ class TestCollectGradleProvenance(unittest.TestCase):
 class TestScanProjectGradle(unittest.TestCase):
     """End-to-end Gradle scan with mocked gradlew resolution."""
 
-    def _resolved(self, group_id, artifact_id, version, module=None, configuration="implementation"):
+    def _resolved(self, group_id, artifact_id, version, module=None, configuration="releaseRuntimeClasspath"):
         return {
             "groupId": group_id,
             "artifactId": artifact_id,
@@ -1513,7 +1513,7 @@ class TestScanProjectBuildSrc(unittest.TestCase):
             "artifactId": artifact_id,
             "version": version,
             "resolvedBy": "gradle",
-            "usages": [{"module": None, "configuration": "implementation"}],
+            "usages": [{"module": None, "configuration": "releaseRuntimeClasspath"}],
         }
 
     def test_no_buildsrc_or_build_logic_no_new_kinds_emitted(self):
@@ -1554,7 +1554,7 @@ class TestScanProjectBuildSrc(unittest.TestCase):
                 "artifactId": "ktor-client-core",
                 "version": "3.1.1",
                 "resolvedBy": "gradle",
-                "usages": [{"module": ":app", "configuration": "implementation"}],
+                "usages": [{"module": ":app", "configuration": "releaseRuntimeClasspath"}],
             },
             self._resolved("com.squareup", "javapoet", "1.13.0"),
         ]

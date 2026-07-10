@@ -2439,6 +2439,83 @@ def get_transitive_graph(
     return result
 
 
+def _detect_conflicts_from_gradle_scan(scan: Dict[str, Any]) -> Dict[str, Any]:
+    """Detect version conflicts from Gradle-resolved scan usages (highest-wins)."""
+    strategy = strategy_for_build_system("gradle")
+    bs_label = scan.get("buildSystem") or "gradle"
+
+    # ga -> version -> {sources: [usage labels…]}
+    ga_versions: Dict[Tuple[str, str], Dict[str, Dict[str, Any]]] = {}
+    for dep in scan.get("dependencies") or []:
+        if dep.get("isPlatform"):
+            continue
+        gid, aid = dep.get("groupId"), dep.get("artifactId")
+        ver = dep.get("version") or dep.get("effectiveVersion")
+        if not gid or not aid or not ver:
+            continue
+        usages = dep.get("usages") or [{"module": None, "configuration": ""}]
+        for usage in usages:
+            module = usage.get("module")
+            config = usage.get("configuration", "")
+            label = f"{module}:{config}" if module else (config or "gradle-resolved")
+            bucket = ga_versions.setdefault((gid, aid), {})
+            info = bucket.setdefault(ver, {"sources": []})
+            if label not in info["sources"]:
+                info["sources"].append(label)
+
+    conflicts: List[Dict[str, Any]] = []
+    for (gid, aid), ver_map in sorted(ga_versions.items()):
+        versions = list(ver_map.keys())
+        if len(versions) < 2:
+            continue
+        resolved = resolve_conflict_version(versions, strategy)
+        sources: List[Dict[str, Any]] = []
+        for v in sorted(versions, key=functools.cmp_to_key(compare_versions)):
+            sources.append({
+                "version": v,
+                "via": ver_map[v]["sources"][:10],
+                "minDepth": None,
+            })
+        conflicts.append({
+            "groupId": gid,
+            "artifactId": aid,
+            "versions": sorted(versions, key=functools.cmp_to_key(compare_versions)),
+            "resolvedTo": resolved,
+            "strategy": strategy,
+            "risk": _conflict_risk(versions, resolved),
+            "sources": sources,
+        })
+
+    risk_order = {"high": 0, "medium": 1, "low": 2}
+    conflicts.sort(
+        key=lambda c: (
+            risk_order.get(c["risk"], 9),
+            c["groupId"],
+            c["artifactId"],
+        )
+    )
+
+    notes = [
+        "Conflict detection derived from Gradle-resolved dependency scan usages "
+        + "(highest-wins mediation).",
+        "Compares versions of the same groupId:artifactId seen across module/"
+        + "configuration usages in the resolved tree.",
+        "Does not model ResolutionStrategy, strict versions, or enforcedPlatform "
+        + "overrides beyond what Gradle already reported.",
+    ]
+    return {
+        "buildSystem": bs_label,
+        "strategy": strategy,
+        "conflicts": conflicts,
+        "scannedRoots": 0,
+        "graphsFetched": 0,
+        "graphsFailed": 0,
+        "partial": False,
+        "errors": [],
+        "notes": notes,
+    }
+
+
 def detect_dependency_conflicts(
     project_path: str,
     build_system: Optional[str] = None,
@@ -2458,8 +2535,9 @@ def detect_dependency_conflicts(
     if ctx is None:
         ctx = build_resolution_context({"projectPath": project_path})
     scan = scan_project(project_path)
-    if scan.get("resolvedBy") != "gradle":
-        apply_bom_managed_versions(scan, ctx)
+    if scan.get("resolvedBy") == "gradle":
+        return _detect_conflicts_from_gradle_scan(scan)
+    apply_bom_managed_versions(scan, ctx)
 
     detected_bs = scan.get("buildSystem") or "unknown"
     bs = (build_system or detected_bs or "unknown").lower()
@@ -6935,19 +7013,29 @@ def _find_gradle_wrapper(project_root: str) -> Optional[str]:
     return None
 
 
+def _gradle_cli_prefix_args() -> List[str]:
+    """CLI flags prepended to every Gradle wrapper invocation."""
+    if _offline_enabled():
+        return ["--offline"]
+    return []
+
+
 def _run_gradle_command(
     project_root: str,
     gradlew: str,
     args: List[str],
     timeout: int = GRADLE_RESOLVE_TIMEOUT,
 ) -> Tuple[int, str, str]:
-    result = _gradle_run(
-        [gradlew] + args,
-        cwd=project_root,
-        capture_output=True,
-        text=True,
-        timeout=timeout,
-    )
+    try:
+        result = _gradle_run(
+            [gradlew] + _gradle_cli_prefix_args() + args,
+            cwd=project_root,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+    except subprocess.TimeoutExpired:
+        return 124, "", f"Gradle command timed out after {timeout}s"
     return result.returncode, result.stdout or "", result.stderr or ""
 
 
@@ -6986,7 +7074,10 @@ def _parse_gradle_dependencies_stdout(
         m = re.match(r"^(?:\+---|\\---)\s+(.+)$", line)
         if not m:
             continue
-        gav = _parse_gav_from_dependency_line(m.group(1))
+        token = m.group(1).strip()
+        if re.search(r"\(n\)\s*$", token):
+            continue
+        gav = _parse_gav_from_dependency_line(token)
         if not gav:
             continue
         group_id, artifact_id, version = gav
@@ -7035,7 +7126,87 @@ def _parse_build_environment_classpath(stdout: str) -> List[Dict]:
     return deps
 
 
-def _discover_gradle_modules(project_root: str) -> List[str]:
+def _is_production_runtime_configuration(config: str) -> bool:
+    """True for production runtime classpaths; excludes test/compile/classpath."""
+    if not config:
+        return False
+    if _is_test_configuration(config):
+        return False
+    if config in ("classpath", "compileOnly"):
+        return False
+    if config == "compileClasspath" or config.endswith("CompileClasspath"):
+        return False
+    return config.endswith("RuntimeClasspath")
+
+
+def _parse_gradle_configuration_headers(stdout: str) -> List[str]:
+    """Extract configuration names from ``gradlew … dependencies`` probe output."""
+    configs: List[str] = []
+    seen: set = set()
+    for line in stdout.splitlines():
+        m = re.match(r"^([A-Za-z][\w\d]*) - ", line)
+        if not m:
+            continue
+        name = m.group(1)
+        if name not in seen:
+            seen.add(name)
+            configs.append(name)
+    return configs
+
+
+def _select_configurations_to_resolve(available: List[str]) -> List[str]:
+    """Pick production runtime configurations from a probed Gradle config list."""
+    selected = [c for c in available if _is_production_runtime_configuration(c)]
+    if not selected:
+        return []
+
+    def _sort_key(name: str) -> Tuple[int, str]:
+        if name.startswith("release") and name.endswith("RuntimeClasspath"):
+            return (0, name)
+        if name.endswith("RuntimeClasspath"):
+            return (1, name)
+        return (2, name)
+
+    selected.sort(key=_sort_key)
+    if any(
+        c.startswith("release") and c.endswith("RuntimeClasspath")
+        for c in selected
+    ):
+        selected = [c for c in selected if c != "runtimeClasspath"]
+    return selected
+
+
+def _probe_gradle_configurations(
+    project_root: str,
+    gradlew: str,
+    module: str,
+) -> Tuple[List[str], Optional[str]]:
+    if module == ":":
+        args = ["-q", "dependencies"]
+        task_label = ":dependencies"
+    else:
+        args = ["-q", f"{module}:dependencies"]
+        task_label = f"{module}:dependencies"
+    code, stdout, stderr = _run_gradle_command(project_root, gradlew, args)
+    if code != 0:
+        msg = f"{task_label} probe exited with code {code}"
+        if stderr.strip():
+            msg += f": {stderr.strip()}"
+        return [], msg
+    return _parse_gradle_configuration_headers(stdout), None
+
+
+def _count_production_runtime_deps(deps: List[Dict]) -> int:
+    count = 0
+    for dep in deps:
+        for usage in dep.get("usages") or []:
+            if _is_production_runtime_configuration(usage.get("configuration", "")):
+                count += 1
+                break
+    return count
+
+
+def _discover_gradle_modules(project_root: str, gradlew: Optional[str] = None) -> List[str]:
     modules = [":"]
     settings_content = None
     for fname in GRADLE_SETTINGS_FILES:
@@ -7048,7 +7219,20 @@ def _discover_gradle_modules(project_root: str) -> List[str]:
         for module_path in _parse_settings_modules(settings_content):
             if not module_path.startswith(":"):
                 module_path = ":" + module_path
-            modules.append(module_path)
+            if module_path not in modules:
+                modules.append(module_path)
+    if gradlew:
+        code, stdout, _stderr = _run_gradle_command(project_root, gradlew, ["-q", "projects"])
+        if code == 0:
+            for line in stdout.splitlines():
+                m = re.search(r"Project '([^']+)'", line)
+                if not m:
+                    continue
+                module_path = m.group(1)
+                if not module_path.startswith(":"):
+                    module_path = ":" + module_path
+                if module_path not in modules:
+                    modules.append(module_path)
     return modules
 
 
@@ -7091,9 +7275,21 @@ def _gradle_resolve_dependencies(project_root: str) -> Dict:
     attempts = 0
     failures = 0
 
-    for module in _discover_gradle_modules(project_root):
-        for configuration in _GRADLE_RESOLVE_CONFIGURATIONS:
-            if _is_test_configuration(configuration):
+    for module in _discover_gradle_modules(project_root, gradlew):
+        probed, probe_err = _probe_gradle_configurations(project_root, gradlew, module)
+        if probe_err:
+            errors.append(probe_err)
+        configurations = _select_configurations_to_resolve(probed)
+        if not configurations:
+            configurations = [
+                c for c in _GRADLE_RESOLVE_CONFIGURATIONS
+                if _is_production_runtime_configuration(c)
+            ]
+
+        skip_bare_runtime = False
+        module_label = None if module == ":" else module
+        for configuration in configurations:
+            if configuration == "runtimeClasspath" and skip_bare_runtime:
                 continue
             if module == ":":
                 args = ["-q", "dependencies", "--configuration", configuration]
@@ -7110,10 +7306,14 @@ def _gradle_resolve_dependencies(project_root: str) -> Dict:
                     msg += f": {stderr.strip()}"
                 errors.append(msg)
                 continue
-            module_label = None if module == ":" else module
-            collected.extend(
-                _parse_gradle_dependencies_stdout(stdout, module_label, configuration)
-            )
+            parsed = _parse_gradle_dependencies_stdout(stdout, module_label, configuration)
+            collected.extend(parsed)
+            if (
+                parsed
+                and configuration.startswith("release")
+                and configuration.endswith("RuntimeClasspath")
+            ):
+                skip_bare_runtime = True
 
     attempts += 1
     code, stdout, stderr = _run_gradle_command(project_root, gradlew, ["-q", "buildEnvironment"])
@@ -7126,15 +7326,24 @@ def _gradle_resolve_dependencies(project_root: str) -> Dict:
             msg += f": {stderr.strip()}"
         errors.append(msg)
 
-    if not collected and failures == attempts and attempts > 0:
-        notes.append("All Gradle dependency tasks failed.")
-    elif not collected and not errors:
-        notes.append("No production configurations resolved; project may lack applicable variants.")
+    deduped = _dedupe_gradle_resolved_deps(collected)
+    production_count = _count_production_runtime_deps(deduped)
+    if production_count == 0:
+        if deduped:
+            errors.append(
+                "No production runtime dependencies resolved; only build classpath/"
+                + "plugin dependencies were found"
+            )
+        elif failures == attempts and attempts > 0:
+            notes.append("All Gradle dependency tasks failed.")
+        elif not errors:
+            notes.append("No production configurations resolved; project may lack applicable variants.")
 
     return {
-        "dependencies": _dedupe_gradle_resolved_deps(collected),
+        "dependencies": deduped,
         "notes": notes,
         "errors": errors,
+        "productionCount": production_count,
     }
 
 
@@ -7395,7 +7604,8 @@ def _merge_gradle_with_provenance(resolved: List[Dict], provenance: List[Dict]) 
             prov_by_ga[(gid, aid)] = dep
 
     merged: List[Dict] = []
-    in_output: set = set()
+    in_output_ga: set = set()
+    in_output_catalog: set = set()
 
     for dep in resolved:
         key = (dep["groupId"], dep["artifactId"])
@@ -7408,35 +7618,68 @@ def _merge_gradle_with_provenance(resolved: List[Dict], provenance: List[Dict]) 
         }
         prov = prov_by_ga.get(key)
         if prov and prov.get("source"):
-            entry["source"] = prov["source"]
-            if prov.get("isPlatform"):
-                entry["isPlatform"] = True
-                entry["platformKind"] = prov.get("platformKind")
+            source_kind = prov["source"].get("kind", "")
+            alias = prov["source"].get("alias")
+            prov_usages = prov.get("usages") or []
+            attach_catalog = (
+                source_kind not in ("catalog-library", "catalog-plugin")
+                or bool(prov_usages)
+            )
+            if attach_catalog:
+                entry["source"] = prov["source"]
+                if prov.get("isPlatform"):
+                    entry["isPlatform"] = True
+                    entry["platformKind"] = prov.get("platformKind")
+                if source_kind in ("catalog-library", "catalog-plugin") and alias:
+                    in_output_catalog.add((source_kind, alias))
+            else:
+                entry["source"] = {"kind": "gradle-resolved"}
         else:
             entry["source"] = {"kind": "gradle-resolved"}
         merged.append(entry)
-        in_output.add(key)
+        in_output_ga.add(key)
 
     for prov in provenance:
         gid, aid = prov.get("groupId"), prov.get("artifactId")
         if not gid or not aid:
             continue
+        source = prov.get("source") or {}
+        kind = source.get("kind", "")
+        alias = source.get("alias")
         key = (gid, aid)
-        if key in in_output:
+        if kind in ("catalog-library", "catalog-plugin"):
+            catalog_key = (kind, alias) if alias else (kind, gid, aid)
+            if catalog_key in in_output_catalog:
+                continue
+            entry = {
+                "groupId": gid,
+                "artifactId": aid,
+                "version": prov.get("version"),
+                "resolvedBy": "provenance",
+                "source": source or {"kind": "unknown"},
+                "usages": list(prov.get("usages") or []),
+            }
+            if prov.get("isPlatform"):
+                entry["isPlatform"] = True
+                entry["platformKind"] = prov.get("platformKind")
+            merged.append(entry)
+            in_output_catalog.add(catalog_key)
+            continue
+        if key in in_output_ga:
             continue
         entry = {
             "groupId": gid,
             "artifactId": aid,
             "version": prov.get("version"),
             "resolvedBy": "provenance",
-            "source": prov.get("source") or {"kind": "unknown"},
+            "source": source or {"kind": "unknown"},
             "usages": list(prov.get("usages") or []),
         }
         if prov.get("isPlatform"):
             entry["isPlatform"] = True
             entry["platformKind"] = prov.get("platformKind")
         merged.append(entry)
-        in_output.add(key)
+        in_output_ga.add(key)
 
     return merged
 
@@ -7457,8 +7700,9 @@ def scan_project(project_root: str) -> Dict:
                 "Add the wrapper with `gradle wrapper` or copy gradlew from a template project."
             )
         resolved = _gradle_resolve_dependencies(project_root)
-        if not resolved.get("dependencies"):
-            detail = resolved.get("errors") or resolved.get("notes") or ["no dependencies resolved"]
+        production_count = resolved.get("productionCount", 0)
+        if production_count == 0:
+            detail = resolved.get("errors") or resolved.get("notes") or ["no production runtime dependencies resolved"]
             raise ValueError(
                 "Gradle dependency resolution failed: " + "; ".join(detail)
             )
@@ -7466,10 +7710,19 @@ def scan_project(project_root: str) -> Dict:
         dependencies = _merge_gradle_with_provenance(
             resolved["dependencies"], provenance["dependencies"]
         )
+        for dep in provenance["dependencies"]:
+            if dep.get("isPlatform") and dep.get("version"):
+                managed_pins.append({
+                    "groupId": dep["groupId"],
+                    "artifactId": dep["artifactId"],
+                    "version": dep["version"],
+                    "module": (dep.get("usages") or [{}])[0].get("module"),
+                })
         result: Dict[str, Any] = {
             "buildSystem": "gradle",
             "dependencies": dependencies,
             "deadRepositoryHints": provenance.get("deadRepositoryHints", []),
+            "managedPins": managed_pins,
             "resolvedBy": "gradle",
             "notes": resolved.get("notes", []),
         }

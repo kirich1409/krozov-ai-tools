@@ -176,7 +176,7 @@ class TestApplyBomManagedVersions(unittest.TestCase):
                     "artifactId": "lib",
                     "version": None,
                     "source": {"kind": "module-direct", "file": "pom.xml", "module": None},
-                    "usages": [{"module": None, "configuration": "implementation"}],
+                    "usages": [{"module": None, "configuration": "releaseRuntimeClasspath"}],
                 },
             ],
             "managedPins": [
@@ -211,14 +211,14 @@ class TestApplyBomManagedVersions(unittest.TestCase):
                     "isPlatform": True,
                     "platformKind": "platform",
                     "source": {"kind": "module-direct", "file": "build.gradle.kts", "module": None},
-                    "usages": [{"module": None, "configuration": "implementation"}],
+                    "usages": [{"module": None, "configuration": "releaseRuntimeClasspath"}],
                 },
                 {
                     "groupId": "com.example",
                     "artifactId": "lib",
                     "version": "9.9.9",
                     "source": {"kind": "module-direct", "file": "build.gradle.kts", "module": None},
-                    "usages": [{"module": None, "configuration": "implementation"}],
+                    "usages": [{"module": None, "configuration": "releaseRuntimeClasspath"}],
                 },
             ],
             "managedPins": [],
@@ -252,14 +252,14 @@ class TestScanAuditBomIntegration(unittest.TestCase):
                 "version": "1.0",
                 "resolvedBy": "gradle",
                 "isPlatform": True,
-                "usages": [{"module": None, "configuration": "implementation"}],
+                "usages": [{"module": None, "configuration": "releaseRuntimeClasspath"}],
             },
             {
                 "groupId": "com.example",
                 "artifactId": "lib",
                 "version": "1.2.3",
                 "resolvedBy": "gradle",
-                "usages": [{"module": None, "configuration": "implementation"}],
+                "usages": [{"module": None, "configuration": "releaseRuntimeClasspath"}],
             },
         ]
         with temp_project(files) as root:
@@ -329,14 +329,14 @@ class TestScanAuditBomIntegration(unittest.TestCase):
                 "artifactId": "bom",
                 "version": "1.0",
                 "resolvedBy": "gradle",
-                "usages": [{"module": None, "configuration": "implementation"}],
+                "usages": [{"module": None, "configuration": "releaseRuntimeClasspath"}],
             },
             {
                 "groupId": "com.example",
                 "artifactId": "lib",
                 "version": "1.0.0",
                 "resolvedBy": "gradle",
-                "usages": [{"module": None, "configuration": "implementation"}],
+                "usages": [{"module": None, "configuration": "releaseRuntimeClasspath"}],
             },
         ]
         responses = [
