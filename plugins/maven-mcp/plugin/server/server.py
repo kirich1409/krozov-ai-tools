@@ -7596,12 +7596,34 @@ def _collect_gradle_provenance(project_root: str) -> Dict:
     return {"dependencies": dependencies, "deadRepositoryHints": dead_repo_hints}
 
 
+_PROVENANCE_SOURCE_PRIORITY = {
+    "catalog-library": 0,
+    "catalog-plugin": 1,
+    "plugins-dsl": 2,
+    "buildscript-classpath": 3,
+    "module-direct": 4,
+    "buildsrc": 5,
+    "convention-plugin": 6,
+}
+
+
+def _pick_best_provenance(candidates: List[Dict]) -> Optional[Dict]:
+    if not candidates:
+        return None
+    return min(
+        candidates,
+        key=lambda d: _PROVENANCE_SOURCE_PRIORITY.get(
+            (d.get("source") or {}).get("kind", ""), 99
+        ),
+    )
+
+
 def _merge_gradle_with_provenance(resolved: List[Dict], provenance: List[Dict]) -> List[Dict]:
-    prov_by_ga: Dict[Tuple[str, str], Dict] = {}
+    prov_by_ga: Dict[Tuple[str, str], List[Dict]] = {}
     for dep in provenance:
         gid, aid = dep.get("groupId"), dep.get("artifactId")
         if gid and aid:
-            prov_by_ga[(gid, aid)] = dep
+            prov_by_ga.setdefault((gid, aid), []).append(dep)
 
     merged: List[Dict] = []
     in_output_ga: set = set()
@@ -7616,7 +7638,7 @@ def _merge_gradle_with_provenance(resolved: List[Dict], provenance: List[Dict]) 
             "resolvedBy": "gradle",
             "usages": list(dep.get("usages") or []),
         }
-        prov = prov_by_ga.get(key)
+        prov = _pick_best_provenance(prov_by_ga.get(key, []))
         if prov and prov.get("source"):
             source_kind = prov["source"].get("kind", "")
             alias = prov["source"].get("alias")

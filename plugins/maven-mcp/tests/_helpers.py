@@ -61,6 +61,7 @@ __all__ = [
     "empty_ctx",
     "temp_cache_dir",
     "write_fake_gradlew",
+    "write_smart_gradlew",
     "mock_gradle_resolve",
 ]
 
@@ -216,7 +217,49 @@ def write_fake_gradlew(root: str) -> str:
     path = os.path.join(root, "gradlew")
     with open(path, "w", encoding="utf-8") as fh:
         fh.write("#!/bin/sh\nexit 0\n")
-    os.chmod(path, 0o755)
+    # Owner-only executable — avoids CodeQL py/overly-permissive-chmod on 0o755.
+    os.chmod(path, 0o700)
+    return path
+
+
+def write_smart_gradlew(root: str) -> str:
+    """Create a ``gradlew`` stub that echoes fixture dependency-tree output.
+
+    Exercises the real subprocess → parse path in ``_gradle_resolve_dependencies``
+    without a JVM or Gradle installation.
+    """
+    path = os.path.join(root, "gradlew")
+    script = r"""#!/bin/sh
+joined="$*"
+if echo "$joined" | grep -q "projects"; then
+  printf '%s\n' "Root project 'demo'" "Project ':app'"
+  exit 0
+fi
+if echo "$joined" | grep -q "buildEnvironment"; then
+  printf '%s\n' "classpath" "+--- com.android.tools.build:gradle:8.0.0"
+  exit 0
+fi
+if echo "$joined" | grep -q ":app:dependencies" && echo "$joined" | grep -q "releaseRuntimeClasspath"; then
+  printf '%s\n' \
+    "releaseRuntimeClasspath - Runtime classpath of source set 'main'." \
+    "+--- io.ktor:ktor-client-core:3.1.1 -> 3.1.2"
+  exit 0
+fi
+if echo "$joined" | grep -q ":app:dependencies" && ! echo "$joined" | grep -q -- "--configuration"; then
+  printf '%s\n' \
+    "releaseRuntimeClasspath - Runtime classpath of source set 'main'." \
+    "compileClasspath - Compile classpath of source set 'main'."
+  exit 0
+fi
+if echo "$joined" | grep -q -- "-q dependencies" && echo "$joined" | grep -q "releaseRuntimeClasspath"; then
+  printf '%s\n' "releaseRuntimeClasspath - Runtime classpath of source set 'main'."
+  exit 0
+fi
+exit 0
+"""
+    with open(path, "w", encoding="utf-8") as fh:
+        fh.write(script)
+    os.chmod(path, 0o700)
     return path
 
 

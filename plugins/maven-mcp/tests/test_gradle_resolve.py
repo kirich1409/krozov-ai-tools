@@ -1,11 +1,16 @@
 """Gradle-resolved dependency scanning (#392 / #393 / #394)."""
 
-import os
 import subprocess
 import unittest
 import unittest.mock
 
-from _helpers import mock_gradle_resolve, server, temp_project, write_fake_gradlew
+from _helpers import (
+    mock_gradle_resolve,
+    server,
+    temp_project,
+    write_fake_gradlew,
+    write_smart_gradlew,
+)
 
 
 RUNTIME_CLASSPATH_FIXTURE = """
@@ -370,6 +375,65 @@ class TestGradleResolveIntegration(unittest.TestCase):
         self.assertTrue(any("debugRuntimeClasspath" in e for e in result.get("gradleErrors", [])))
         flat = server.flatten_scan_result(result)
         self.assertIn("gradleErrors", flat)
+
+
+class TestGradleResolveSubprocessE2E(unittest.TestCase):
+    """End-to-end: real subprocess to smart gradlew stub (no JVM)."""
+
+    def test_scan_project_via_subprocess_stub(self):
+        files = {
+            "settings.gradle.kts": 'include(":app")',
+            "gradle/libs.versions.toml": (
+                "[libraries]\n"
+                'ktor-core = { module = "io.ktor:ktor-client-core", version = "3.1.1" }\n'
+            ),
+            "app/build.gradle.kts": (
+                "dependencies {\n"
+                "    implementation(libs.ktor.core)\n"
+                "}"
+            ),
+        }
+        with temp_project(files) as root:
+            write_smart_gradlew(root)
+            result = server.scan_project(root)
+        dep = next(
+            d for d in result["dependencies"]
+            if d["groupId"] == "io.ktor"
+            and d["artifactId"] == "ktor-client-core"
+            and d["version"] == "3.1.2"
+        )
+        self.assertEqual(dep["version"], "3.1.2")
+        self.assertEqual(dep["source"]["kind"], "catalog-library")
+        self.assertEqual(result["resolvedBy"], "gradle")
+
+
+class TestPickBestProvenance(unittest.TestCase):
+    def test_catalog_wins_over_module_direct(self):
+        resolved = [{
+            "groupId": "io.ktor",
+            "artifactId": "ktor-client-core",
+            "version": "3.1.2",
+            "usages": [{"module": ":app", "configuration": "releaseRuntimeClasspath"}],
+        }]
+        provenance = [
+            {
+                "groupId": "io.ktor",
+                "artifactId": "ktor-client-core",
+                "version": "3.1.1",
+                "source": {"kind": "module-direct", "file": "app/build.gradle.kts"},
+                "usages": [],
+            },
+            {
+                "groupId": "io.ktor",
+                "artifactId": "ktor-client-core",
+                "version": "3.1.1",
+                "source": {"kind": "catalog-library", "alias": "ktor-core"},
+                "usages": [{"module": ":app", "configuration": "implementation"}],
+            },
+        ]
+        merged = server._merge_gradle_with_provenance(resolved, provenance)
+        gradle_dep = next(d for d in merged if d.get("resolvedBy") == "gradle")
+        self.assertEqual(gradle_dep["source"]["kind"], "catalog-library")
 
 
 class TestFlattenScanResultResolvedBy(unittest.TestCase):
