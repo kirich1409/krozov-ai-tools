@@ -7088,6 +7088,8 @@ def _gradle_resolve_dependencies(project_root: str) -> Dict:
     collected: List[Dict] = []
     errors: List[str] = []
     notes: List[str] = []
+    attempts = 0
+    failures = 0
 
     for module in _discover_gradle_modules(project_root):
         for configuration in _GRADLE_RESOLVE_CONFIGURATIONS:
@@ -7095,23 +7097,38 @@ def _gradle_resolve_dependencies(project_root: str) -> Dict:
                 continue
             if module == ":":
                 args = ["-q", "dependencies", "--configuration", configuration]
+                task_label = f":{configuration}"
             else:
                 args = ["-q", f"{module}:dependencies", "--configuration", configuration]
+                task_label = f"{module}:{configuration}"
+            attempts += 1
             code, stdout, stderr = _run_gradle_command(project_root, gradlew, args)
             if code != 0:
+                failures += 1
+                msg = f"{task_label} exited with code {code}"
+                if stderr.strip():
+                    msg += f": {stderr.strip()}"
+                errors.append(msg)
                 continue
             module_label = None if module == ":" else module
             collected.extend(
                 _parse_gradle_dependencies_stdout(stdout, module_label, configuration)
             )
 
+    attempts += 1
     code, stdout, stderr = _run_gradle_command(project_root, gradlew, ["-q", "buildEnvironment"])
     if code == 0:
         collected.extend(_parse_build_environment_classpath(stdout))
-    elif stderr:
-        errors.append(stderr.strip())
+    else:
+        failures += 1
+        msg = "buildEnvironment exited with code {}".format(code)
+        if stderr.strip():
+            msg += f": {stderr.strip()}"
+        errors.append(msg)
 
-    if not collected and not errors:
+    if not collected and failures == attempts and attempts > 0:
+        notes.append("All Gradle dependency tasks failed.")
+    elif not collected and not errors:
         notes.append("No production configurations resolved; project may lack applicable variants.")
 
     return {
@@ -7378,7 +7395,10 @@ def _merge_gradle_with_provenance(resolved: List[Dict], provenance: List[Dict]) 
             prov_by_ga[(gid, aid)] = dep
 
     merged: List[Dict] = []
+    in_output: set = set()
+
     for dep in resolved:
+        key = (dep["groupId"], dep["artifactId"])
         entry = {
             "groupId": dep["groupId"],
             "artifactId": dep["artifactId"],
@@ -7386,7 +7406,7 @@ def _merge_gradle_with_provenance(resolved: List[Dict], provenance: List[Dict]) 
             "resolvedBy": "gradle",
             "usages": list(dep.get("usages") or []),
         }
-        prov = prov_by_ga.get((dep["groupId"], dep["artifactId"]))
+        prov = prov_by_ga.get(key)
         if prov and prov.get("source"):
             entry["source"] = prov["source"]
             if prov.get("isPlatform"):
@@ -7395,6 +7415,29 @@ def _merge_gradle_with_provenance(resolved: List[Dict], provenance: List[Dict]) 
         else:
             entry["source"] = {"kind": "gradle-resolved"}
         merged.append(entry)
+        in_output.add(key)
+
+    for prov in provenance:
+        gid, aid = prov.get("groupId"), prov.get("artifactId")
+        if not gid or not aid:
+            continue
+        key = (gid, aid)
+        if key in in_output:
+            continue
+        entry = {
+            "groupId": gid,
+            "artifactId": aid,
+            "version": prov.get("version"),
+            "resolvedBy": "provenance",
+            "source": prov.get("source") or {"kind": "unknown"},
+            "usages": list(prov.get("usages") or []),
+        }
+        if prov.get("isPlatform"):
+            entry["isPlatform"] = True
+            entry["platformKind"] = prov.get("platformKind")
+        merged.append(entry)
+        in_output.add(key)
+
     return merged
 
 
@@ -7414,21 +7457,25 @@ def scan_project(project_root: str) -> Dict:
                 "Add the wrapper with `gradle wrapper` or copy gradlew from a template project."
             )
         resolved = _gradle_resolve_dependencies(project_root)
-        if not resolved.get("dependencies") and resolved.get("errors"):
+        if not resolved.get("dependencies"):
+            detail = resolved.get("errors") or resolved.get("notes") or ["no dependencies resolved"]
             raise ValueError(
-                "Gradle dependency resolution failed: " + "; ".join(resolved["errors"])
+                "Gradle dependency resolution failed: " + "; ".join(detail)
             )
         provenance = _collect_gradle_provenance(project_root)
         dependencies = _merge_gradle_with_provenance(
             resolved["dependencies"], provenance["dependencies"]
         )
-        return {
+        result: Dict[str, Any] = {
             "buildSystem": "gradle",
             "dependencies": dependencies,
             "deadRepositoryHints": provenance.get("deadRepositoryHints", []),
             "resolvedBy": "gradle",
             "notes": resolved.get("notes", []),
         }
+        if resolved.get("errors"):
+            result["gradleErrors"] = resolved["errors"]
+        return result
 
     elif build_system == "maven":
         _scan_maven_recursive(
@@ -7497,6 +7544,8 @@ def flatten_scan_result(scan: Dict) -> Dict:
         result["resolvedBy"] = scan["resolvedBy"]
     if scan.get("notes"):
         result["notes"] = scan["notes"]
+    if scan.get("gradleErrors"):
+        result["gradleErrors"] = scan["gradleErrors"]
     return result
 
 

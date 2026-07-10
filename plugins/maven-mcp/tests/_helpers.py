@@ -230,10 +230,22 @@ def mock_gradle_resolve(
     """Patch ``server._gradle_resolve_dependencies`` to return fixture output."""
 
     def _fake_resolve(_project_root: str) -> Dict:
+        deps = list(dependencies if dependencies is not None else [])
+        err = list(errors or [])
+        if not deps and not err:
+            # scan_project rejects an empty Gradle resolve; tests that only
+            # exercise provenance/dead-repo hints need a placeholder GAV.
+            deps = [{
+                "groupId": "com.example",
+                "artifactId": "fixture",
+                "version": "1.0",
+                "resolvedBy": "gradle",
+                "usages": [{"module": None, "configuration": "runtimeClasspath"}],
+            }]
         return {
-            "dependencies": list(dependencies or []),
+            "dependencies": deps,
             "notes": list(notes or []),
-            "errors": list(errors or []),
+            "errors": err,
         }
 
     with unittest.mock.patch.object(server, "_gradle_resolve_dependencies", _fake_resolve):

@@ -104,6 +104,39 @@ class TestParseGradleDependenciesStdout(unittest.TestCase):
         self.assertTrue(all(d["usages"][0]["configuration"] == "classpath" for d in deps))
 
 
+class TestMergeGradleWithProvenance(unittest.TestCase):
+    def test_provenance_only_plugin_included(self):
+        resolved = [{
+            "groupId": "io.ktor",
+            "artifactId": "ktor-client-core",
+            "version": "3.1.2",
+            "usages": [{"module": ":app", "configuration": "releaseRuntimeClasspath"}],
+        }]
+        provenance = [
+            {
+                "groupId": "io.ktor",
+                "artifactId": "ktor-client-core",
+                "version": "3.1.1",
+                "source": {"kind": "catalog-library", "alias": "ktor-core"},
+                "usages": [{"module": ":app", "configuration": "implementation"}],
+            },
+            {
+                "groupId": "org.jetbrains.kotlin.android",
+                "artifactId": "org.jetbrains.kotlin.android.gradle.plugin",
+                "version": "2.0.0",
+                "source": {"kind": "plugins-dsl", "file": "build.gradle.kts"},
+                "usages": [{"module": None, "configuration": "plugin-dsl"}],
+            },
+        ]
+        merged = server._merge_gradle_with_provenance(resolved, provenance)
+        plugin = next(
+            d for d in merged
+            if d["artifactId"] == "org.jetbrains.kotlin.android.gradle.plugin"
+        )
+        self.assertEqual(plugin["resolvedBy"], "provenance")
+        self.assertEqual(plugin["source"]["kind"], "plugins-dsl")
+
+
 class TestGradleResolveIntegration(unittest.TestCase):
     def _mock_run(self, mapping):
         def _fake_run(project_root, gradlew, args, timeout=server.GRADLE_RESOLVE_TIMEOUT):
@@ -166,6 +199,54 @@ class TestGradleResolveIntegration(unittest.TestCase):
                 with self.assertRaises(ValueError) as ctx:
                     server.scan_project(root)
         self.assertIn("Gradle dependency resolution failed", str(ctx.exception))
+
+    def test_all_silent_task_failures_raise(self):
+        files = {"build.gradle.kts": 'plugins { id("java") }'}
+        with temp_project(files) as root:
+            write_fake_gradlew(root)
+            with unittest.mock.patch.object(
+                server, "_run_gradle_command", return_value=(1, "", "")
+            ):
+                with self.assertRaises(ValueError) as ctx:
+                    server.scan_project(root)
+        self.assertIn("Gradle dependency resolution failed", str(ctx.exception))
+
+    def test_partial_failure_surfaces_gradle_errors(self):
+        files = {
+            "settings.gradle.kts": 'include(":app")',
+            "app/build.gradle.kts": (
+                "dependencies {\n"
+                '    implementation("io.ktor:ktor-client-core:3.1.1")\n'
+                "}"
+            ),
+        }
+        mapping = {
+            ("-q", ":app:dependencies", "--configuration", "releaseRuntimeClasspath"): RUNTIME_CLASSPATH_FIXTURE,
+            ("-q", ":app:dependencies", "--configuration", "runtimeClasspath"): "",
+            ("-q", ":app:dependencies", "--configuration", "releaseCompileClasspath"): "",
+            ("-q", ":app:dependencies", "--configuration", "compileClasspath"): "",
+            ("-q", "dependencies", "--configuration", "releaseRuntimeClasspath"): "",
+            ("-q", "dependencies", "--configuration", "runtimeClasspath"): "",
+            ("-q", "dependencies", "--configuration", "releaseCompileClasspath"): "",
+            ("-q", "dependencies", "--configuration", "compileClasspath"): "",
+            ("-q", "buildEnvironment"): "",
+        }
+
+        def _fake_run(project_root, gradlew, args, timeout=server.GRADLE_RESOLVE_TIMEOUT):
+            key = tuple(args)
+            if key == ("-q", ":app:dependencies", "--configuration", "compileClasspath"):
+                return 1, "", "Configuration compileClasspath not found"
+            if key not in mapping:
+                return 1, "", "task failed"
+            return 0, mapping[key], ""
+
+        with temp_project(files) as root:
+            write_fake_gradlew(root)
+            with unittest.mock.patch.object(server, "_run_gradle_command", _fake_run):
+                result = server.scan_project(root)
+        self.assertTrue(any("compileClasspath" in e for e in result.get("gradleErrors", [])))
+        flat = server.flatten_scan_result(result)
+        self.assertIn("gradleErrors", flat)
 
 
 class TestFlattenScanResultResolvedBy(unittest.TestCase):
