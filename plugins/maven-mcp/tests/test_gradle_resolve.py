@@ -1,5 +1,6 @@
 """Gradle-resolved dependency scanning (#392 / #393 / #394)."""
 
+import os
 import subprocess
 import unittest
 import unittest.mock
@@ -172,6 +173,67 @@ class TestRunGradleCommand(unittest.TestCase):
         self.assertEqual(code, 124)
         self.assertEqual(stdout, "")
         self.assertIn("timed out", stderr)
+
+    def test_secret_env_scrubbed_from_subprocess_call(self):
+        # GHSA-4778-r7hp-92v7: the scanned project's OWN Gradle build scripts
+        # (buildSrc, convention plugins) run arbitrary code that can read
+        # System.getenv() — credential-bearing vars must never be passed to
+        # that subprocess. Captures the exact `env=` kwarg _run_gradle_command
+        # hands to subprocess.run (via the injectable _gradle_run seam).
+        captured = {}
+
+        def _capture_env(cmd, cwd=None, capture_output=None, text=None, timeout=None, env=None):
+            captured["env"] = env
+            return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+        with unittest.mock.patch.dict(
+            os.environ,
+            {
+                "MAVEN_REPO_TESTREPO_TOKEN": "supersecret",
+                "MAVEN_REPO_TESTREPO_USER": "alice",
+                "GITHUB_TOKEN": "ghsecret",
+                "JAVA_HOME": "/usr/lib/jvm/test",
+            },
+            clear=False,
+        ):
+            with unittest.mock.patch.object(server, "_gradle_run", side_effect=_capture_env):
+                server._run_gradle_command("/tmp", "gradlew", ["-q", "projects"])
+        env = captured["env"]
+        self.assertIsNotNone(env)
+        self.assertNotIn("MAVEN_REPO_TESTREPO_TOKEN", env)
+        self.assertNotIn("MAVEN_REPO_TESTREPO_USER", env)
+        self.assertNotIn("GITHUB_TOKEN", env)
+        # Non-secret env (JAVA_HOME, PATH, ...) must still reach the subprocess.
+        self.assertEqual(env.get("JAVA_HOME"), "/usr/lib/jvm/test")
+
+    def test_secret_env_not_visible_to_real_gradlew_subprocess(self):
+        # End-to-end (real subprocess.run, no mocking of _gradle_run): a fake
+        # gradlew script that echoes the env vars back proves they are
+        # genuinely absent from the child process, not merely from a mocked
+        # call-arg capture.
+        with temp_project({}) as root:
+            gradlew = os.path.join(root, "gradlew")
+            with open(gradlew, "w", encoding="utf-8") as fh:
+                fh.write(
+                    "#!/bin/sh\n"
+                    'echo "TOKEN=[${MAVEN_REPO_TESTREPO_TOKEN}][${GITHUB_TOKEN}]"\n'
+                )
+            os.chmod(gradlew, 0o700)
+            with unittest.mock.patch.dict(
+                os.environ,
+                {
+                    "MAVEN_REPO_TESTREPO_TOKEN": "supersecret",
+                    "GITHUB_TOKEN": "ghsecret",
+                },
+                clear=False,
+            ):
+                code, stdout, _stderr = server._run_gradle_command(
+                    root, gradlew, ["-q", "noop"]
+                )
+        self.assertEqual(code, 0)
+        self.assertNotIn("supersecret", stdout)
+        self.assertNotIn("ghsecret", stdout)
+        self.assertIn("TOKEN=[][]", stdout)
 
 
 class TestMergeGradleWithProvenance(unittest.TestCase):

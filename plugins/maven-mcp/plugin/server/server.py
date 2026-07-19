@@ -10,6 +10,7 @@ import email.utils
 import functools
 import hashlib
 import http.client
+import ipaddress
 import json
 import logging
 import os
@@ -796,22 +797,65 @@ def _resolve_creds_from_gradle_properties(identifier: str) -> Optional[Dict[str,
     return None
 
 
+def _name_pin_host(name: str) -> Optional[str]:
+    """``MAVEN_REPO_<NAME>_HOST`` — pins a name/id-keyed credential to one
+    destination host (GHSA-m2hv-xh72-cccw). ``name`` (Maven ``<id>`` / Gradle
+    ``name = "…"``) comes from the untrusted, scanned build file, so unlike
+    the hostname (always derived from the same ``url`` a request is actually
+    sent to) it cannot be trusted on its own — a malicious build file could
+    otherwise set ``name`` to any string a *different*, trusted host's secret
+    happens to be keyed under, redirecting that secret to an attacker URL.
+    Returns the pinned hostname (lowercased) or ``None`` when unset.
+    """
+    key = _sanitize_cred_key(name)
+    if not key:
+        return None
+    raw = os.environ.get(f"{_CRED_ENV_PREFIX}{key}_HOST")
+    return (raw or "").strip().lower() or None
+
+
 def resolve_repo_credentials(entry: Dict[str, Any]) -> Optional[Dict[str, str]]:
     """Resolve Basic/Bearer credentials for a discovered repo entry (#291).
 
     Returns ``{"type": "basic", "username", "password"}`` or
     ``{"type": "bearer", "token"}``, or ``None`` when nothing matches.
     Never reads credentials from build files. Never logs secret values.
+
+    Credential-misbinding guard (GHSA-m2hv-xh72-cccw): a secret must only
+    ever be sent to the host it was configured for. Host-keyed resolution
+    (``ident == host``) is safe unconditionally — the identifier is derived
+    from the SAME ``url`` the request targets, so it cannot diverge from the
+    real destination. Name/id-keyed resolution uses a string the untrusted
+    build file controls independently of ``url``, so it is only honored when
+    the user has pinned that name to this exact destination host via
+    ``MAVEN_REPO_<NAME>_HOST`` (see ``_name_pin_host``); otherwise it is
+    skipped (logged once, secret-free) and resolution falls through to the
+    next candidate (typically the host).
     """
+    host = _repo_host(entry.get("url") or "")
+    resolvers = (
+        _resolve_creds_from_env,
+        _resolve_creds_from_settings,
+        _resolve_creds_from_gradle_properties,
+    )
     for ident in _repo_id_candidates(entry):
-        for resolver in (
-            _resolve_creds_from_env,
-            _resolve_creds_from_settings,
-            _resolve_creds_from_gradle_properties,
-        ):
+        creds = None
+        for resolver in resolvers:
             creds = resolver(ident)
             if creds:
-                return creds
+                break
+        if not creds:
+            continue
+        if ident == host:
+            return creds
+        pinned_host = _name_pin_host(ident)
+        if pinned_host and pinned_host == host:
+            return creds
+        _logger.warning(
+            "Skipping name/id-keyed credential for %r: set MAVEN_REPO_%s_HOST=%s "
+            "to trust it for this destination (GHSA-m2hv-xh72-cccw)",
+            ident, _sanitize_cred_key(ident), host or "<unresolved-host>",
+        )
     return None
 
 
@@ -1159,6 +1203,87 @@ def _urlopen(req: urllib.request.Request, timeout: float):
     if context is not None:
         return urllib.request.urlopen(req, timeout=timeout, context=context)
     return urllib.request.urlopen(req, timeout=timeout)
+
+
+# ---------------------------------------------------------------------------
+# Secure redirect handling (GHSA-xj4p-wm6r-4q3j / GHSA-m84v-qqqm-6fr4)
+# ---------------------------------------------------------------------------
+# urllib's default HTTPRedirectHandler forwards every header except
+# Content-Length/Content-Type to a redirect target verbatim (including
+# Authorization, even cross-host or on an https->http downgrade), and only
+# rejects a redirect scheme outside {http, https, ftp, ''} — it never
+# inspects the destination host at all. A private repo (or api.github.com
+# with GITHUB_TOKEN) that 302s can therefore leak credentials to another
+# host, downgrade to plaintext, or steer a follow-up request at a cloud
+# metadata endpoint (169.254.169.254) or link-local address.
+
+_CREDENTIAL_HEADERS = ("Authorization", "Proxy-Authorization", "Cookie")
+
+
+def _is_link_local_redirect_target(host: str) -> bool:
+    """True when ``host`` is a literal link-local/metadata IP address.
+
+    Covers IPv4 169.254.0.0/16 (including the 169.254.169.254 cloud-metadata
+    endpoint) and IPv6 fe80::/10. RFC1918 (10/8, 172.16/12, 192.168/16) and
+    loopback are deliberately NOT blocked — private-repo mode legitimately
+    targets internal hosts (#290/#298). Best-effort: only a literal IP is
+    checked; a redirect ``Location`` that is a hostname is not resolved here
+    (the literal-IP metadata case is the concrete threat this closes).
+    """
+    if not host:
+        return False
+    try:
+        return ipaddress.ip_address(host).is_link_local
+    except ValueError:
+        return False  # a hostname, not an IP literal
+
+
+class _SecureRedirectHandler(urllib.request.HTTPRedirectHandler):
+    """Re-validates the redirect target and strips credential headers on
+    every hop (installed globally below — see the assignment after this
+    class). ``redirect_request`` receives the fully-resolved absolute
+    ``newurl`` before a new Request is issued, so raising here blocks the
+    hop entirely instead of only warning after the fact.
+    """
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        # FIX (GHSA-m84v-qqqm-6fr4): only http/https may survive a redirect —
+        # the base handler still allows ftp:// — and link-local/metadata IP
+        # literals are blocked outright.
+        _assert_http_url(newurl)
+        new_host = _repo_host(newurl)
+        if _is_link_local_redirect_target(new_host):
+            raise urllib.error.URLError(
+                f"Redirect to link-local/metadata address blocked: {new_host}"
+            )
+
+        new_req = super().redirect_request(req, fp, code, msg, headers, newurl)
+        if new_req is None:
+            return None
+
+        # FIX (GHSA-xj4p-wm6r-4q3j): strip credential headers whenever the
+        # redirect crosses hosts (unconditionally, defense in depth) or
+        # downgrades https -> http (same host or not — cleartext either way).
+        old_host = _repo_host(req.full_url)
+        old_scheme = _url_scheme(req.full_url)
+        new_scheme = _url_scheme(newurl)
+        if old_host != new_host or (old_scheme == "https" and new_scheme == "http"):
+            for header in _CREDENTIAL_HEADERS:
+                new_req.remove_header(header)
+        return new_req
+
+
+# Installed as a module-level swap (not passed to individual build_opener()
+# calls) so it also protects REAL, un-mocked urllib.request.urlopen() calls:
+# urlopen() builds its own opener internally via build_opener(), which
+# resolves HTTPRedirectHandler through urllib.request's module globals at
+# CALL time (verified against the installed stdlib) — so swapping the name
+# here is picked up by every opener built anywhere in the process, including
+# _urlopen()'s own proxy branch above, without changing any call site. Tests
+# that patch urllib.request.urlopen directly replace the whole function and
+# never construct a handler at all, so this is inert for the mocked suite.
+if urllib.request.HTTPRedirectHandler is not _SecureRedirectHandler:
+    urllib.request.HTTPRedirectHandler = _SecureRedirectHandler
 
 
 def _repository_base() -> Optional[str]:
@@ -7002,6 +7127,31 @@ def _detect_dead_repo_hints(content: str, file_name: str, module: Optional[str])
     return hints
 
 
+# Env var prefixes/names that must never reach a scanned project's OWN
+# subprocess (Gradle build scripts run arbitrary code that can read
+# System.getenv() — GHSA-4778-r7hp-92v7). Denylist, not an allowlist, so
+# JAVA_HOME/GRADLE_USER_HOME/ANDROID_HOME/PATH/locale and everything else
+# Gradle needs stays intact.
+_SECRET_ENV_EXACT = frozenset({"GITHUB_TOKEN"})
+_SECRET_ENV_PREFIXES = (_CRED_ENV_PREFIX,)  # "MAVEN_REPO_" (#291 creds + host pins)
+
+
+def _is_secret_env_key(key: str) -> bool:
+    if key in _SECRET_ENV_EXACT:
+        return True
+    return any(key.startswith(prefix) for prefix in _SECRET_ENV_PREFIXES)
+
+
+def _scrubbed_subprocess_env() -> Dict[str, str]:
+    """``os.environ`` with credential-bearing vars removed, for spawning the
+    scanned project's own Gradle wrapper (GHSA-4778-r7hp-92v7): the wrapper
+    executes the project's OWN build scripts (including buildSrc/convention
+    plugins), which could otherwise read MAVEN_REPO_*_TOKEN / GITHUB_TOKEN via
+    System.getenv() and exfiltrate them (e.g. through a plugin/dependency
+    fetch to an attacker URL)."""
+    return {k: v for k, v in os.environ.items() if not _is_secret_env_key(k)}
+
+
 _gradle_run = subprocess.run
 
 
@@ -7033,6 +7183,7 @@ def _run_gradle_command(
             capture_output=True,
             text=True,
             timeout=timeout,
+            env=_scrubbed_subprocess_env(),
         )
     except subprocess.TimeoutExpired:
         return 124, "", f"Gradle command timed out after {timeout}s"
