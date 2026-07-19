@@ -544,6 +544,9 @@ class SecureRedirectEndToEndTest(unittest.TestCase):
                     accepted.set()
                     conn.close()
                 except socket.timeout:
+                    # Expected success path: the scheme guard rejects ftp:// before
+                    # any socket connect, so accept() never fires and times out here;
+                    # `accepted` stays unset, which the test asserts False below.
                     pass
 
         listener_thread = threading.Thread(target=_listener, daemon=True)
