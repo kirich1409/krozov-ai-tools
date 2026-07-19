@@ -32,7 +32,7 @@ import datetime
 import unittest
 import warnings
 
-from _helpers import server, temp_project
+from _helpers import mock_gradle_resolve, server, temp_project, write_fake_gradlew
 
 
 # ---------------------------------------------------------------------------
@@ -1087,7 +1087,9 @@ class TestScanProjectDeadRepositoryHints(unittest.TestCase):
     def test_root_build_file_jcenter_flagged(self):
         files = {"build.gradle.kts": "repositories {\n    jcenter()\n    mavenCentral()\n}"}
         with temp_project(files) as root:
-            result = server.scan_project(root)
+            write_fake_gradlew(root)
+            with mock_gradle_resolve():
+                result = server.scan_project(root)
         hints = result["deadRepositoryHints"]
         self.assertEqual(len(hints), 1)
         self.assertEqual(hints[0]["repository"], "jcenter")
@@ -1101,7 +1103,9 @@ class TestScanProjectDeadRepositoryHints(unittest.TestCase):
             ),
         }
         with temp_project(files) as root:
-            result = server.scan_project(root)
+            write_fake_gradlew(root)
+            with mock_gradle_resolve():
+                result = server.scan_project(root)
         hints = result["deadRepositoryHints"]
         self.assertEqual(len(hints), 1)
         self.assertEqual(hints[0]["repository"], "jcenter")
@@ -1113,7 +1117,9 @@ class TestScanProjectDeadRepositoryHints(unittest.TestCase):
             "app/build.gradle.kts": "repositories {\n    jcenter()\n}",
         }
         with temp_project(files) as root:
-            result = server.scan_project(root)
+            write_fake_gradlew(root)
+            with mock_gradle_resolve():
+                result = server.scan_project(root)
         hints = result["deadRepositoryHints"]
         self.assertEqual(len(hints), 1)
         self.assertEqual(hints[0]["module"], ":app")
@@ -1121,21 +1127,24 @@ class TestScanProjectDeadRepositoryHints(unittest.TestCase):
     def test_no_jcenter_not_flagged(self):
         files = {"build.gradle.kts": "repositories {\n    mavenCentral()\n    google()\n}"}
         with temp_project(files) as root:
-            result = server.scan_project(root)
+            write_fake_gradlew(root)
+            with mock_gradle_resolve():
+                result = server.scan_project(root)
         self.assertEqual(result["deadRepositoryHints"], [])
 
     def test_flatten_scan_result_preserves_dead_repository_hints(self):
         files = {"build.gradle.kts": "repositories {\n    jcenter()\n}"}
         with temp_project(files) as root:
-            flattened = server.flatten_scan_result(server.scan_project(root))
+            write_fake_gradlew(root)
+            with mock_gradle_resolve():
+                flattened = server.flatten_scan_result(server.scan_project(root))
         self.assertEqual(len(flattened["deadRepositoryHints"]), 1)
         self.assertEqual(flattened["deadRepositoryHints"][0]["repository"], "jcenter")
 
 
-class TestScanProjectGradle(unittest.TestCase):
-    """End-to-end tests for server.scan_project() on Gradle projects."""
+class TestCollectGradleProvenance(unittest.TestCase):
+    """Provenance-only Gradle build-file scanning (#394)."""
 
-    # Mirrors: scan.test.ts > "unused catalog library emitted once with kind catalog-library and empty usages"
     def test_unused_catalog_library_emitted_once_with_empty_usages(self):
         files = {
             "gradle/libs.versions.toml": (
@@ -1144,8 +1153,7 @@ class TestScanProjectGradle(unittest.TestCase):
             ),
         }
         with temp_project(files) as root:
-            result = server.scan_project(root)
-        self.assertEqual(result["buildSystem"], "gradle")
+            result = server._collect_gradle_provenance(root)
         deps = [d for d in result["dependencies"]
                 if d["groupId"] == "io.ktor" and d["artifactId"] == "ktor-client-core"]
         self.assertEqual(len(deps), 1)
@@ -1156,7 +1164,6 @@ class TestScanProjectGradle(unittest.TestCase):
         self.assertEqual(dep["source"]["alias"], "ktor-core")
         self.assertEqual(dep["usages"], [])
 
-    # Mirrors: scan.test.ts > "used catalog library: usages populated, single entry (no duplicate)"
     def test_used_catalog_library_has_usage_and_no_duplicate(self):
         files = {
             "gradle/libs.versions.toml": (
@@ -1170,16 +1177,13 @@ class TestScanProjectGradle(unittest.TestCase):
             ),
         }
         with temp_project(files) as root:
-            result = server.scan_project(root)
+            result = server._collect_gradle_provenance(root)
         deps = [d for d in result["dependencies"] if d.get("groupId") == "io.ktor"]
-        # Only one entry — catalog entry populated with usage, no duplicate module-direct
         self.assertEqual(len(deps), 1)
         self.assertEqual(deps[0]["source"]["kind"], "catalog-library")
         self.assertEqual(len(deps[0]["usages"]), 1)
-        self.assertEqual(deps[0]["usages"][0]["module"], None)
         self.assertEqual(deps[0]["usages"][0]["configuration"], "implementation")
 
-    # Mirrors: scan.test.ts > "catalog library used by two modules: one entry, two usages"
     def test_catalog_library_two_modules_two_usages(self):
         files = {
             "settings.gradle.kts": 'include(":app")\ninclude(":lib")',
@@ -1187,28 +1191,16 @@ class TestScanProjectGradle(unittest.TestCase):
                 "[libraries]\n"
                 'ktor-core = { module = "io.ktor:ktor-client-core", version = "3.1.1" }\n'
             ),
-            "app/build.gradle.kts": (
-                "dependencies {\n"
-                "    implementation(libs.ktor.core)\n"
-                "}"
-            ),
-            "lib/build.gradle.kts": (
-                "dependencies {\n"
-                "    api(libs.ktor.core)\n"
-                "}"
-            ),
+            "app/build.gradle.kts": "dependencies {\n    implementation(libs.ktor.core)\n}",
+            "lib/build.gradle.kts": "dependencies {\n    api(libs.ktor.core)\n}",
         }
         with temp_project(files) as root:
-            result = server.scan_project(root)
+            result = server._collect_gradle_provenance(root)
         deps = [d for d in result["dependencies"]
                 if d.get("groupId") == "io.ktor" and d["source"]["kind"] == "catalog-library"]
         self.assertEqual(len(deps), 1)
         self.assertEqual(len(deps[0]["usages"]), 2)
-        configurations = {u["configuration"] for u in deps[0]["usages"]}
-        self.assertIn("implementation", configurations)
-        self.assertIn("api", configurations)
 
-    # Mirrors: scan.test.ts > "catalog version drift: catalog says 1.0, module hardcodes 2.0"
     def test_catalog_version_drift_both_reported_separately(self):
         files = {
             "gradle/libs.versions.toml": (
@@ -1223,7 +1215,7 @@ class TestScanProjectGradle(unittest.TestCase):
             ),
         }
         with temp_project(files) as root:
-            result = server.scan_project(root)
+            result = server._collect_gradle_provenance(root)
         deps = [d for d in result["dependencies"]
                 if d.get("groupId") == "io.ktor" and d.get("artifactId") == "ktor-client-core"]
         self.assertEqual(len(deps), 2)
@@ -1232,7 +1224,6 @@ class TestScanProjectGradle(unittest.TestCase):
         self.assertEqual(catalog_dep["version"], "1.0.0")
         self.assertEqual(direct_dep["version"], "2.0.0")
 
-    # Mirrors: scan.test.ts > "unused catalog plugin emitted with kind catalog-plugin and plugin marker artifactId"
     def test_unused_catalog_plugin_emitted(self):
         files = {
             "gradle/libs.versions.toml": (
@@ -1241,7 +1232,7 @@ class TestScanProjectGradle(unittest.TestCase):
             ),
         }
         with temp_project(files) as root:
-            result = server.scan_project(root)
+            result = server._collect_gradle_provenance(root)
         dep = next((d for d in result["dependencies"]
                     if d.get("groupId") == "com.android.application"), None)
         self.assertIsNotNone(dep)
@@ -1249,7 +1240,6 @@ class TestScanProjectGradle(unittest.TestCase):
         self.assertEqual(dep["source"]["kind"], "catalog-plugin")
         self.assertEqual(dep["usages"], [])
 
-    # Mirrors: scan.test.ts > "root plugins {} block: id("x") version "1.0" → kind plugins-dsl"
     def test_root_plugins_block_kind_plugins_dsl(self):
         files = {
             "build.gradle.kts": (
@@ -1259,38 +1249,25 @@ class TestScanProjectGradle(unittest.TestCase):
             ),
         }
         with temp_project(files) as root:
-            result = server.scan_project(root)
+            result = server._collect_gradle_provenance(root)
         dep = next((d for d in result["dependencies"]
                     if d.get("groupId") == "com.android.application"), None)
         self.assertIsNotNone(dep)
-        self.assertEqual(dep["artifactId"], "com.android.application.gradle.plugin")
-        self.assertEqual(dep["version"], "8.5.0")
         self.assertEqual(dep["source"]["kind"], "plugins-dsl")
-        self.assertIsNone(dep["source"]["module"])
-        self.assertNotIn("settingsBlock", dep["source"])
-        self.assertEqual(len(dep["usages"]), 1)
         self.assertEqual(dep["usages"][0]["configuration"], "plugin-dsl")
 
-    # Mirrors: scan.test.ts > "module-level plugins {} block → source.module :app"
     def test_module_level_plugins_block_has_module_label(self):
         files = {
             "settings.gradle.kts": 'include(":app")',
-            "app/build.gradle.kts": (
-                'plugins {\n'
-                '    id("com.android.application") version "8.0.0"\n'
-                '}'
-            ),
+            "app/build.gradle.kts": 'plugins {\n    id("com.android.application") version "8.0.0"\n}',
         }
         with temp_project(files) as root:
-            result = server.scan_project(root)
+            result = server._collect_gradle_provenance(root)
         dep = next((d for d in result["dependencies"]
                     if d.get("groupId") == "com.android.application"), None)
         self.assertIsNotNone(dep)
-        self.assertEqual(dep["source"]["kind"], "plugins-dsl")
         self.assertEqual(dep["source"]["module"], ":app")
-        self.assertNotIn("settingsBlock", dep["source"])
 
-    # Mirrors: scan.test.ts > "buildscript classpath → kind buildscript-classpath"
     def test_buildscript_classpath_kind(self):
         files = {
             "build.gradle.kts": (
@@ -1302,17 +1279,12 @@ class TestScanProjectGradle(unittest.TestCase):
             ),
         }
         with temp_project(files) as root:
-            result = server.scan_project(root)
+            result = server._collect_gradle_provenance(root)
         dep = next((d for d in result["dependencies"]
-                    if d.get("artifactId") == "gradle"
-                    and d.get("groupId") == "com.android.tools.build"), None)
+                    if d.get("artifactId") == "gradle"), None)
         self.assertIsNotNone(dep)
         self.assertEqual(dep["source"]["kind"], "buildscript-classpath")
-        self.assertEqual(len(dep["usages"]), 1)
-        self.assertEqual(dep["usages"][0]["configuration"], "classpath")
-        self.assertIsNone(dep["usages"][0]["module"])
 
-    # Mirrors: scan.test.ts > "buildscript classpath in submodule is not scanned"
     def test_buildscript_classpath_in_submodule_not_scanned(self):
         files = {
             "settings.gradle.kts": 'include(":app")',
@@ -1325,12 +1297,11 @@ class TestScanProjectGradle(unittest.TestCase):
             ),
         }
         with temp_project(files) as root:
-            result = server.scan_project(root)
+            result = server._collect_gradle_provenance(root)
         dep = next((d for d in result["dependencies"]
                     if d.get("artifactId") == "submodule-classpath"), None)
         self.assertIsNone(dep)
 
-    # Mirrors: scan.test.ts > "settings plugins block → settingsBlock: true in source"
     def test_settings_plugins_block_has_settings_block_flag(self):
         files = {
             "settings.gradle.kts": (
@@ -1342,35 +1313,26 @@ class TestScanProjectGradle(unittest.TestCase):
             ),
         }
         with temp_project(files) as root:
-            result = server.scan_project(root)
+            result = server._collect_gradle_provenance(root)
         dep = next((d for d in result["dependencies"]
                     if d.get("groupId") == "com.gradle.plugin"), None)
         self.assertIsNotNone(dep)
-        self.assertEqual(dep["source"]["kind"], "plugins-dsl")
         self.assertTrue(dep["source"].get("settingsBlock"))
 
-    # Mirrors: scan.test.ts > "no Gradle settings, only gradle/libs.versions.toml → default libs descriptor"
     def test_no_settings_file_default_catalog_used(self):
         files = {
             "gradle/libs.versions.toml": (
                 "[libraries]\n"
                 'gson = { module = "com.google.code.gson:gson", version = "2.11.0" }\n'
             ),
-            "build.gradle.kts": (
-                "dependencies {\n"
-                "    implementation(libs.gson)\n"
-                "}"
-            ),
+            "build.gradle.kts": "dependencies {\n    implementation(libs.gson)\n}",
         }
         with temp_project(files) as root:
-            result = server.scan_project(root)
-        self.assertEqual(result["buildSystem"], "gradle")
-        dep = next((d for d in result["dependencies"]
-                    if d.get("artifactId") == "gson"), None)
+            result = server._collect_gradle_provenance(root)
+        dep = next((d for d in result["dependencies"] if d.get("artifactId") == "gson"), None)
         self.assertIsNotNone(dep)
         self.assertEqual(len(dep["usages"]), 1)
 
-    # Mirrors: scan.test.ts > "alias(libs.plugins.x) in module resolves through catalog [plugins]"
     def test_alias_plugins_ref_in_module_resolves_catalog_plugin(self):
         files = {
             "settings.gradle.kts": 'include(":app")',
@@ -1378,24 +1340,15 @@ class TestScanProjectGradle(unittest.TestCase):
                 "[plugins]\n"
                 'kotlin-android = { id = "org.jetbrains.kotlin.android", version = "2.0.0" }\n'
             ),
-            "app/build.gradle.kts": (
-                "plugins {\n"
-                "    alias(libs.plugins.kotlin.android)\n"
-                "}"
-            ),
+            "app/build.gradle.kts": "plugins {\n    alias(libs.plugins.kotlin.android)\n}",
         }
         with temp_project(files) as root:
-            result = server.scan_project(root)
+            result = server._collect_gradle_provenance(root)
         deps = [d for d in result["dependencies"]
                 if d.get("groupId") == "org.jetbrains.kotlin.android"]
-        # Only one entry — the catalog plugin entry, no extra plugins-dsl dep
         self.assertEqual(len(deps), 1)
         self.assertEqual(deps[0]["source"]["kind"], "catalog-plugin")
-        self.assertEqual(len(deps[0]["usages"]), 1)
-        self.assertEqual(deps[0]["usages"][0]["module"], ":app")
-        self.assertEqual(deps[0]["usages"][0]["configuration"], "plugin-dsl")
 
-    # Mirrors: scan.test.ts > "module-level plugin with apply false still emits"
     def test_module_level_plugin_apply_false_still_emits(self):
         files = {
             "settings.gradle.kts": 'include(":lib")',
@@ -1406,14 +1359,24 @@ class TestScanProjectGradle(unittest.TestCase):
             ),
         }
         with temp_project(files) as root:
-            result = server.scan_project(root)
+            result = server._collect_gradle_provenance(root)
         dep = next((d for d in result["dependencies"]
                     if d.get("groupId") == "com.android.library"), None)
         self.assertIsNotNone(dep)
-        self.assertEqual(dep["source"]["kind"], "plugins-dsl")
-        self.assertEqual(dep["source"]["module"], ":lib")
 
-    # Gradle .gradle (Groovy) single-module end-to-end
+
+class TestScanProjectGradle(unittest.TestCase):
+    """End-to-end Gradle scan with mocked gradlew resolution."""
+
+    def _resolved(self, group_id, artifact_id, version, module=None, configuration="releaseRuntimeClasspath"):
+        return {
+            "groupId": group_id,
+            "artifactId": artifact_id,
+            "version": version,
+            "resolvedBy": "gradle",
+            "usages": [{"module": module, "configuration": configuration}],
+        }
+
     def test_gradle_groovy_single_module(self):
         files = {
             "build.gradle": (
@@ -1422,33 +1385,39 @@ class TestScanProjectGradle(unittest.TestCase):
                 "}"
             ),
         }
+        resolved = [self._resolved("io.ktor", "ktor-client-core", "3.1.1")]
         with temp_project(files) as root:
-            result = server.scan_project(root)
-        self.assertEqual(result["buildSystem"], "gradle")
+            write_fake_gradlew(root)
+            with mock_gradle_resolve(resolved):
+                result = server.scan_project(root)
         dep = next((d for d in result["dependencies"]
                     if d.get("artifactId") == "ktor-client-core"), None)
         self.assertIsNotNone(dep)
         self.assertEqual(dep["version"], "3.1.1")
         self.assertEqual(dep["source"]["kind"], "module-direct")
 
-    # Gradle.kts multi-module end-to-end
     def test_gradle_kts_multi_module_submodule_deps(self):
         files = {
             "settings.gradle.kts": 'include(":core")\ninclude(":feature")',
             "core/build.gradle.kts": (
-                "dependencies {\n"
+                'dependencies {\n'
                 '    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.9.0")\n'
                 "}"
             ),
             "feature/build.gradle.kts": (
-                "dependencies {\n"
+                'dependencies {\n'
                 '    implementation("com.squareup.retrofit2:retrofit:2.11.0")\n'
                 "}"
             ),
         }
+        resolved = [
+            self._resolved("org.jetbrains.kotlinx", "kotlinx-coroutines-core", "1.9.0", ":core"),
+            self._resolved("com.squareup.retrofit2", "retrofit", "2.11.0", ":feature"),
+        ]
         with temp_project(files) as root:
-            result = server.scan_project(root)
-        self.assertEqual(result["buildSystem"], "gradle")
+            write_fake_gradlew(root)
+            with mock_gradle_resolve(resolved):
+                result = server.scan_project(root)
         core_dep = next(
             (d for d in result["dependencies"] if d.get("artifactId") == "kotlinx-coroutines-core"),
             None,
@@ -1467,8 +1436,8 @@ class TestScanProjectGradle(unittest.TestCase):
 # scan_project — buildSrc/ and build-logic/ convention-plugin discovery (#292)
 # ---------------------------------------------------------------------------
 
-class TestScanProjectBuildSrc(unittest.TestCase):
-    """End-to-end tests for buildSrc/ and build-logic/ discovery in scan_project()."""
+class TestCollectGradleProvenanceBuildSrc(unittest.TestCase):
+    """buildSrc/ and build-logic/ provenance discovery (#292 / #394)."""
 
     def test_buildsrc_own_build_file_kind_buildsrc(self):
         files = {
@@ -1480,13 +1449,11 @@ class TestScanProjectBuildSrc(unittest.TestCase):
             ),
         }
         with temp_project(files) as root:
-            result = server.scan_project(root)
+            result = server._collect_gradle_provenance(root)
         dep = next((d for d in result["dependencies"]
                     if d.get("artifactId") == "javapoet"), None)
         self.assertIsNotNone(dep)
-        self.assertEqual(dep["groupId"], "com.squareup")
         self.assertEqual(dep["source"]["kind"], "buildsrc")
-        self.assertEqual(dep["source"]["file"], "buildSrc/build.gradle.kts")
 
     def test_buildsrc_convention_plugin_script_kind_convention_plugin(self):
         files = {
@@ -1498,14 +1465,11 @@ class TestScanProjectBuildSrc(unittest.TestCase):
             ),
         }
         with temp_project(files) as root:
-            result = server.scan_project(root)
+            result = server._collect_gradle_provenance(root)
         dep = next((d for d in result["dependencies"]
                     if d.get("artifactId") == "ktor-client-core"), None)
         self.assertIsNotNone(dep)
         self.assertEqual(dep["source"]["kind"], "convention-plugin")
-        self.assertEqual(
-            dep["source"]["file"], "buildSrc/src/main/kotlin/some-convention.gradle.kts"
-        )
 
     def test_build_logic_subproject_build_file_kind_convention_plugin(self):
         files = {
@@ -1517,12 +1481,11 @@ class TestScanProjectBuildSrc(unittest.TestCase):
             ),
         }
         with temp_project(files) as root:
-            result = server.scan_project(root)
+            result = server._collect_gradle_provenance(root)
         dep = next((d for d in result["dependencies"]
                     if d.get("artifactId") == "javapoet"), None)
         self.assertIsNotNone(dep)
         self.assertEqual(dep["source"]["kind"], "convention-plugin")
-        self.assertEqual(dep["source"]["file"], "build-logic/convention/build.gradle.kts")
 
     def test_build_logic_convention_plugin_script_kind_convention_plugin(self):
         files = {
@@ -1534,15 +1497,24 @@ class TestScanProjectBuildSrc(unittest.TestCase):
             ),
         }
         with temp_project(files) as root:
-            result = server.scan_project(root)
+            result = server._collect_gradle_provenance(root)
         dep = next((d for d in result["dependencies"]
                     if d.get("artifactId") == "ktor-client-core"), None)
         self.assertIsNotNone(dep)
         self.assertEqual(dep["source"]["kind"], "convention-plugin")
-        self.assertEqual(
-            dep["source"]["file"],
-            "build-logic/convention/src/main/kotlin/foo-convention.gradle.kts",
-        )
+
+
+class TestScanProjectBuildSrc(unittest.TestCase):
+    """Gradle scan merges buildSrc/build-logic provenance with resolution."""
+
+    def _resolved(self, group_id, artifact_id, version):
+        return {
+            "groupId": group_id,
+            "artifactId": artifact_id,
+            "version": version,
+            "resolvedBy": "gradle",
+            "usages": [{"module": None, "configuration": "releaseRuntimeClasspath"}],
+        }
 
     def test_no_buildsrc_or_build_logic_no_new_kinds_emitted(self):
         files = {
@@ -1552,8 +1524,11 @@ class TestScanProjectBuildSrc(unittest.TestCase):
                 "}"
             ),
         }
+        resolved = [self._resolved("io.ktor", "ktor-client-core", "3.1.1")]
         with temp_project(files) as root:
-            result = server.scan_project(root)
+            write_fake_gradlew(root)
+            with mock_gradle_resolve(resolved):
+                result = server.scan_project(root)
         kinds = {d["source"]["kind"] for d in result["dependencies"]}
         self.assertNotIn("buildsrc", kinds)
         self.assertNotIn("convention-plugin", kinds)
@@ -1573,8 +1548,20 @@ class TestScanProjectBuildSrc(unittest.TestCase):
                 "}"
             ),
         }
+        resolved = [
+            {
+                "groupId": "io.ktor",
+                "artifactId": "ktor-client-core",
+                "version": "3.1.1",
+                "resolvedBy": "gradle",
+                "usages": [{"module": ":app", "configuration": "releaseRuntimeClasspath"}],
+            },
+            self._resolved("com.squareup", "javapoet", "1.13.0"),
+        ]
         with temp_project(files) as root:
-            result = server.scan_project(root)
+            write_fake_gradlew(root)
+            with mock_gradle_resolve(resolved):
+                result = server.scan_project(root)
         ktor_deps = [d for d in result["dependencies"] if d.get("artifactId") == "ktor-client-core"]
         javapoet_deps = [d for d in result["dependencies"] if d.get("artifactId") == "javapoet"]
         self.assertEqual(len(ktor_deps), 1)

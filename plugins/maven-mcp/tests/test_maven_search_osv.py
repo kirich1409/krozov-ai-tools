@@ -25,7 +25,7 @@ import unittest
 import urllib.error
 import unittest.mock
 
-from _helpers import server, mock_urlopen, http_error, empty_ctx, temp_project
+from _helpers import server, mock_urlopen, http_error, empty_ctx, temp_project, write_fake_gradlew, mock_gradle_resolve
 
 
 def _osv_batch_bare(vuln_id_lists):
@@ -886,19 +886,28 @@ class TestMaliciousFlag(unittest.TestCase):
             "id": "MAL-2025-2552", "summary": "malicious",
             "affected": [], "references": [],
         }
-        with temp_project({"build.gradle": gradle}) as root, \
-                unittest.mock.patch.object(
-                    server, "fetch_metadata",
-                    return_value={"versions": ["1.0.0"], "resolvedFrom": None},
-                ), \
-                unittest.mock.patch(
-                    "urllib.request.urlopen",
-                    side_effect=mock_urlopen([
-                        (200, batch),
-                        (200, _osv_vuln_get(full)),
-                    ]),
-                ):
-            out = server.handle_audit_project_dependencies({"projectPath": root})
+        with temp_project({"build.gradle": gradle}) as root:
+            write_fake_gradlew(root)
+            resolved = [{
+                "groupId": "io.github.leetcrunch",
+                "artifactId": "scribejava-core",
+                "version": "1.0.0",
+                "resolvedBy": "gradle",
+                "usages": [{"module": None, "configuration": "releaseRuntimeClasspath"}],
+            }]
+            with mock_gradle_resolve(resolved), \
+                    unittest.mock.patch.object(
+                        server, "fetch_metadata",
+                        return_value={"versions": ["1.0.0"], "resolvedFrom": None},
+                    ), \
+                    unittest.mock.patch(
+                        "urllib.request.urlopen",
+                        side_effect=mock_urlopen([
+                            (200, batch),
+                            (200, _osv_vuln_get(full)),
+                        ]),
+                    ):
+                out = server.handle_audit_project_dependencies({"projectPath": root})
         vulnerable = [d for d in out["dependencies"] if d.get("vulnerabilities")]
         self.assertEqual(len(vulnerable), 1)
         self.assertTrue(vulnerable[0]["vulnerabilities"][0]["malicious"])

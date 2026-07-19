@@ -5,7 +5,7 @@ import unittest
 import unittest.mock
 import urllib.error
 
-from _helpers import mock_urlopen, server, temp_project
+from _helpers import mock_gradle_resolve, mock_urlopen, server, temp_project, write_fake_gradlew
 
 
 def _vk(name: str, version: str, system: str = "MAVEN") -> dict:
@@ -298,32 +298,41 @@ class TestDetectDependencyConflicts(unittest.TestCase):
 
     def test_gradle_highest_wins(self):
         files = {
-            "settings.gradle.kts": 'rootProject.name = "app"\n',
-            "build.gradle.kts": """
-            dependencies {
-                implementation("com.example:left:1.0")
-                implementation("com.example:right:1.0")
-            }
-            """,
+            "settings.gradle.kts": 'include(":app")\ninclude(":core")\n',
+            "app/build.gradle.kts": 'dependencies { implementation("com.example:conflict:1.0") }',
+            "core/build.gradle.kts": 'dependencies { implementation("com.example:conflict:2.0") }',
         }
         with temp_project(files) as root:
-            with unittest.mock.patch(
-                "urllib.request.urlopen",
-                side_effect=mock_urlopen([
-                    (200, self._left_graph()),
-                    (200, self._right_graph()),
-                ]),
-            ):
+            write_fake_gradlew(root)
+            resolved = [
+                {
+                    "groupId": "com.example",
+                    "artifactId": "conflict",
+                    "version": "1.0",
+                    "resolvedBy": "gradle",
+                    "usages": [{"module": ":app", "configuration": "releaseRuntimeClasspath"}],
+                },
+                {
+                    "groupId": "com.example",
+                    "artifactId": "conflict",
+                    "version": "2.0",
+                    "resolvedBy": "gradle",
+                    "usages": [{"module": ":core", "configuration": "releaseRuntimeClasspath"}],
+                },
+            ]
+            with mock_gradle_resolve(resolved):
                 out = server.handle_detect_dependency_conflicts({
                     "projectPath": root,
                     "buildSystem": "gradle",
                 })
         self.assertEqual(out["strategy"], "highest-wins")
+        self.assertEqual(out["graphsFetched"], 0)
         c = next(
             x for x in out["conflicts"]
             if x["groupId"] == "com.example" and x["artifactId"] == "conflict"
         )
         self.assertEqual(c["resolvedTo"], "2.0")
+        self.assertTrue(any("Gradle-resolved" in n for n in out["notes"]))
 
     def test_partial_when_one_root_fails(self):
         files = self._two_root_project()

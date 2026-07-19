@@ -17,6 +17,7 @@ import random
 import re
 import socket
 import ssl
+import subprocess
 import sys
 import tempfile
 import time
@@ -113,6 +114,13 @@ _CACHE_DENYLIST = frozenset({"api.github.com", "api.osv.dev"})
 
 GRADLE_BUILD_FILES = ["build.gradle.kts", "build.gradle"]
 GRADLE_SETTINGS_FILES = ["settings.gradle.kts", "settings.gradle"]
+GRADLE_RESOLVE_TIMEOUT = 120
+_GRADLE_RESOLVE_CONFIGURATIONS = (
+    "releaseRuntimeClasspath",
+    "runtimeClasspath",
+    "releaseCompileClasspath",
+    "compileClasspath",
+)
 MAX_MODULE_DEPTH = 5
 # Cap recursive BOM import / parent-property fetches (#286).
 MAX_BOM_DEPTH = 5
@@ -2431,6 +2439,83 @@ def get_transitive_graph(
     return result
 
 
+def _detect_conflicts_from_gradle_scan(scan: Dict[str, Any]) -> Dict[str, Any]:
+    """Detect version conflicts from Gradle-resolved scan usages (highest-wins)."""
+    strategy = strategy_for_build_system("gradle")
+    bs_label = scan.get("buildSystem") or "gradle"
+
+    # ga -> version -> {sources: [usage labels…]}
+    ga_versions: Dict[Tuple[str, str], Dict[str, Dict[str, Any]]] = {}
+    for dep in scan.get("dependencies") or []:
+        if dep.get("isPlatform"):
+            continue
+        gid, aid = dep.get("groupId"), dep.get("artifactId")
+        ver = dep.get("version") or dep.get("effectiveVersion")
+        if not gid or not aid or not ver:
+            continue
+        usages = dep.get("usages") or [{"module": None, "configuration": ""}]
+        for usage in usages:
+            module = usage.get("module")
+            config = usage.get("configuration", "")
+            label = f"{module}:{config}" if module else (config or "gradle-resolved")
+            bucket = ga_versions.setdefault((gid, aid), {})
+            info = bucket.setdefault(ver, {"sources": []})
+            if label not in info["sources"]:
+                info["sources"].append(label)
+
+    conflicts: List[Dict[str, Any]] = []
+    for (gid, aid), ver_map in sorted(ga_versions.items()):
+        versions = list(ver_map.keys())
+        if len(versions) < 2:
+            continue
+        resolved = resolve_conflict_version(versions, strategy)
+        sources: List[Dict[str, Any]] = []
+        for v in sorted(versions, key=functools.cmp_to_key(compare_versions)):
+            sources.append({
+                "version": v,
+                "via": ver_map[v]["sources"][:10],
+                "minDepth": None,
+            })
+        conflicts.append({
+            "groupId": gid,
+            "artifactId": aid,
+            "versions": sorted(versions, key=functools.cmp_to_key(compare_versions)),
+            "resolvedTo": resolved,
+            "strategy": strategy,
+            "risk": _conflict_risk(versions, resolved),
+            "sources": sources,
+        })
+
+    risk_order = {"high": 0, "medium": 1, "low": 2}
+    conflicts.sort(
+        key=lambda c: (
+            risk_order.get(c["risk"], 9),
+            c["groupId"],
+            c["artifactId"],
+        )
+    )
+
+    notes = [
+        "Conflict detection derived from Gradle-resolved dependency scan usages "
+        + "(highest-wins mediation).",
+        "Compares versions of the same groupId:artifactId seen across module/"
+        + "configuration usages in the resolved tree.",
+        "Does not model ResolutionStrategy, strict versions, or enforcedPlatform "
+        + "overrides beyond what Gradle already reported.",
+    ]
+    return {
+        "buildSystem": bs_label,
+        "strategy": strategy,
+        "conflicts": conflicts,
+        "scannedRoots": 0,
+        "graphsFetched": 0,
+        "graphsFailed": 0,
+        "partial": False,
+        "errors": [],
+        "notes": notes,
+    }
+
+
 def detect_dependency_conflicts(
     project_path: str,
     build_system: Optional[str] = None,
@@ -2450,6 +2535,8 @@ def detect_dependency_conflicts(
     if ctx is None:
         ctx = build_resolution_context({"projectPath": project_path})
     scan = scan_project(project_path)
+    if scan.get("resolvedBy") == "gradle":
+        return _detect_conflicts_from_gradle_scan(scan)
     apply_bom_managed_versions(scan, ctx)
 
     detected_bs = scan.get("buildSystem") or "unknown"
@@ -6915,6 +7002,710 @@ def _detect_dead_repo_hints(content: str, file_name: str, module: Optional[str])
     return hints
 
 
+_gradle_run = subprocess.run
+
+
+def _find_gradle_wrapper(project_root: str) -> Optional[str]:
+    for name in ("gradlew", "gradlew.bat"):
+        path = os.path.join(project_root, name)
+        if os.path.isfile(path):
+            return path
+    return None
+
+
+def _gradle_cli_prefix_args() -> List[str]:
+    """CLI flags prepended to every Gradle wrapper invocation."""
+    if _offline_enabled():
+        return ["--offline"]
+    return []
+
+
+def _run_gradle_command(
+    project_root: str,
+    gradlew: str,
+    args: List[str],
+    timeout: int = GRADLE_RESOLVE_TIMEOUT,
+) -> Tuple[int, str, str]:
+    try:
+        result = _gradle_run(
+            [gradlew] + _gradle_cli_prefix_args() + args,
+            cwd=project_root,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+    except subprocess.TimeoutExpired:
+        return 124, "", f"Gradle command timed out after {timeout}s"
+    return result.returncode, result.stdout or "", result.stderr or ""
+
+
+def _parse_gav_from_dependency_line(token: str) -> Optional[Tuple[str, str, str]]:
+    token = token.strip()
+    token = re.sub(r"\s*\([cn*]\)\s*$", "", token).strip()
+    if not token or token.startswith("project "):
+        return None
+    if " -> " in token:
+        left, right = token.split(" -> ", 1)
+        right = re.sub(r"\s*\([cn*]\)\s*$", "", right).strip()
+        left_parts = left.strip().split(":")
+        if len(left_parts) < 2:
+            return None
+        group_id, artifact_id = left_parts[0], left_parts[1]
+        if ":" in right:
+            right_parts = right.split(":")
+            if len(right_parts) >= 3:
+                return right_parts[0], right_parts[1], ":".join(right_parts[2:])
+        if len(left_parts) >= 3:
+            return group_id, artifact_id, right
+        return None
+    parts = token.split(":")
+    if len(parts) >= 3:
+        return parts[0], parts[1], ":".join(parts[2:])
+    return None
+
+
+def _parse_gradle_dependencies_stdout(
+    stdout: str,
+    module_label: Optional[str],
+    configuration: str,
+) -> List[Dict]:
+    deps: List[Dict] = []
+    for line in stdout.splitlines():
+        m = re.match(r"^(?:\+---|\\---)\s+(.+)$", line)
+        if not m:
+            continue
+        token = m.group(1).strip()
+        if re.search(r"\(n\)\s*$", token):
+            continue
+        gav = _parse_gav_from_dependency_line(token)
+        if not gav:
+            continue
+        group_id, artifact_id, version = gav
+        deps.append({
+            "groupId": group_id,
+            "artifactId": artifact_id,
+            "version": version,
+            "configuration": configuration,
+            "module": module_label,
+            "resolvedBy": "gradle",
+            "usages": [{"module": module_label, "configuration": configuration}],
+        })
+    return deps
+
+
+def _parse_build_environment_classpath(stdout: str) -> List[Dict]:
+    deps: List[Dict] = []
+    in_classpath = False
+    for line in stdout.splitlines():
+        stripped = line.strip()
+        if stripped == "classpath" or stripped.startswith("classpath -"):
+            in_classpath = True
+            continue
+        if not in_classpath:
+            continue
+        if stripped == "" and deps:
+            break
+        m = re.match(r"^(?:\+---|\\---)\s+(.+)$", line)
+        if not m:
+            if deps and not line.startswith("|") and not stripped.startswith("+"):
+                break
+            continue
+        gav = _parse_gav_from_dependency_line(m.group(1))
+        if not gav:
+            continue
+        group_id, artifact_id, version = gav
+        deps.append({
+            "groupId": group_id,
+            "artifactId": artifact_id,
+            "version": version,
+            "configuration": "classpath",
+            "module": None,
+            "resolvedBy": "gradle",
+            "usages": [{"module": None, "configuration": "classpath"}],
+        })
+    return deps
+
+
+def _is_production_runtime_configuration(config: str) -> bool:
+    """True for production runtime classpaths; excludes test/compile/classpath."""
+    if not config:
+        return False
+    if _is_test_configuration(config):
+        return False
+    if config in ("classpath", "compileOnly"):
+        return False
+    if config == "compileClasspath" or config.endswith("CompileClasspath"):
+        return False
+    return config.endswith("RuntimeClasspath")
+
+
+def _parse_gradle_configuration_headers(stdout: str) -> List[str]:
+    """Extract configuration names from ``gradlew … dependencies`` probe output."""
+    configs: List[str] = []
+    seen: set = set()
+    for line in stdout.splitlines():
+        m = re.match(r"^([A-Za-z][\w\d]*) - ", line)
+        if not m:
+            continue
+        name = m.group(1)
+        if name not in seen:
+            seen.add(name)
+            configs.append(name)
+    return configs
+
+
+def _select_configurations_to_resolve(available: List[str]) -> List[str]:
+    """Pick production runtime configurations from a probed Gradle config list."""
+    selected = [c for c in available if _is_production_runtime_configuration(c)]
+    if not selected:
+        return []
+
+    def _sort_key(name: str) -> Tuple[int, str]:
+        if name.startswith("release") and name.endswith("RuntimeClasspath"):
+            return (0, name)
+        if name.endswith("RuntimeClasspath"):
+            return (1, name)
+        return (2, name)
+
+    selected.sort(key=_sort_key)
+    if any(
+        c.startswith("release") and c.endswith("RuntimeClasspath")
+        for c in selected
+    ):
+        selected = [c for c in selected if c != "runtimeClasspath"]
+    return selected
+
+
+def _probe_gradle_configurations(
+    project_root: str,
+    gradlew: str,
+    module: str,
+) -> Tuple[List[str], Optional[str]]:
+    if module == ":":
+        args = ["-q", "dependencies"]
+        task_label = ":dependencies"
+    else:
+        args = ["-q", f"{module}:dependencies"]
+        task_label = f"{module}:dependencies"
+    code, stdout, stderr = _run_gradle_command(project_root, gradlew, args)
+    if code != 0:
+        msg = f"{task_label} probe exited with code {code}"
+        if stderr.strip():
+            msg += f": {stderr.strip()}"
+        return [], msg
+    return _parse_gradle_configuration_headers(stdout), None
+
+
+def _count_production_runtime_deps(deps: List[Dict]) -> int:
+    count = 0
+    for dep in deps:
+        for usage in dep.get("usages") or []:
+            if _is_production_runtime_configuration(usage.get("configuration", "")):
+                count += 1
+                break
+    return count
+
+
+def _discover_gradle_modules(project_root: str, gradlew: Optional[str] = None) -> List[str]:
+    modules = [":"]
+    settings_content = None
+    for fname in GRADLE_SETTINGS_FILES:
+        path = os.path.join(project_root, fname)
+        if os.path.exists(path):
+            with open(path, "r", encoding="utf-8", errors="replace") as fh:
+                settings_content = fh.read()
+            break
+    if settings_content:
+        for module_path in _parse_settings_modules(settings_content):
+            if not module_path.startswith(":"):
+                module_path = ":" + module_path
+            if module_path not in modules:
+                modules.append(module_path)
+    if gradlew:
+        code, stdout, _stderr = _run_gradle_command(project_root, gradlew, ["-q", "projects"])
+        if code == 0:
+            for line in stdout.splitlines():
+                m = re.search(r"Project '([^']+)'", line)
+                if not m:
+                    continue
+                module_path = m.group(1)
+                if not module_path.startswith(":"):
+                    module_path = ":" + module_path
+                if module_path not in modules:
+                    modules.append(module_path)
+    return modules
+
+
+def _dedupe_gradle_resolved_deps(deps: List[Dict]) -> List[Dict]:
+    merged: Dict[Tuple[str, str, str], Dict] = {}
+    for dep in deps:
+        key = (dep["groupId"], dep["artifactId"], dep["version"])
+        usage = {
+            "module": dep.get("module"),
+            "configuration": dep.get("configuration", ""),
+        }
+        if key in merged:
+            usages = merged[key].setdefault("usages", [])
+            if usage not in usages:
+                usages.append(usage)
+        else:
+            entry = {
+                "groupId": dep["groupId"],
+                "artifactId": dep["artifactId"],
+                "version": dep["version"],
+                "resolvedBy": "gradle",
+                "usages": [usage],
+            }
+            merged[key] = entry
+    return list(merged.values())
+
+
+def _gradle_resolve_dependencies(project_root: str) -> Dict:
+    gradlew = _find_gradle_wrapper(project_root)
+    if not gradlew:
+        return {
+            "dependencies": [],
+            "notes": [],
+            "errors": ["Gradle wrapper (gradlew) not found"],
+        }
+
+    collected: List[Dict] = []
+    errors: List[str] = []
+    notes: List[str] = []
+    attempts = 0
+    failures = 0
+
+    for module in _discover_gradle_modules(project_root, gradlew):
+        probed, probe_err = _probe_gradle_configurations(project_root, gradlew, module)
+        if probe_err:
+            errors.append(probe_err)
+        configurations = _select_configurations_to_resolve(probed)
+        if not configurations:
+            configurations = [
+                c for c in _GRADLE_RESOLVE_CONFIGURATIONS
+                if _is_production_runtime_configuration(c)
+            ]
+
+        skip_bare_runtime = False
+        module_label = None if module == ":" else module
+        for configuration in configurations:
+            if configuration == "runtimeClasspath" and skip_bare_runtime:
+                continue
+            if module == ":":
+                args = ["-q", "dependencies", "--configuration", configuration]
+                task_label = f":{configuration}"
+            else:
+                args = ["-q", f"{module}:dependencies", "--configuration", configuration]
+                task_label = f"{module}:{configuration}"
+            attempts += 1
+            code, stdout, stderr = _run_gradle_command(project_root, gradlew, args)
+            if code != 0:
+                failures += 1
+                msg = f"{task_label} exited with code {code}"
+                if stderr.strip():
+                    msg += f": {stderr.strip()}"
+                errors.append(msg)
+                continue
+            parsed = _parse_gradle_dependencies_stdout(stdout, module_label, configuration)
+            collected.extend(parsed)
+            if (
+                parsed
+                and configuration.startswith("release")
+                and configuration.endswith("RuntimeClasspath")
+            ):
+                skip_bare_runtime = True
+
+    attempts += 1
+    code, stdout, stderr = _run_gradle_command(project_root, gradlew, ["-q", "buildEnvironment"])
+    if code == 0:
+        collected.extend(_parse_build_environment_classpath(stdout))
+    else:
+        failures += 1
+        msg = "buildEnvironment exited with code {}".format(code)
+        if stderr.strip():
+            msg += f": {stderr.strip()}"
+        errors.append(msg)
+
+    deduped = _dedupe_gradle_resolved_deps(collected)
+    production_count = _count_production_runtime_deps(deduped)
+    if production_count == 0:
+        if deduped:
+            errors.append(
+                "No production runtime dependencies resolved; only build classpath/"
+                + "plugin dependencies were found"
+            )
+        elif failures == attempts and attempts > 0:
+            notes.append("All Gradle dependency tasks failed.")
+        elif not errors:
+            notes.append("No production configurations resolved; project may lack applicable variants.")
+
+    return {
+        "dependencies": deduped,
+        "notes": notes,
+        "errors": errors,
+        "productionCount": production_count,
+    }
+
+
+def _collect_gradle_provenance(project_root: str) -> Dict:
+    """Collect catalog/source provenance from Gradle build files (no resolution)."""
+    dependencies: List[Dict] = []
+    dead_repo_hints: List[Dict] = []
+
+    settings_result = None
+    for f in GRADLE_SETTINGS_FILES:
+        p = os.path.join(project_root, f)
+        if os.path.exists(p):
+            with open(p, "r", encoding="utf-8", errors="replace") as fh:
+                settings_result = {"content": fh.read(), "file": f}
+            dead_repo_hints.extend(_detect_dead_repo_hints(settings_result["content"], f, None))
+            break
+
+    if settings_result:
+        descriptors = _parse_settings_catalogs(settings_result["content"])
+        if not descriptors:
+            default_toml = os.path.join(project_root, "gradle", "libs.versions.toml")
+            if os.path.exists(default_toml):
+                descriptors = [{"name": "libs", "tomlPath": "gradle/libs.versions.toml"}]
+    else:
+        default_toml = os.path.join(project_root, "gradle", "libs.versions.toml")
+        descriptors = (
+            [{"name": "libs", "tomlPath": "gradle/libs.versions.toml"}]
+            if os.path.exists(default_toml)
+            else []
+        )
+
+    catalogs: Dict[str, Dict] = {}
+    for desc in descriptors:
+        toml_path = os.path.join(project_root, desc["tomlPath"])
+        if not os.path.exists(toml_path):
+            continue
+        with open(toml_path, "r", encoding="utf-8", errors="replace") as fh:
+            content = fh.read()
+        catalogs[desc["name"]] = {"tomlPath": desc["tomlPath"], "parsed": _parse_toml_catalog(content)}
+
+    catalog_entry_map: Dict[str, Dict] = {}
+    for catalog_name, catalog_data in catalogs.items():
+        toml_path = catalog_data["tomlPath"]
+        parsed = catalog_data["parsed"]
+        for alias, entry in parsed["libraries"].items():
+            dep = {
+                "groupId": entry["groupId"],
+                "artifactId": entry["artifactId"],
+                "version": entry["version"],
+                "source": {
+                    "kind": "catalog-library",
+                    "catalogName": catalog_name,
+                    "tomlPath": toml_path,
+                    "alias": alias,
+                },
+                "usages": [],
+            }
+            dependencies.append(dep)
+            catalog_entry_map[f"{catalog_name}.lib.{alias}"] = dep
+            dashed = alias.replace(".", "-")
+            if dashed != alias:
+                catalog_entry_map[f"{catalog_name}.lib.{dashed}"] = dep
+        for alias, entry in parsed["plugins"].items():
+            plugin_id = entry["id"]
+            dep = {
+                "groupId": plugin_id,
+                "artifactId": f"{plugin_id}.gradle.plugin",
+                "version": entry["version"],
+                "source": {
+                    "kind": "catalog-plugin",
+                    "catalogName": catalog_name,
+                    "tomlPath": toml_path,
+                    "alias": alias,
+                },
+                "usages": [],
+            }
+            dependencies.append(dep)
+            catalog_entry_map[f"{catalog_name}.plugin.{alias}"] = dep
+            dashed = alias.replace(".", "-")
+            if dashed != alias:
+                catalog_entry_map[f"{catalog_name}.plugin.{dashed}"] = dep
+
+    def _parse_catalog_ref(ref: str):
+        dot_idx = ref.find(".")
+        if dot_idx == -1:
+            return None
+        return ref[:dot_idx], ref[dot_idx + 1 :]
+
+    def process_build_file_deps(content: str, file_name: str, module: Optional[str]) -> None:
+        for dep in _parse_gradle_deps(content, file_name):
+            if dep["catalogRef"]:
+                parsed = _parse_catalog_ref(dep["catalogRef"])
+                if not parsed:
+                    continue
+                catalog_name, alias = parsed
+                if catalog_name not in catalogs:
+                    continue
+                dashed_alias = alias.replace(".", "-")
+                entry = catalog_entry_map.get(f"{catalog_name}.lib.{alias}") or \
+                        catalog_entry_map.get(f"{catalog_name}.lib.{dashed_alias}")
+                if entry:
+                    entry["usages"].append({"module": module, "configuration": dep["configuration"]})
+                    if dep.get("isPlatform"):
+                        entry["isPlatform"] = True
+                        if (
+                            dep.get("platformKind") == "enforcedPlatform"
+                            or not entry.get("platformKind")
+                        ):
+                            entry["platformKind"] = dep.get("platformKind")
+            elif dep["groupId"] and dep["artifactId"]:
+                entry = {
+                    "groupId": dep["groupId"],
+                    "artifactId": dep["artifactId"],
+                    "version": dep["version"],
+                    "source": {"kind": "module-direct", "file": file_name, "module": module},
+                    "usages": [{"module": module, "configuration": dep["configuration"]}],
+                }
+                if dep.get("isPlatform"):
+                    entry["isPlatform"] = True
+                    entry["platformKind"] = dep.get("platformKind")
+                dependencies.append(entry)
+
+    def process_plugins_block(content: str, file_name: str, module: Optional[str], is_settings: bool) -> None:
+        for decl in _parse_gradle_plugins_block(content, is_settings):
+            if decl["catalogRef"]:
+                parsed = _parse_catalog_ref(decl["catalogRef"])
+                if not parsed:
+                    continue
+                catalog_name, alias_path = parsed
+                if catalog_name not in catalogs:
+                    continue
+                plugins_prefix = "plugins."
+                if not alias_path.startswith(plugins_prefix):
+                    continue
+                plugin_alias = alias_path[len(plugins_prefix) :]
+                dashed = plugin_alias.replace(".", "-")
+                entry = catalog_entry_map.get(f"{catalog_name}.plugin.{plugin_alias}") or \
+                        catalog_entry_map.get(f"{catalog_name}.plugin.{dashed}")
+                if entry:
+                    entry["usages"].append({"module": module, "configuration": "plugin-dsl"})
+            elif decl["pluginId"] and decl["pluginId"] != "(unresolved)":
+                settings_block = True if decl.get("settingsBlock") else None
+                source = {"kind": "plugins-dsl", "file": file_name, "module": module}
+                if settings_block:
+                    source["settingsBlock"] = True
+                dependencies.append({
+                    "groupId": decl["pluginId"],
+                    "artifactId": f"{decl['pluginId']}.gradle.plugin",
+                    "version": decl["version"],
+                    "source": source,
+                    "usages": [{"module": module, "configuration": "plugin-dsl"}],
+                })
+
+    def process_buildscript_classpath(content: str, file_name: str) -> None:
+        for dep in _parse_buildscript_classpath(content):
+            dependencies.append({
+                "groupId": dep["groupId"],
+                "artifactId": dep["artifactId"],
+                "version": dep["version"],
+                "source": {"kind": "buildscript-classpath", "file": file_name},
+                "usages": [{"module": None, "configuration": "classpath"}],
+            })
+
+    modules = _parse_settings_modules(settings_result["content"]) if settings_result else []
+    for module_path in modules:
+        dir_path = _module_path_to_dir(project_root, module_path)
+        for build_file in GRADLE_BUILD_FILES:
+            path = os.path.join(dir_path, build_file)
+            if not os.path.exists(path):
+                continue
+            with open(path, "r", encoding="utf-8", errors="replace") as fh:
+                content = fh.read()
+            process_build_file_deps(content, build_file, module_path)
+            process_plugins_block(content, build_file, module_path, False)
+            dead_repo_hints.extend(_detect_dead_repo_hints(content, build_file, module_path))
+            break
+
+    for build_file in GRADLE_BUILD_FILES:
+        path = os.path.join(project_root, build_file)
+        if not os.path.exists(path):
+            continue
+        with open(path, "r", encoding="utf-8", errors="replace") as fh:
+            content = fh.read()
+        process_build_file_deps(content, build_file, None)
+        process_plugins_block(content, build_file, None, False)
+        process_buildscript_classpath(content, build_file)
+        dead_repo_hints.extend(_detect_dead_repo_hints(content, build_file, None))
+        break
+
+    if settings_result:
+        process_plugins_block(settings_result["content"], settings_result["file"], None, True)
+
+    def emit_direct_deps(content: str, rel_file: str, kind: str) -> None:
+        for dep in _parse_gradle_deps(content, rel_file):
+            if dep["catalogRef"] or not (dep["groupId"] and dep["artifactId"]):
+                continue
+            entry = {
+                "groupId": dep["groupId"],
+                "artifactId": dep["artifactId"],
+                "version": dep["version"],
+                "source": {"kind": kind, "file": rel_file, "module": None},
+                "usages": [{"module": None, "configuration": dep["configuration"]}],
+            }
+            if dep.get("isPlatform"):
+                entry["isPlatform"] = True
+                entry["platformKind"] = dep.get("platformKind")
+            dependencies.append(entry)
+
+    def scan_convention_plugins(src_kotlin_dir: str) -> None:
+        if not os.path.isdir(src_kotlin_dir):
+            return
+        for dirpath, _dirnames, filenames in os.walk(src_kotlin_dir):
+            for name in sorted(filenames):
+                if not name.endswith(".gradle.kts"):
+                    continue
+                abs_path = os.path.join(dirpath, name)
+                rel_file = os.path.relpath(abs_path, project_root).replace(os.sep, "/")
+                with open(abs_path, "r", encoding="utf-8", errors="replace") as fh:
+                    content = fh.read()
+                emit_direct_deps(content, rel_file, "convention-plugin")
+
+    buildsrc_dir = os.path.join(project_root, "buildSrc")
+    if os.path.isdir(buildsrc_dir):
+        for build_file in GRADLE_BUILD_FILES:
+            path = os.path.join(buildsrc_dir, build_file)
+            if not os.path.exists(path):
+                continue
+            with open(path, "r", encoding="utf-8", errors="replace") as fh:
+                content = fh.read()
+            emit_direct_deps(content, f"buildSrc/{build_file}", "buildsrc")
+            break
+        scan_convention_plugins(os.path.join(buildsrc_dir, "src", "main", "kotlin"))
+
+    build_logic_dir = os.path.join(project_root, "build-logic")
+    if os.path.isdir(build_logic_dir):
+        for sub in sorted(os.listdir(build_logic_dir)):
+            sub_dir = os.path.join(build_logic_dir, sub)
+            if not os.path.isdir(sub_dir):
+                continue
+            for build_file in GRADLE_BUILD_FILES:
+                path = os.path.join(sub_dir, build_file)
+                if not os.path.exists(path):
+                    continue
+                with open(path, "r", encoding="utf-8", errors="replace") as fh:
+                    content = fh.read()
+                emit_direct_deps(content, f"build-logic/{sub}/{build_file}", "convention-plugin")
+                break
+            scan_convention_plugins(os.path.join(sub_dir, "src", "main", "kotlin"))
+
+    return {"dependencies": dependencies, "deadRepositoryHints": dead_repo_hints}
+
+
+_PROVENANCE_SOURCE_PRIORITY = {
+    "catalog-library": 0,
+    "catalog-plugin": 1,
+    "plugins-dsl": 2,
+    "buildscript-classpath": 3,
+    "module-direct": 4,
+    "buildsrc": 5,
+    "convention-plugin": 6,
+}
+
+
+def _pick_best_provenance(candidates: List[Dict]) -> Optional[Dict]:
+    if not candidates:
+        return None
+    return min(
+        candidates,
+        key=lambda d: _PROVENANCE_SOURCE_PRIORITY.get(
+            (d.get("source") or {}).get("kind", ""), 99
+        ),
+    )
+
+
+def _merge_gradle_with_provenance(resolved: List[Dict], provenance: List[Dict]) -> List[Dict]:
+    prov_by_ga: Dict[Tuple[str, str], List[Dict]] = {}
+    for dep in provenance:
+        gid, aid = dep.get("groupId"), dep.get("artifactId")
+        if gid and aid:
+            prov_by_ga.setdefault((gid, aid), []).append(dep)
+
+    merged: List[Dict] = []
+    in_output_ga: set = set()
+    in_output_catalog: set = set()
+
+    for dep in resolved:
+        key = (dep["groupId"], dep["artifactId"])
+        entry = {
+            "groupId": dep["groupId"],
+            "artifactId": dep["artifactId"],
+            "version": dep["version"],
+            "resolvedBy": "gradle",
+            "usages": list(dep.get("usages") or []),
+        }
+        prov = _pick_best_provenance(prov_by_ga.get(key, []))
+        if prov and prov.get("source"):
+            source_kind = prov["source"].get("kind", "")
+            alias = prov["source"].get("alias")
+            prov_usages = prov.get("usages") or []
+            attach_catalog = (
+                source_kind not in ("catalog-library", "catalog-plugin")
+                or bool(prov_usages)
+            )
+            if attach_catalog:
+                entry["source"] = prov["source"]
+                if prov.get("isPlatform"):
+                    entry["isPlatform"] = True
+                    entry["platformKind"] = prov.get("platformKind")
+                if source_kind in ("catalog-library", "catalog-plugin") and alias:
+                    in_output_catalog.add((source_kind, alias))
+            else:
+                entry["source"] = {"kind": "gradle-resolved"}
+        else:
+            entry["source"] = {"kind": "gradle-resolved"}
+        merged.append(entry)
+        in_output_ga.add(key)
+
+    for prov in provenance:
+        gid, aid = prov.get("groupId"), prov.get("artifactId")
+        if not gid or not aid:
+            continue
+        source = prov.get("source") or {}
+        kind = source.get("kind", "")
+        alias = source.get("alias")
+        key = (gid, aid)
+        if kind in ("catalog-library", "catalog-plugin"):
+            catalog_key = (kind, alias) if alias else (kind, gid, aid)
+            if catalog_key in in_output_catalog:
+                continue
+            entry = {
+                "groupId": gid,
+                "artifactId": aid,
+                "version": prov.get("version"),
+                "resolvedBy": "provenance",
+                "source": source or {"kind": "unknown"},
+                "usages": list(prov.get("usages") or []),
+            }
+            if prov.get("isPlatform"):
+                entry["isPlatform"] = True
+                entry["platformKind"] = prov.get("platformKind")
+            merged.append(entry)
+            in_output_catalog.add(catalog_key)
+            continue
+        if key in in_output_ga:
+            continue
+        entry = {
+            "groupId": gid,
+            "artifactId": aid,
+            "version": prov.get("version"),
+            "resolvedBy": "provenance",
+            "source": source or {"kind": "unknown"},
+            "usages": list(prov.get("usages") or []),
+        }
+        if prov.get("isPlatform"):
+            entry["isPlatform"] = True
+            entry["platformKind"] = prov.get("platformKind")
+        merged.append(entry)
+        in_output_ga.add(key)
+
+    return merged
+
+
 def scan_project(project_root: str) -> Dict:
     """Returns {buildSystem, dependencies: [...ScannedDependency],
     deadRepositoryHints: [...], managedPins: [...]}."""
@@ -6924,247 +7715,42 @@ def scan_project(project_root: str) -> Dict:
     managed_pins: List[Dict] = []
 
     if build_system == "gradle":
-        # Step 1: Read settings file
-        settings_result = None
-        for f in GRADLE_SETTINGS_FILES:
-            p = os.path.join(project_root, f)
-            if os.path.exists(p):
-                with open(p, "r", encoding="utf-8", errors="replace") as fh:
-                    settings_result = {"content": fh.read(), "file": f}
-                dead_repo_hints.extend(_detect_dead_repo_hints(settings_result["content"], f, None))
-                break
-
-        # Step 2: Determine catalog descriptors
-        if settings_result:
-            descriptors = _parse_settings_catalogs(settings_result["content"])
-            if not descriptors:
-                # Default if not declared explicitly
-                default_toml = os.path.join(project_root, "gradle", "libs.versions.toml")
-                if os.path.exists(default_toml):
-                    descriptors = [{"name": "libs", "tomlPath": "gradle/libs.versions.toml"}]
-        else:
-            default_toml = os.path.join(project_root, "gradle", "libs.versions.toml")
-            descriptors = [{"name": "libs", "tomlPath": "gradle/libs.versions.toml"}] if os.path.exists(default_toml) else []
-
-        # Step 3: Load catalogs
-        catalogs: Dict[str, Dict] = {}  # name -> {tomlPath, parsed}
-        for desc in descriptors:
-            toml_path = os.path.join(project_root, desc["tomlPath"])
-            if not os.path.exists(toml_path):
-                continue
-            with open(toml_path, "r", encoding="utf-8", errors="replace") as f:
-                content = f.read()
-            catalogs[desc["name"]] = {"tomlPath": desc["tomlPath"], "parsed": _parse_toml_catalog(content)}
-
-        # Step 4: Emit catalog entries with empty usages
-        # catalog_entry_map: "catalogName.lib.alias" -> dep dict (shared reference)
-        catalog_entry_map: Dict[str, Dict] = {}
-        for catalog_name, catalog_data in catalogs.items():
-            toml_path = catalog_data["tomlPath"]
-            parsed = catalog_data["parsed"]
-            for alias, entry in parsed["libraries"].items():
-                dep = {
-                    "groupId": entry["groupId"],
-                    "artifactId": entry["artifactId"],
-                    "version": entry["version"],
-                    "source": {"kind": "catalog-library", "catalogName": catalog_name, "tomlPath": toml_path, "alias": alias},
-                    "usages": [],
-                }
-                dependencies.append(dep)
-                catalog_entry_map[f"{catalog_name}.lib.{alias}"] = dep
-                dashed = alias.replace(".", "-")
-                if dashed != alias:
-                    catalog_entry_map[f"{catalog_name}.lib.{dashed}"] = dep
-            for alias, entry in parsed["plugins"].items():
-                plugin_id = entry["id"]
-                dep = {
-                    "groupId": plugin_id,
-                    "artifactId": f"{plugin_id}.gradle.plugin",
-                    "version": entry["version"],
-                    "source": {"kind": "catalog-plugin", "catalogName": catalog_name, "tomlPath": toml_path, "alias": alias},
-                    "usages": [],
-                }
-                dependencies.append(dep)
-                catalog_entry_map[f"{catalog_name}.plugin.{alias}"] = dep
-                dashed = alias.replace(".", "-")
-                if dashed != alias:
-                    catalog_entry_map[f"{catalog_name}.plugin.{dashed}"] = dep
-
-        def _parse_catalog_ref(ref: str):
-            dot_idx = ref.find(".")
-            if dot_idx == -1:
-                return None
-            return ref[:dot_idx], ref[dot_idx + 1:]
-
-        def process_build_file_deps(content: str, file_name: str, module: Optional[str]) -> None:
-            for dep in _parse_gradle_deps(content, file_name):
-                if dep["catalogRef"]:
-                    parsed = _parse_catalog_ref(dep["catalogRef"])
-                    if not parsed:
-                        continue
-                    catalog_name, alias = parsed
-                    if catalog_name not in catalogs:
-                        continue
-                    dashed_alias = alias.replace(".", "-")
-                    entry = catalog_entry_map.get(f"{catalog_name}.lib.{alias}") or \
-                            catalog_entry_map.get(f"{catalog_name}.lib.{dashed_alias}")
-                    if entry:
-                        entry["usages"].append({"module": module, "configuration": dep["configuration"]})
-                        if dep.get("isPlatform"):
-                            entry["isPlatform"] = True
-                            # Prefer enforcedPlatform if any usage wraps it that way.
-                            if (
-                                dep.get("platformKind") == "enforcedPlatform"
-                                or not entry.get("platformKind")
-                            ):
-                                entry["platformKind"] = dep.get("platformKind")
-                elif dep["groupId"] and dep["artifactId"]:
-                    entry = {
-                        "groupId": dep["groupId"],
-                        "artifactId": dep["artifactId"],
-                        "version": dep["version"],
-                        "source": {"kind": "module-direct", "file": file_name, "module": module},
-                        "usages": [{"module": module, "configuration": dep["configuration"]}],
-                    }
-                    if dep.get("isPlatform"):
-                        entry["isPlatform"] = True
-                        entry["platformKind"] = dep.get("platformKind")
-                    dependencies.append(entry)
-
-        def process_plugins_block(content: str, file_name: str, module: Optional[str], is_settings: bool) -> None:
-            for decl in _parse_gradle_plugins_block(content, is_settings):
-                if decl["catalogRef"]:
-                    parsed = _parse_catalog_ref(decl["catalogRef"])
-                    if not parsed:
-                        continue
-                    catalog_name, alias_path = parsed
-                    if catalog_name not in catalogs:
-                        continue
-                    plugins_prefix = "plugins."
-                    if not alias_path.startswith(plugins_prefix):
-                        continue
-                    plugin_alias = alias_path[len(plugins_prefix):]
-                    dashed = plugin_alias.replace(".", "-")
-                    entry = catalog_entry_map.get(f"{catalog_name}.plugin.{plugin_alias}") or \
-                            catalog_entry_map.get(f"{catalog_name}.plugin.{dashed}")
-                    if entry:
-                        entry["usages"].append({"module": module, "configuration": "plugin-dsl"})
-                elif decl["pluginId"] and decl["pluginId"] != "(unresolved)":
-                    settings_block = True if decl.get("settingsBlock") else None
-                    source = {"kind": "plugins-dsl", "file": file_name, "module": module}
-                    if settings_block:
-                        source["settingsBlock"] = True
-                    dependencies.append({
-                        "groupId": decl["pluginId"],
-                        "artifactId": f"{decl['pluginId']}.gradle.plugin",
-                        "version": decl["version"],
-                        "source": source,
-                        "usages": [{"module": module, "configuration": "plugin-dsl"}],
-                    })
-
-        def process_buildscript_classpath(content: str, file_name: str) -> None:
-            for dep in _parse_buildscript_classpath(content):
-                dependencies.append({
+        gradlew = _find_gradle_wrapper(project_root)
+        if not gradlew:
+            raise ValueError(
+                "Gradle project requires a Gradle wrapper (gradlew). "
+                "Add the wrapper with `gradle wrapper` or copy gradlew from a template project."
+            )
+        resolved = _gradle_resolve_dependencies(project_root)
+        production_count = resolved.get("productionCount", 0)
+        if production_count == 0:
+            detail = resolved.get("errors") or resolved.get("notes") or ["no production runtime dependencies resolved"]
+            raise ValueError(
+                "Gradle dependency resolution failed: " + "; ".join(detail)
+            )
+        provenance = _collect_gradle_provenance(project_root)
+        dependencies = _merge_gradle_with_provenance(
+            resolved["dependencies"], provenance["dependencies"]
+        )
+        for dep in provenance["dependencies"]:
+            if dep.get("isPlatform") and dep.get("version"):
+                managed_pins.append({
                     "groupId": dep["groupId"],
                     "artifactId": dep["artifactId"],
                     "version": dep["version"],
-                    "source": {"kind": "buildscript-classpath", "file": file_name},
-                    "usages": [{"module": None, "configuration": "classpath"}],
+                    "module": (dep.get("usages") or [{}])[0].get("module"),
                 })
-
-        # Step 5: Scan module build files
-        modules = _parse_settings_modules(settings_result["content"]) if settings_result else []
-        for module_path in modules:
-            dir_path = _module_path_to_dir(project_root, module_path)
-            for build_file in GRADLE_BUILD_FILES:
-                path = os.path.join(dir_path, build_file)
-                if not os.path.exists(path):
-                    continue
-                with open(path, "r", encoding="utf-8", errors="replace") as f:
-                    content = f.read()
-                process_build_file_deps(content, build_file, module_path)
-                process_plugins_block(content, build_file, module_path, False)
-                dead_repo_hints.extend(_detect_dead_repo_hints(content, build_file, module_path))
-                break
-
-        # Step 6: Scan root build file
-        for build_file in GRADLE_BUILD_FILES:
-            path = os.path.join(project_root, build_file)
-            if not os.path.exists(path):
-                continue
-            with open(path, "r", encoding="utf-8", errors="replace") as f:
-                content = f.read()
-            process_build_file_deps(content, build_file, None)
-            process_plugins_block(content, build_file, None, False)
-            process_buildscript_classpath(content, build_file)
-            dead_repo_hints.extend(_detect_dead_repo_hints(content, build_file, None))
-            break
-
-        # Step 7: Scan settings for pluginManagement plugins {}
-        if settings_result:
-            process_plugins_block(settings_result["content"], settings_result["file"], None, True)
-
-        # Step 8: Discover buildSrc/ and build-logic/ convention-plugin builds.
-        # Neither directory is ever listed in settings.gradle include(...), so
-        # Step 5 never touches them — no double-scan risk. catalogRef entries
-        # are skipped: resolving them against the root catalog would be wrong
-        # provenance scope (accepted limitation, not a bug).
-        def emit_direct_deps(content: str, rel_file: str, kind: str) -> None:
-            for dep in _parse_gradle_deps(content, rel_file):
-                if dep["catalogRef"] or not (dep["groupId"] and dep["artifactId"]):
-                    continue
-                entry = {
-                    "groupId": dep["groupId"],
-                    "artifactId": dep["artifactId"],
-                    "version": dep["version"],
-                    "source": {"kind": kind, "file": rel_file, "module": None},
-                    "usages": [{"module": None, "configuration": dep["configuration"]}],
-                }
-                if dep.get("isPlatform"):
-                    entry["isPlatform"] = True
-                    entry["platformKind"] = dep.get("platformKind")
-                dependencies.append(entry)
-
-        def scan_convention_plugins(src_kotlin_dir: str) -> None:
-            if not os.path.isdir(src_kotlin_dir):
-                return
-            for dirpath, _dirnames, filenames in os.walk(src_kotlin_dir):
-                for name in sorted(filenames):
-                    if not name.endswith(".gradle.kts"):
-                        continue
-                    abs_path = os.path.join(dirpath, name)
-                    rel_file = os.path.relpath(abs_path, project_root).replace(os.sep, "/")
-                    with open(abs_path, "r", encoding="utf-8", errors="replace") as fh:
-                        content = fh.read()
-                    emit_direct_deps(content, rel_file, "convention-plugin")
-
-        buildsrc_dir = os.path.join(project_root, "buildSrc")
-        if os.path.isdir(buildsrc_dir):
-            for build_file in GRADLE_BUILD_FILES:
-                path = os.path.join(buildsrc_dir, build_file)
-                if not os.path.exists(path):
-                    continue
-                with open(path, "r", encoding="utf-8", errors="replace") as fh:
-                    content = fh.read()
-                emit_direct_deps(content, f"buildSrc/{build_file}", "buildsrc")
-                break
-            scan_convention_plugins(os.path.join(buildsrc_dir, "src", "main", "kotlin"))
-
-        build_logic_dir = os.path.join(project_root, "build-logic")
-        if os.path.isdir(build_logic_dir):
-            for sub in sorted(os.listdir(build_logic_dir)):
-                sub_dir = os.path.join(build_logic_dir, sub)
-                if not os.path.isdir(sub_dir):
-                    continue
-                for build_file in GRADLE_BUILD_FILES:
-                    path = os.path.join(sub_dir, build_file)
-                    if not os.path.exists(path):
-                        continue
-                    with open(path, "r", encoding="utf-8", errors="replace") as fh:
-                        content = fh.read()
-                    emit_direct_deps(content, f"build-logic/{sub}/{build_file}", "convention-plugin")
-                    break
-                scan_convention_plugins(os.path.join(sub_dir, "src", "main", "kotlin"))
+        result: Dict[str, Any] = {
+            "buildSystem": "gradle",
+            "dependencies": dependencies,
+            "deadRepositoryHints": provenance.get("deadRepositoryHints", []),
+            "managedPins": managed_pins,
+            "resolvedBy": "gradle",
+            "notes": resolved.get("notes", []),
+        }
+        if resolved.get("errors"):
+            result["gradleErrors"] = resolved["errors"]
+        return result
 
     elif build_system == "maven":
         _scan_maven_recursive(
@@ -7210,6 +7796,8 @@ def flatten_scan_result(scan: Dict) -> Dict:
                 entry["effectiveVersion"] = dep["effectiveVersion"]
             if dep.get("managedBy") is not None:
                 entry["managedBy"] = dep["managedBy"]
+            if dep.get("resolvedBy") is not None:
+                entry["resolvedBy"] = dep["resolvedBy"]
             return entry
 
         if not usages:
@@ -7222,11 +7810,18 @@ def flatten_scan_result(scan: Dict) -> Dict:
                         usage.get("module"),
                     )
                 )
-    return {
+    result = {
         "buildSystem": scan["buildSystem"],
         "dependencies": deps,
         "deadRepositoryHints": scan.get("deadRepositoryHints", []),
     }
+    if scan.get("resolvedBy"):
+        result["resolvedBy"] = scan["resolvedBy"]
+    if scan.get("notes"):
+        result["notes"] = scan["notes"]
+    if scan.get("gradleErrors"):
+        result["gradleErrors"] = scan["gradleErrors"]
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -7417,7 +8012,8 @@ def handle_scan_project_dependencies(args: Dict) -> Any:
     project_path = args.get("projectPath") or os.getcwd()
     ctx = build_resolution_context(args)
     scan = scan_project(project_path)
-    apply_bom_managed_versions(scan, ctx)
+    if scan.get("resolvedBy") != "gradle":
+        apply_bom_managed_versions(scan, ctx)
     return flatten_scan_result(scan)
 
 
@@ -7766,7 +8362,8 @@ def handle_audit_project_dependencies(args: Dict) -> Any:
 
     ctx = build_resolution_context(args)
     scan = scan_project(project_path)
-    apply_bom_managed_versions(scan, ctx)
+    if scan.get("resolvedBy") != "gradle":
+        apply_bom_managed_versions(scan, ctx)
 
     def is_included_in_production(dep: Dict) -> bool:
         source = dep["source"]

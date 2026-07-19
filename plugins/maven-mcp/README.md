@@ -20,7 +20,7 @@ The server registers tools that Claude can call during a conversation. It querie
 | `scan_project_dependencies` | Scan Gradle/Maven build files and Gradle version catalogs (`gradle/libs.versions.toml`) for dependencies |
 | `expand_bom` | Expand a Maven BOM into managed dependency versions |
 | `get_transitive_graph` | Resolved transitive dependency graph for a GAV via deps.dev |
-| `detect_dependency_conflicts` | Flag GAs resolved at multiple versions (Maven nearest-wins / Gradle highest-wins) |
+| `detect_dependency_conflicts` | Flag GAs resolved at multiple versions (Gradle: from resolved scan usages; Maven: deps.dev per-root graphs with nearest-wins) |
 | `check_version_compatibility` | Check Spring Boot / AGP / Kotlin / javax→jakarta compatibility |
 | `get_dependency_vulnerabilities` | Check for known CVEs via OSV.dev |
 | `get_dependency_health` | Assess adoption-worthiness: version/stability, GitHub activity, issue dynamics, license, owner — raw signals for a verdict |
@@ -47,7 +47,7 @@ The server registers tools that Claude can call during a conversation. It querie
 - **Maven** — `pom.xml`
 - **Version catalogs** — `gradle/libs.versions.toml`
 
-Repositories are selected by static group-prefix routing (Gradle Plugin Portal for plugin markers, Google Maven for AndroidX/Google groups, Maven Central as fallback). Dependency scanning reads `gradle/libs.versions.toml` for declared dependencies. The server does not parse build files for custom/private repositories, so version answers for projects relying on custom repos can be incomplete.
+Repositories are selected by static group-prefix routing (Gradle Plugin Portal for plugin markers, Google Maven for AndroidX/Google groups, Maven Central as fallback). **Gradle scanning** invokes the project's Gradle wrapper to resolve production runtime classpaths (`*RuntimeClasspath`) and merges declared provenance from build files and version catalogs (`gradle/libs.versions.toml`). **Maven scanning** parses `pom.xml` locally. Build-file parsers also collect catalog aliases, plugin DSL declarations, and dead-repository hints (`jcenter()`). The server also reads project-declared repositories for version lookups (see plugin docs); custom/private repos require credentials via `MAVEN_REPO_*` env vars.
 
 ## Requirements
 

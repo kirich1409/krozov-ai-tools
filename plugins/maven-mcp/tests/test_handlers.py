@@ -19,7 +19,7 @@ import json
 import unittest
 import unittest.mock
 
-from _helpers import server, mock_urlopen, http_error, temp_project
+from _helpers import server, mock_urlopen, http_error, temp_project, write_fake_gradlew, mock_gradle_resolve
 
 
 # --- response builders ------------------------------------------------------
@@ -627,8 +627,17 @@ class TestAuditProjectDependencies(unittest.TestCase):
             (200, _osv_vuln_get(full)),
         ]
         with temp_project({"build.gradle.kts": build_file}) as root:
-            with _patch_urlopen(responses):
-                out = server.handle_audit_project_dependencies({"projectPath": root})
+            write_fake_gradlew(root)
+            resolved = [{
+                "groupId": "com.example.foo",
+                "artifactId": "com.example.foo.gradle.plugin",
+                "version": "1.0.0",
+                "resolvedBy": "gradle",
+                "usages": [{"module": None, "configuration": "plugin-dsl"}],
+            }]
+            with mock_gradle_resolve(resolved, production_count=1):
+                with _patch_urlopen(responses):
+                    out = server.handle_audit_project_dependencies({"projectPath": root})
         plugin_entries = [
             d for d in out["dependencies"] if d["artifactId"] == "com.example.foo.gradle.plugin"
         ]

@@ -53,7 +53,17 @@ import server  # noqa: E402  (must follow the sys.path shim above)
 # Public test API re-exported for ``from _helpers import ...``. Listing
 # ``server`` makes the shimmed import above an intentional re-export rather
 # than an unused import.
-__all__ = ["server", "mock_urlopen", "http_error", "temp_project", "empty_ctx", "temp_cache_dir"]
+__all__ = [
+    "server",
+    "mock_urlopen",
+    "http_error",
+    "temp_project",
+    "empty_ctx",
+    "temp_cache_dir",
+    "write_fake_gradlew",
+    "write_smart_gradlew",
+    "mock_gradle_resolve",
+]
 
 
 def empty_ctx(public_fallback: bool = False) -> "server.ResolutionContext":
@@ -200,6 +210,106 @@ def temp_project(files: Dict[str, str]):
             with open(path, "w", encoding="utf-8") as fh:
                 fh.write(content)
         yield root
+
+
+def write_fake_gradlew(root: str) -> str:
+    """Create an executable stub ``gradlew`` in ``root`` for Gradle scan tests."""
+    path = os.path.join(root, "gradlew")
+    with open(path, "w", encoding="utf-8") as fh:
+        fh.write("#!/bin/sh\nexit 0\n")
+    # Owner-only executable — avoids CodeQL py/overly-permissive-chmod on 0o755.
+    os.chmod(path, 0o700)
+    return path
+
+
+def write_smart_gradlew(root: str) -> str:
+    """Create a ``gradlew`` stub that echoes fixture dependency-tree output.
+
+    Exercises the real subprocess → parse path in ``_gradle_resolve_dependencies``
+    without a JVM or Gradle installation.
+    """
+    path = os.path.join(root, "gradlew")
+    script = r"""#!/bin/sh
+joined="$*"
+if echo "$joined" | grep -q "projects"; then
+  printf '%s\n' "Root project 'demo'" "Project ':app'"
+  exit 0
+fi
+if echo "$joined" | grep -q "buildEnvironment"; then
+  printf '%s\n' "classpath" "+--- com.android.tools.build:gradle:8.0.0"
+  exit 0
+fi
+if echo "$joined" | grep -q ":app:dependencies" && echo "$joined" | grep -q "releaseRuntimeClasspath"; then
+  printf '%s\n' \
+    "releaseRuntimeClasspath - Runtime classpath of source set 'main'." \
+    "+--- io.ktor:ktor-client-core:3.1.1 -> 3.1.2"
+  exit 0
+fi
+if echo "$joined" | grep -q ":app:dependencies" && ! echo "$joined" | grep -q -- "--configuration"; then
+  printf '%s\n' \
+    "releaseRuntimeClasspath - Runtime classpath of source set 'main'." \
+    "compileClasspath - Compile classpath of source set 'main'."
+  exit 0
+fi
+if echo "$joined" | grep -q -- "-q dependencies" && echo "$joined" | grep -q "releaseRuntimeClasspath"; then
+  printf '%s\n' "releaseRuntimeClasspath - Runtime classpath of source set 'main'."
+  exit 0
+fi
+exit 0
+"""
+    with open(path, "w", encoding="utf-8") as fh:
+        fh.write(script)
+    os.chmod(path, 0o700)
+    return path
+
+
+@contextlib.contextmanager
+def mock_gradle_resolve(
+    dependencies: Optional[List[Dict]] = None,
+    *,
+    errors: Optional[List[str]] = None,
+    notes: Optional[List[str]] = None,
+    production_count: Optional[int] = None,
+):
+    """Patch ``server._gradle_resolve_dependencies`` to return fixture output."""
+
+    def _production_count(deps: List[Dict]) -> int:
+        count = 0
+        for dep in deps:
+            for usage in dep.get("usages") or []:
+                if server._is_production_runtime_configuration(
+                    usage.get("configuration", "")
+                ):
+                    count += 1
+                    break
+        return count
+
+    def _fake_resolve(_project_root: str) -> Dict:
+        deps = list(dependencies if dependencies is not None else [])
+        err = list(errors or [])
+        if not deps and not err:
+            # scan_project rejects an empty Gradle resolve; tests that only
+            # exercise provenance/dead-repo hints need a placeholder GAV.
+            deps = [{
+                "groupId": "com.example",
+                "artifactId": "fixture",
+                "version": "1.0",
+                "resolvedBy": "gradle",
+                "usages": [{"module": None, "configuration": "releaseRuntimeClasspath"}],
+            }]
+        return {
+            "dependencies": deps,
+            "notes": list(notes or []),
+            "errors": err,
+            "productionCount": (
+                production_count
+                if production_count is not None
+                else _production_count(deps)
+            ),
+        }
+
+    with unittest.mock.patch.object(server, "_gradle_resolve_dependencies", _fake_resolve):
+        yield
 
 
 @contextlib.contextmanager

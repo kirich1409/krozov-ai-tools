@@ -3,7 +3,7 @@
 import unittest
 import unittest.mock
 
-from _helpers import empty_ctx, mock_urlopen, server, temp_project
+from _helpers import empty_ctx, mock_gradle_resolve, mock_urlopen, server, temp_project, write_fake_gradlew
 
 
 def _bom_pom(managed_xml: str, properties_xml: str = "", parent_xml: str = "") -> bytes:
@@ -176,7 +176,7 @@ class TestApplyBomManagedVersions(unittest.TestCase):
                     "artifactId": "lib",
                     "version": None,
                     "source": {"kind": "module-direct", "file": "pom.xml", "module": None},
-                    "usages": [{"module": None, "configuration": "implementation"}],
+                    "usages": [{"module": None, "configuration": "releaseRuntimeClasspath"}],
                 },
             ],
             "managedPins": [
@@ -211,14 +211,14 @@ class TestApplyBomManagedVersions(unittest.TestCase):
                     "isPlatform": True,
                     "platformKind": "platform",
                     "source": {"kind": "module-direct", "file": "build.gradle.kts", "module": None},
-                    "usages": [{"module": None, "configuration": "implementation"}],
+                    "usages": [{"module": None, "configuration": "releaseRuntimeClasspath"}],
                 },
                 {
                     "groupId": "com.example",
                     "artifactId": "lib",
                     "version": "9.9.9",
                     "source": {"kind": "module-direct", "file": "build.gradle.kts", "module": None},
-                    "usages": [{"module": None, "configuration": "implementation"}],
+                    "usages": [{"module": None, "configuration": "releaseRuntimeClasspath"}],
                 },
             ],
             "managedPins": [],
@@ -236,7 +236,6 @@ class TestApplyBomManagedVersions(unittest.TestCase):
 
 class TestScanAuditBomIntegration(unittest.TestCase):
     def test_gradle_platform_versionless_scan(self):
-        bom = _bom_pom(_dep("com.example", "lib", "1.2.3"))
         files = {
             "settings.gradle.kts": "rootProject.name = \"app\"\n",
             "build.gradle.kts": (
@@ -246,21 +245,32 @@ class TestScanAuditBomIntegration(unittest.TestCase):
                 "}\n"
             ),
         }
+        resolved = [
+            {
+                "groupId": "org.example",
+                "artifactId": "bom",
+                "version": "1.0",
+                "resolvedBy": "gradle",
+                "isPlatform": True,
+                "usages": [{"module": None, "configuration": "releaseRuntimeClasspath"}],
+            },
+            {
+                "groupId": "com.example",
+                "artifactId": "lib",
+                "version": "1.2.3",
+                "resolvedBy": "gradle",
+                "usages": [{"module": None, "configuration": "releaseRuntimeClasspath"}],
+            },
+        ]
         with temp_project(files) as root:
-            with unittest.mock.patch(
-                "urllib.request.urlopen",
-                side_effect=mock_urlopen([(200, bom)]),
-            ):
+            write_fake_gradlew(root)
+            with mock_gradle_resolve(resolved):
                 out = server.handle_scan_project_dependencies({"projectPath": root})
         by_ga = {(d["groupId"], d["artifactId"]): d for d in out["dependencies"]}
         self.assertTrue(by_ga[("org.example", "bom")]["isPlatform"])
         lib = by_ga[("com.example", "lib")]
-        self.assertIsNone(lib["version"])
-        self.assertEqual(lib["effectiveVersion"], "1.2.3")
-        self.assertEqual(
-            lib["managedBy"],
-            {"groupId": "org.example", "artifactId": "bom", "version": "1.0"},
-        )
+        self.assertEqual(lib["version"], "1.2.3")
+        self.assertEqual(out["resolvedBy"], "gradle")
 
     def test_maven_import_bom_versionless_scan(self):
         bom = _bom_pom(_dep("com.example", "lib", "4.5.6"))
@@ -298,7 +308,6 @@ class TestScanAuditBomIntegration(unittest.TestCase):
         self.assertEqual(lib["managedBy"]["artifactId"], "bom")
 
     def test_audit_uses_effective_version(self):
-        bom = _bom_pom(_dep("com.example", "lib", "1.0.0"))
         meta = (
             b'<?xml version="1.0"?>'
             b"<metadata><versioning><versions>"
@@ -314,28 +323,40 @@ class TestScanAuditBomIntegration(unittest.TestCase):
                 "}\n"
             ),
         }
-        # expand_bom fetches BOM POM; audit then fetches metadata for bom + lib.
-        # Order: apply expands platform (1 POM), then audit metadata for each
-        # dep with a version (platform has 1.0, lib has effectiveVersion).
+        resolved = [
+            {
+                "groupId": "org.example",
+                "artifactId": "bom",
+                "version": "1.0",
+                "resolvedBy": "gradle",
+                "usages": [{"module": None, "configuration": "releaseRuntimeClasspath"}],
+            },
+            {
+                "groupId": "com.example",
+                "artifactId": "lib",
+                "version": "1.0.0",
+                "resolvedBy": "gradle",
+                "usages": [{"module": None, "configuration": "releaseRuntimeClasspath"}],
+            },
+        ]
         responses = [
-            (200, bom),   # expand_bom for platform
             (200, meta),  # metadata for org.example:bom
             (200, meta),  # metadata for com.example:lib
         ]
         with temp_project(files) as root:
-            with unittest.mock.patch(
-                "urllib.request.urlopen",
-                side_effect=mock_urlopen(responses),
-            ):
-                out = server.handle_audit_project_dependencies({
-                    "projectPath": root,
-                    "includeVulnerabilities": False,
-                })
+            write_fake_gradlew(root)
+            with mock_gradle_resolve(resolved):
+                with unittest.mock.patch(
+                    "urllib.request.urlopen",
+                    side_effect=mock_urlopen(responses),
+                ):
+                    out = server.handle_audit_project_dependencies({
+                        "projectPath": root,
+                        "includeVulnerabilities": False,
+                    })
         by_ga = {(d["groupId"], d["artifactId"]): d for d in out["dependencies"]}
         lib = by_ga[("com.example", "lib")]
         self.assertEqual(lib["currentVersion"], "1.0.0")
-        self.assertEqual(lib["effectiveVersion"], "1.0.0")
-        self.assertEqual(lib["managedBy"]["groupId"], "org.example")
         self.assertEqual(lib["upgradeType"], "minor")
 
 
