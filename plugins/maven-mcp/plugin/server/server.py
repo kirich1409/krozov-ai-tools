@@ -257,15 +257,38 @@ def _url_scheme(url: str) -> str:
 
 
 def _assert_http_url(url: str) -> None:
-    """Raise ``URLError`` unless ``url`` uses an allowed http(s) scheme.
+    """Raise ``URLError`` unless ``url`` uses an allowed http(s) scheme and is
+    not a link-local/cloud-metadata literal IP address.
 
     Checked before Request construction so the default opener never honors
-    ``file://`` / ``ftp://`` / other non-HTTP schemes (#348).
+    ``file://`` / ``ftp://`` / other non-HTTP schemes (#348). The link-local
+    check (GHSA-m84v-qqqm-6fr4 follow-up) closes the INITIAL-request half of
+    that SSRF class — a build file can declare ``url = "http://169.254.169.254/…"``
+    directly, no redirect needed — reusing ``_is_link_local_redirect_target``
+    (defined later in this module; Python resolves it at call time, not at
+    this function's definition time) so both the initial request and every
+    redirect hop (``_SecureRedirectHandler.redirect_request``, which calls
+    this same function) share one check. RFC1918/loopback stay allowed —
+    private-repo mode legitimately targets internal hosts (#290/#298).
+
+    Known residuals (not closed here, deliberately not over-engineered):
+    DNS-rebind — a hostname that RESOLVES to a link-local/metadata IP is not
+    caught, since only literal IP hosts are inspected (resolving every host
+    would add a DNS round-trip to every request for a narrow threat); and
+    obfuscated IP encodings (integer/octal/hex forms like ``0xA9FEA9FE`` or
+    ``2852039166``) that ``ipaddress`` rejects as invalid but a libc resolver
+    would still accept — these are not literal dotted-quad/colon-hex strings
+    so ``ipaddress.ip_address()`` raises ``ValueError`` and the check no-ops.
     """
     scheme = _url_scheme(url)
     if scheme not in _ALLOWED_URL_SCHEMES:
         raise urllib.error.URLError(
             f"URL scheme not allowed: {scheme or '(none)'} (only http/https)"
+        )
+    host = _repo_host(url)
+    if _is_link_local_redirect_target(host):
+        raise urllib.error.URLError(
+            f"Link-local/metadata address blocked: {host}"
         )
 
 
@@ -831,6 +854,19 @@ def resolve_repo_credentials(entry: Dict[str, Any]) -> Optional[Dict[str, str]]:
     ``MAVEN_REPO_<NAME>_HOST`` (see ``_name_pin_host``); otherwise it is
     skipped (logged once, secret-free) and resolution falls through to the
     next candidate (typically the host).
+
+    Mirror exception (#294 regression fix, R2b): when ``entry["mirrored"]``
+    is set, ``entry["name"]`` is the settings.xml mirror's OWN ``<id>`` and
+    ``entry["url"]`` is the mirror's OWN url — both written by
+    ``_apply_mirror_to_entry`` from ``ctx.mirrors`` (loaded from the user's
+    own ``~/.m2/settings.xml`` / ``~/.gradle/init.gradle*``, never from the
+    scanned project's build files). That name is therefore just as trusted
+    as the host, not an untrusted build-file string, so it does not need a
+    ``_HOST`` pin. This key is set in exactly one place in this module —
+    ``_apply_mirror_to_entry`` — always alongside that url/name overwrite.
+    No parser that reads the scanned project's build files (Gradle/Maven repo
+    parsers, ``discover_repositories``) ever sets or reads this key, so an
+    attacker-controlled build file cannot forge it.
     """
     host = _repo_host(entry.get("url") or "")
     resolvers = (
@@ -846,7 +882,7 @@ def resolve_repo_credentials(entry: Dict[str, Any]) -> Optional[Dict[str, str]]:
                 break
         if not creds:
             continue
-        if ident == host:
+        if ident == host or entry.get("mirrored"):
             return creds
         pinned_host = _name_pin_host(ident)
         if pinned_host and pinned_host == host:
@@ -1217,7 +1253,13 @@ def _urlopen(req: urllib.request.Request, timeout: float):
 # host, downgrade to plaintext, or steer a follow-up request at a cloud
 # metadata endpoint (169.254.169.254) or link-local address.
 
-_CREDENTIAL_HEADERS = ("Authorization", "Proxy-Authorization", "Cookie")
+# Proxy-Authorization deliberately excluded: urllib.request.Request stores it
+# capitalized as "Proxy-authorization" (Request.add_header does key.capitalize()),
+# so remove_header("Proxy-Authorization") here would never match anyway — and
+# even if it did, proxy auth is scoped to the PROXY connection, not the target
+# host, so it is correct for it to persist across a redirect through the same
+# proxy (R2d cleanup — this key was a no-op, not a security gap).
+_CREDENTIAL_HEADERS = ("Authorization", "Cookie")
 
 
 def _is_link_local_redirect_target(host: str) -> bool:
@@ -1229,6 +1271,12 @@ def _is_link_local_redirect_target(host: str) -> bool:
     targets internal hosts (#290/#298). Best-effort: only a literal IP is
     checked; a redirect ``Location`` that is a hostname is not resolved here
     (the literal-IP metadata case is the concrete threat this closes).
+
+    Despite the name, this is not redirect-only: ``_assert_http_url`` also
+    calls it, so the SAME check covers the initial request too (a build file
+    declaring ``url = "http://169.254.169.254/…"`` directly, no redirect
+    needed — GHSA-m84v-qqqm-6fr4 follow-up). Kept under this name rather than
+    renamed, to keep this fix's diff to the call site.
     """
     if not host:
         return False
@@ -1249,13 +1297,12 @@ class _SecureRedirectHandler(urllib.request.HTTPRedirectHandler):
     def redirect_request(self, req, fp, code, msg, headers, newurl):
         # FIX (GHSA-m84v-qqqm-6fr4): only http/https may survive a redirect —
         # the base handler still allows ftp:// — and link-local/metadata IP
-        # literals are blocked outright.
+        # literals are blocked outright. _assert_http_url now covers BOTH the
+        # initial request and every redirect hop (R2c follow-up), so the
+        # link-local check that used to live here as a second, separate call
+        # was removed — this single call raises for either failure mode.
         _assert_http_url(newurl)
         new_host = _repo_host(newurl)
-        if _is_link_local_redirect_target(new_host):
-            raise urllib.error.URLError(
-                f"Redirect to link-local/metadata address blocked: {new_host}"
-            )
 
         new_req = super().redirect_request(req, fp, code, msg, headers, newurl)
         if new_req is None:
@@ -7142,14 +7189,45 @@ def _is_secret_env_key(key: str) -> bool:
     return any(key.startswith(prefix) for prefix in _SECRET_ENV_PREFIXES)
 
 
+# HTTP(S)_PROXY / ALL_PROXY routinely embed `user:pass@host` (#298). Unlike
+# MAVEN_REPO_*/GITHUB_TOKEN these are NOT dropped wholesale — Gradle's own
+# network access legitimately needs the proxy host:port — only the userinfo
+# is redacted (R2a, same leak class as GHSA-4778-r7hp-92v7: a scanned
+# project's build script reading System.getenv("HTTPS_PROXY") would
+# otherwise exfiltrate the proxy password).
+_PROXY_ENV_KEYS = (
+    "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY",
+    "http_proxy", "https_proxy", "all_proxy",
+)
+
+
+def _redact_env_userinfo(env: Dict[str, str]) -> Dict[str, str]:
+    """Return a COPY of ``env`` with userinfo stripped from proxy vars and any
+    ``MAVEN_MCP_*`` var that carries a URL (e.g. ``MAVEN_MCP_REPOSITORY_BASE``),
+    via the existing ``_strip_userinfo`` (redacts to ``***@host``, keeping
+    host:port intact — never drops the var, since Gradle needs the address
+    even without the credential)."""
+    out = dict(env)
+    for key in _PROXY_ENV_KEYS:
+        val = out.get(key)
+        if val and "@" in val:
+            out[key] = _strip_userinfo(val)
+    for key in out:
+        if key.startswith("MAVEN_MCP_") and out[key] and "@" in out[key]:
+            out[key] = _strip_userinfo(out[key])
+    return out
+
+
 def _scrubbed_subprocess_env() -> Dict[str, str]:
     """``os.environ`` with credential-bearing vars removed, for spawning the
     scanned project's own Gradle wrapper (GHSA-4778-r7hp-92v7): the wrapper
     executes the project's OWN build scripts (including buildSrc/convention
     plugins), which could otherwise read MAVEN_REPO_*_TOKEN / GITHUB_TOKEN via
     System.getenv() and exfiltrate them (e.g. through a plugin/dependency
-    fetch to an attacker URL)."""
-    return {k: v for k, v in os.environ.items() if not _is_secret_env_key(k)}
+    fetch to an attacker URL). Proxy/MAVEN_MCP_* userinfo is additionally
+    redacted (R2a) rather than dropped — see ``_redact_env_userinfo``."""
+    scrubbed = {k: v for k, v in os.environ.items() if not _is_secret_env_key(k)}
+    return _redact_env_userinfo(scrubbed)
 
 
 _gradle_run = subprocess.run

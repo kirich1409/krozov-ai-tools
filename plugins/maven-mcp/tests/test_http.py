@@ -142,6 +142,44 @@ class HttpGetTest(unittest.TestCase):
                         server.http_get(url)
         urlopen.assert_not_called()
 
+    def test_rejects_link_local_metadata_url_on_initial_request(self):
+        # R2c (GHSA-m84v-qqqm-6fr4 follow-up): the redirect-time link-local
+        # block was previously the ONLY enforcement point — a build file
+        # declaring url = "http://169.254.169.254/…" directly (no redirect
+        # needed) was fetched. _assert_http_url now blocks it up front too.
+        with unittest.mock.patch("urllib.request.urlopen") as urlopen:
+            for url in (
+                "http://169.254.169.254/latest/meta-data/",
+                "http://169.254.1.1/x",
+                "http://[fe80::1]/x",
+            ):
+                with self.subTest(url=url):
+                    with self.assertRaises(urllib.error.URLError) as cm:
+                        server.http_get(url)
+                    self.assertIn("link-local", str(cm.exception.reason).lower())
+        urlopen.assert_not_called()
+
+    def test_allows_rfc1918_and_loopback_url_on_initial_request(self):
+        # Regression guard: private-repo mode legitimately targets internal
+        # hosts (#290/#298) — only link-local/metadata is blocked, never
+        # RFC1918 or loopback, on the initial request either.
+        with unittest.mock.patch(
+            "urllib.request.urlopen",
+            side_effect=mock_urlopen(
+                [(200, b"ok"), (200, b"ok"), (200, b"ok"), (200, b"ok")]
+            ),
+        ) as urlopen:
+            for url in (
+                "http://10.0.0.5/repo",
+                "http://172.16.0.5/repo",
+                "http://192.168.1.1/repo",
+                "http://127.0.0.1/repo",
+            ):
+                with self.subTest(url=url):
+                    status, body = server.http_get(url)
+                    self.assertEqual(status, 200)
+        self.assertEqual(urlopen.call_count, 4)
+
     def test_allows_http_scheme(self):
         with unittest.mock.patch(
             "urllib.request.urlopen",
