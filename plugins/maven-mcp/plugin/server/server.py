@@ -31,8 +31,8 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 # ---------------------------------------------------------------------------
 
 SERVER_NAME = "maven-mcp"
-SERVER_VERSION = "0.23.0"
-USER_AGENT = "maven-mcp/0.23.0"
+SERVER_VERSION = "0.24.0"
+USER_AGENT = "maven-mcp/0.24.0"
 HTTP_TIMEOUT = 15
 # Short timeout for enrichment APIs (OSV / GitHub / deps.dev / android.com).
 # Closed contours must fail fast rather than hang on the full HTTP_TIMEOUT (#296).

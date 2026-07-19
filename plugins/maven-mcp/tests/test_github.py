@@ -124,7 +124,7 @@ class GhFetchReleasesTest(unittest.TestCase):
         )
         self.assertEqual(req.get_header("Accept"), "application/vnd.github.v3+json")
         # User-Agent is stored capitalized as "User-agent" by urllib.request.Request.
-        self.assertEqual(req.get_header("User-agent"), "maven-mcp/0.23.0")
+        self.assertEqual(req.get_header("User-agent"), server.USER_AGENT)
 
     def test_returns_empty_list_on_404(self):
         # fetchReleases "returns empty array on non-ok response".
