@@ -299,5 +299,94 @@ class McpProtocolTest(unittest.TestCase):
         self.assertEqual(json.loads(out[2]["result"]["content"][0]["text"]), {"ping": "pong"})
 
 
+class ToolExecutionErrorTest(unittest.TestCase):
+    """A tool handler's own failures are MCP tool-execution errors (#397).
+
+    Per the MCP spec (2024-11-05), a failure raised BY a tool handler while
+    doing its job (resolution failure, ValueError, network error, ...) is a
+    "Tool Execution Error": a successful JSON-RPC response whose result is a
+    CallToolResult with isError:true, not a JSON-RPC protocol error — the
+    model must see `result.content`, not `error`, to self-correct. A missing/
+    malformed required argument is a different case (client/model mistake,
+    not the handler failing at its job): Invalid params (-32602), not
+    Internal error with a raw Python KeyError repr.
+    """
+
+    def test_handler_exception_is_isError_content_not_protocol_error(self):
+        def _boom(_arguments):
+            raise ValueError("could not resolve coordinate: no matching repo")
+
+        with unittest.mock.patch.dict(
+            server.TOOL_HANDLERS, {"scan_project_dependencies": _boom}
+        ):
+            out = _run_main(
+                [
+                    json.dumps(
+                        {
+                            "jsonrpc": "2.0",
+                            "id": 50,
+                            "method": "tools/call",
+                            "params": {"name": "scan_project_dependencies", "arguments": {}},
+                        }
+                    )
+                ]
+            )
+        self.assertEqual(len(out), 1)
+        resp = out[0]
+        self.assertEqual(resp["id"], 50)
+        self.assertNotIn("error", resp, "tool execution failure must not be a JSON-RPC error")
+        result = resp["result"]
+        self.assertIs(result["isError"], True)
+        content = result["content"]
+        self.assertEqual(content[0]["type"], "text")
+        self.assertIn("could not resolve coordinate", content[0]["text"])
+
+    def test_handler_keyerror_is_invalid_params_not_internal_error(self):
+        def _needs_group_id(arguments):
+            return arguments["groupId"]  # deliberately raises KeyError when absent
+
+        with unittest.mock.patch.dict(
+            server.TOOL_HANDLERS, {"scan_project_dependencies": _needs_group_id}
+        ):
+            out = _run_main(
+                [
+                    json.dumps(
+                        {
+                            "jsonrpc": "2.0",
+                            "id": 51,
+                            "method": "tools/call",
+                            "params": {"name": "scan_project_dependencies", "arguments": {}},
+                        }
+                    )
+                ]
+            )
+        self.assertEqual(len(out), 1)
+        resp = out[0]
+        self.assertEqual(resp["id"], 51)
+        self.assertNotIn("result", resp)
+        self.assertEqual(resp["error"]["code"], -32602)
+        self.assertIn("groupId", resp["error"]["message"])
+
+    def test_unknown_tool_is_still_a_protocol_error(self):
+        # Unchanged by #397: an unrecognized tool name is detected by the
+        # dispatcher before any handler runs — it is not a handler exception,
+        # so it stays a JSON-RPC protocol error (method not found), not
+        # isError:true.
+        out = _run_main(
+            [
+                json.dumps(
+                    {
+                        "jsonrpc": "2.0",
+                        "id": 52,
+                        "method": "tools/call",
+                        "params": {"name": "no_such_tool", "arguments": {}},
+                    }
+                )
+            ]
+        )
+        self.assertNotIn("result", out[0])
+        self.assertEqual(out[0]["error"]["code"], -32601)
+
+
 if __name__ == "__main__":
     unittest.main()
