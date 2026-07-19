@@ -6,6 +6,8 @@
     "name": "kirich1409"
   },
   "homepage": "https://github.com/kirich1409/krozov-ai-tools",
+  "repository": "https://github.com/kirich1409/krozov-ai-tools",
+  "license": "MIT",
   "category": "development",
   "keywords": [
     "maven",

@@ -42,13 +42,60 @@ python3 -m unittest discover -s plugins/maven-mcp/tests -p test_handlers.py
 - **Metadata & POM** — `fetch_metadata`, `check_version_in_repos`, `fetch_pom`, `_parse_metadata_xml` (regex), `extract_relocation_from_pom` / `check_relocation` (relocation detection, #284 — see *Relocation detection & dead-repository flagging*).
 - **Project scanning** — Gradle projects are scanned via `gradlew` dependency resolution (`_gradle_resolve_dependencies`: probes `./gradlew dependencies` per module for production `*RuntimeClasspath` configurations, parses the resolved tree, and collects `buildEnvironment` classpath separately). Text parsers (`_parse_gradle_deps`, `_parse_toml_catalog`, etc.) collect **provenance only** (source file, catalog alias, usages) via `_collect_gradle_provenance` and are merged onto Gradle-resolved GAVs by `_merge_gradle_with_provenance` (unused catalog aliases are preserved). Maven scanning stays local via `_parse_maven_deps` and related parsers. `buildSrc/` and `build-logic/` convention-plugin scripts contribute provenance. BOM/platform expansion (`apply_bom_managed_versions`, #286) applies on Maven scan/audit paths only — Gradle-resolved scans skip BOM guessing because Gradle already reports effective versions; Gradle `platform()` / `enforcedPlatform()` declarations surface as `managedPins`.
 - **BOM / platform expansion** — `parse_dependency_management`, `expand_bom`, `apply_bom_managed_versions` (#286).
-- **deps.dev transitive graphs** — `fetch_depsdev_dependencies`, `get_transitive_graph`, `detect_dependency_conflicts` (#287).
+- **deps.dev transitive graphs** — `fetch_depsdev_dependencies`, `get_transitive_graph`, `detect_dependency_conflicts` (#287); `fetch_depsdev_licenses` + `check_license_compliance` (#289).
 - **Version compatibility** — `check_version_compatibility` + shipped `compat-matrices.json` (AGP/KGP/javax→jakarta; Spring Boot via `expand_bom`) (#285).
 - **GitHub & changelog** — `gh_repo_exists` / `gh_fetch_repo` / `gh_fetch_releases` / `gh_fetch_user` / `gh_fetch_issue_stats`, `discover_github_repo` (POM SCM → groupId guess), and `_get_dependency_changes_impl` + `_filter_version_range` with provider selection (#308): AndroidX docs → AGP docs → GitHub releases. Minimal stdlib `html_to_text` powers the AGP/AndroidX HTML parsers. GitHub CHANGELOG.md markdown fallback is still not ported.
 - **Vulnerabilities** — OSV.dev batch query (`api.osv.dev/v1/querybatch`).
+- **Version catalog generate/validate** — `generate_catalog_entry` / `validate_catalog` / `handle_catalog_entry` (#288); reuses `_parse_toml_catalog`.
 - **Tool handlers** — `handle_*`, one per MCP tool, plus the stdio JSON-RPC dispatch loop.
 
-**Tools:** `get_latest_version`, `check_version_exists`, `check_multiple_dependencies`, `compare_dependency_versions`, `get_dependency_changes`, `scan_project_dependencies`, `expand_bom`, `get_transitive_graph`, `detect_dependency_conflicts`, `check_version_compatibility`, `get_dependency_vulnerabilities`, `get_dependency_health`, `search_artifacts`, `audit_project_dependencies`, `verify_coordinates` (see *`verify_coordinates`* below).
+**Tools (18):** `get_latest_version`, `check_version_exists`, `check_multiple_dependencies`, `compare_dependency_versions`, `get_dependency_changes`, `scan_project_dependencies`, `expand_bom`, `get_transitive_graph`, `detect_dependency_conflicts`, `check_version_compatibility`, `get_dependency_vulnerabilities`, `get_dependency_health`, `get_dependency_license`, `check_license_compliance`, `search_artifacts`, `audit_project_dependencies`, `catalog_entry` (see *Version catalog generate/validate* below), `verify_coordinates` (see *`verify_coordinates`* below). Authoritative enumeration, verified against the `TOOLS` registration list in `plugin/server/server.py` — `AGENTS.md` references this list instead of duplicating it.
+
+## Version catalog generate/validate (`catalog_entry`, #288)
+
+Gradle has no native command to update version catalogs; agents editing
+`gradle/libs.versions.toml` by hand routinely break kebab→accessor mapping, reserved
+alias segments, and plugin DSL usage. `catalog_entry` is a pure local tool (no network)
+that generates rule-correct entries and validates existing TOML.
+
+**`catalog_entry({mode, coordinate?, kind?, alias?, catalogToml?, buildContent?, catalogPath?, catalogName?, projectPath?})`.**
+
+- **`mode: "generate"`** — from `{groupId, artifactId, version?}` (+ `kind: library|plugin`)
+  returns `{alias, accessor, entry, suggestedDiff, violations?, notes[]}`. Alias is
+  kebab-case, reserved-segment safe, clash-aware against `catalogToml`. Library accessor
+  is `libs.x.y`; plugin accessor is `alias(libs.plugins.x.y)` (never `id(...)`). When the
+  alias already exists and a version is supplied, `suggestedDiff` is a **minimal**
+  `[versions]` bump (or single-line replace), not a full-file rewrite.
+- **`mode: "validate"`** — parses `catalogToml` (or reads `gradle/libs.versions.toml` under
+  `projectPath`) and optional `buildContent`. Reports `violations[{rule, detail}]` for:
+  invalid alias format, reserved names (`extensions`/`class`/`convention`), reserved first
+  segments (`bundles`/`versions`/`plugins`), accessor clashes (`someAlias` vs `some-alias`),
+  undefined `version.ref`, wrong default catalog path, `id(libs.plugins.x)` misuse, and
+  `libs` accessors inside `subprojects {}` / `buildscript {}`.
+
+Reuses `_parse_toml_catalog` (same parser as `scan_project_dependencies`). Does **not**
+change the pre-edit write guard (`pre-edit-deps.sh` / #359 TOML `[plugins]` extraction).
+`/check-deps` skill routes catalog edits through this tool.
+
+## License intelligence (`get_dependency_license`, #300)
+
+License data is actionable intelligence, not only a raw GitHub string on `get_dependency_health`.
+
+**`get_dependency_license({dependencies: [{groupId, artifactId, version?}], projectPath?})`.** Resolves license for a batch (capped at `MAX_LICENSE_DEPENDENCIES`, enforced in-handler). Per dependency returns `spdxId`, `name`, `url`, `category` (`permissive` / `weak-copyleft` / `strong-copyleft` / `network-copyleft` / `proprietary` / `unknown`), plain-English `notes`, and `source` (`pom` / `github` / `spdx-normalized`). Resolution reuses the health path: `fetch_metadata` → `fetch_pom` → `extract_licenses_from_pom` (now `{name, url}`) → optional GitHub `license.spdx_id`. SPDX normalization and category mapping are **static lookup tables** — no external license API. GitHub SPDX wins over POM name when both exist.
+
+**`audit_project_dependencies` + `includeLicenses`.** Optional flag (default `false` to avoid extra POM fetches). When true, adds a top-level `licenses` section (`summary.byCategory` / `uniqueSpdxIds` / `hasUnknown` / `hasProprietaryOrCopyleft` + per-dep rows) and `newLicenseCategories` — categories that appear exactly once in the scanned set (per-category comparison, not per SPDX id). Flags `unknown license` / `proprietary license` on each dependency's `signals` array. Direct-deps only — for transitive tree compliance use `check_license_compliance` (#289).
+
+## Transitive license compliance (`check_license_compliance`, #289)
+
+Aggregates SPDX licenses across the transitive closure of one or more root GAVs and flags risky/incompatible categories against a project license posture or an explicit policy.
+
+**`check_license_compliance({dependencies: [{groupId, artifactId, version}], projectLicense?, disallow?})`.** For each versioned root (capped at `MAX_LICENSE_COMPLIANCE_ROOTS`), fetches the deps.dev GetDependencies graph (#287), then GetVersion licenses for each unique GAV in the graph (capped at `MAX_LICENSE_COMPLIANCE_NODES`, cached via `TTL_DEPSDEV`). GetDependencies does **not** include licenses — each node needs a separate GetVersion call.
+
+**Policy.** `projectLicense` (SPDX id or name) sets posture. A **permissive** project (or omitted `projectLicense`) defaults to disallowing `strong-copyleft`, `network-copyleft`, and `proprietary`. Explicit `disallow` (SPDX ids and/or category names) **replaces** the default set entirely. Non-permissive `projectLicense` without `disallow` invents no policy (`policySource: none`).
+
+**Per-node output.** `{groupId, artifactId, version, spdxId, license, licenses[], category, viaTransitive, relation, verdict, reason, root, source}`. `viaTransitive` is false for deps.dev `SELF`/`DIRECT`, true otherwise. Verdicts: `ok` / `review` / `violation`. Missing or unrecognized license metadata → `review` (never a false `ok`). Compound SPDX expressions (`A OR B`) and `non-standard` degrade conservatively.
+
+**Documented limitations (also in `notes[]`):** deps.dev package-metadata SPDX only — not a legal review; per-root isolated graphs (same caveats as #287); heuristic policy, not legal advice; expression operators beyond a single known SPDX id → `review`.
 
 ## Repository resolution
 
