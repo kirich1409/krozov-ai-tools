@@ -14,10 +14,14 @@ error is re-raised only when EVERY attempt hit one.
 Retry is exercised with ``server._sleep`` patched out so the suite never sleeps.
 """
 
+import http.server
 import json
+import socket
+import threading
 import unittest
 import unittest.mock
 import urllib.error
+import urllib.request
 
 from _helpers import server, mock_urlopen, http_error
 
@@ -137,6 +141,44 @@ class HttpGetTest(unittest.TestCase):
                     with self.assertRaises(urllib.error.URLError):
                         server.http_get(url)
         urlopen.assert_not_called()
+
+    def test_rejects_link_local_metadata_url_on_initial_request(self):
+        # R2c (GHSA-m84v-qqqm-6fr4 follow-up): the redirect-time link-local
+        # block was previously the ONLY enforcement point — a build file
+        # declaring url = "http://169.254.169.254/…" directly (no redirect
+        # needed) was fetched. _assert_http_url now blocks it up front too.
+        with unittest.mock.patch("urllib.request.urlopen") as urlopen:
+            for url in (
+                "http://169.254.169.254/latest/meta-data/",
+                "http://169.254.1.1/x",
+                "http://[fe80::1]/x",
+            ):
+                with self.subTest(url=url):
+                    with self.assertRaises(urllib.error.URLError) as cm:
+                        server.http_get(url)
+                    self.assertIn("link-local", str(cm.exception.reason).lower())
+        urlopen.assert_not_called()
+
+    def test_allows_rfc1918_and_loopback_url_on_initial_request(self):
+        # Regression guard: private-repo mode legitimately targets internal
+        # hosts (#290/#298) — only link-local/metadata is blocked, never
+        # RFC1918 or loopback, on the initial request either.
+        with unittest.mock.patch(
+            "urllib.request.urlopen",
+            side_effect=mock_urlopen(
+                [(200, b"ok"), (200, b"ok"), (200, b"ok"), (200, b"ok")]
+            ),
+        ) as urlopen:
+            for url in (
+                "http://10.0.0.5/repo",
+                "http://172.16.0.5/repo",
+                "http://192.168.1.1/repo",
+                "http://127.0.0.1/repo",
+            ):
+                with self.subTest(url=url):
+                    status, body = server.http_get(url)
+                    self.assertEqual(status, 200)
+        self.assertEqual(urlopen.call_count, 4)
 
     def test_allows_http_scheme(self):
         with unittest.mock.patch(
@@ -414,6 +456,179 @@ class HttpResponseSizeCapTest(unittest.TestCase):
             status, got = server.http_get(self.URL)
         self.assertEqual(status, 200)
         self.assertEqual(got, body)
+
+
+class SecureRedirectEndToEndTest(unittest.TestCase):
+    """Real-socket, real-urlopen (NOT mocked) proof that the installed
+    ``_SecureRedirectHandler`` actually intercepts redirects issued by the
+    genuine urllib machinery — GHSA-xj4p-wm6r-4q3j / GHSA-m84v-qqqm-6fr4.
+
+    Deliberately does not patch ``urllib.request.urlopen``: the vulnerability
+    lived inside urlopen()'s own internally-built opener, so a mocked
+    urlopen would prove nothing about whether the fix is actually wired in.
+    Everything here talks to 127.0.0.1 only — no real network access.
+    """
+
+    def _start(self, handler_cls):
+        httpd = http.server.HTTPServer(("127.0.0.1", 0), handler_cls)
+        thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+        thread.start()
+        self.addCleanup(httpd.shutdown)
+        self.addCleanup(httpd.server_close)
+        self.addCleanup(thread.join, 2)
+        return httpd
+
+    def test_authorization_stripped_on_cross_host_redirect(self):
+        captured: dict = {}
+
+        class _Target(http.server.BaseHTTPRequestHandler):
+            def do_GET(self):  # noqa: N802 (BaseHTTPRequestHandler naming)
+                captured["headers"] = dict(self.headers)
+                self.send_response(200)
+                self.send_header("Content-Length", "2")
+                self.end_headers()
+                self.wfile.write(b"ok")
+
+            def log_message(self, *_a, **_k):
+                pass  # silence default per-request stderr access log
+
+        target = self._start(_Target)
+
+        class _Origin(http.server.BaseHTTPRequestHandler):
+            def do_GET(self):  # noqa: N802
+                self.send_response(302)
+                # "localhost" (origin) vs "127.0.0.1" (target) are different
+                # host STRINGS even though both resolve to loopback — a real
+                # cross-host redirect for _repo_host()'s string comparison.
+                self.send_header(
+                    "Location", f"http://127.0.0.1:{target.server_port}/next"
+                )
+                self.end_headers()
+
+            def log_message(self, *_a, **_k):
+                pass
+
+        origin = self._start(_Origin)
+
+        status, body = server.http_get(
+            f"http://localhost:{origin.server_port}/start",
+            headers=server._make_headers({"Authorization": "Bearer secret-token"}),
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(body, b"ok")
+        self.assertNotIn("Authorization", captured["headers"])
+
+    def test_ftp_redirect_never_connects_to_target(self):
+        # The base HTTPRedirectHandler allows scheme in {http, https, ftp, ''}
+        # — ftp must be rejected by OUR layer. Asserting only that http_get()
+        # eventually raises would be a weak/non-discriminating test: an
+        # unreachable ftp target raises a URLError on stock urllib too (just
+        # from a failed connection, not a deliberate scheme block). Instead
+        # this listens on a REAL local port and asserts NO connection is ever
+        # received — that only holds once the scheme is rejected before a
+        # socket is opened, which is exactly the pre-fix vs post-fix delta.
+        accepted = threading.Event()
+        port_ready = threading.Event()
+        ftp_port_holder = {}
+
+        def _listener():
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as srv:
+                srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+                srv.bind(("127.0.0.1", 0))
+                srv.listen(1)
+                srv.settimeout(3)
+                ftp_port_holder["port"] = srv.getsockname()[1]
+                port_ready.set()
+                try:
+                    conn, _addr = srv.accept()
+                    accepted.set()
+                    conn.close()
+                except socket.timeout:
+                    # Expected success path: the scheme guard rejects ftp:// before
+                    # any socket connect, so accept() never fires and times out here;
+                    # `accepted` stays unset, which the test asserts False below.
+                    pass
+
+        listener_thread = threading.Thread(target=_listener, daemon=True)
+        listener_thread.start()
+        self.addCleanup(listener_thread.join, 4)
+        self.assertTrue(port_ready.wait(2), "listener never bound a port")
+        ftp_port = ftp_port_holder["port"]
+
+        class _Origin(http.server.BaseHTTPRequestHandler):
+            def do_GET(self):  # noqa: N802
+                self.send_response(302)
+                self.send_header("Location", f"ftp://127.0.0.1:{ftp_port}/evil")
+                self.end_headers()
+
+            def log_message(self, *_a, **_k):
+                pass
+
+        origin = self._start(_Origin)
+        with unittest.mock.patch.object(server, "_sleep"):
+            with self.assertRaises(urllib.error.URLError):
+                server.http_get(f"http://localhost:{origin.server_port}/start")
+        listener_thread.join(4)
+        self.assertFalse(
+            accepted.is_set(),
+            "ftp redirect target received a connection attempt — scheme was not blocked",
+        )
+
+
+class SecureRedirectHandlerUnitTest(unittest.TestCase):
+    """Direct unit tests of ``_SecureRedirectHandler.redirect_request``,
+    complementing the real-socket tests above. Covers the https->http
+    downgrade-strip branch (a local self-signed TLS server is impractical
+    with a stdlib-only harness) and the RFC1918/loopback allow-list
+    requirement.
+    """
+
+    @staticmethod
+    def _req(url, headers=None):
+        return urllib.request.Request(url, headers=headers or {})
+
+    def test_downgrade_same_host_strips_authorization(self):
+        handler = server._SecureRedirectHandler()
+        req = self._req(
+            "https://nexus.example.com/repo/x", {"Authorization": "Bearer secret"}
+        )
+        new_req = handler.redirect_request(
+            req, None, 302, "Found", {}, "http://nexus.example.com/repo/y"
+        )
+        self.assertNotIn("Authorization", new_req.headers)
+
+    def test_same_host_same_scheme_keeps_authorization(self):
+        handler = server._SecureRedirectHandler()
+        req = self._req(
+            "https://nexus.example.com/repo/x", {"Authorization": "Bearer secret"}
+        )
+        new_req = handler.redirect_request(
+            req, None, 302, "Found", {}, "https://nexus.example.com/repo/y"
+        )
+        self.assertEqual(new_req.headers.get("Authorization"), "Bearer secret")
+
+    def test_rfc1918_and_loopback_redirect_not_blocked(self):
+        # Private-repo mode legitimately targets internal hosts (#290/#298) —
+        # only link-local/metadata addresses are blocked, never RFC1918/loopback.
+        handler = server._SecureRedirectHandler()
+        req = self._req("https://example.test/x")
+        for target in (
+            "http://10.0.0.5/repo",
+            "http://172.16.0.5/repo",
+            "http://192.168.1.1/repo",
+            "http://127.0.0.1/repo",
+        ):
+            with self.subTest(target=target):
+                new_req = handler.redirect_request(req, None, 302, "Found", {}, target)
+                self.assertIsNotNone(new_req)
+
+    def test_link_local_and_ipv6_link_local_blocked(self):
+        handler = server._SecureRedirectHandler()
+        req = self._req("https://example.test/x")
+        for target in ("http://169.254.169.254/latest/meta-data/", "http://[fe80::1]/x"):
+            with self.subTest(target=target):
+                with self.assertRaises(urllib.error.URLError):
+                    handler.redirect_request(req, None, 302, "Found", {}, target)
 
 
 if __name__ == "__main__":

@@ -156,6 +156,90 @@ class ApplyMirrorRewriteTest(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
+# R2b: mirror credentials must resolve without a MAVEN_REPO_<ID>_HOST pin
+# ---------------------------------------------------------------------------
+# The GHSA-m2hv-xh72-cccw misbinding guard requires a host pin for name/id-
+# keyed credentials, since `name` is normally untrusted build-file input. A
+# mirror-applied entry's `name` is the settings.xml mirror's OWN <id> (see
+# _apply_mirror_to_entry) — trusted, not build-file-controlled — so it must
+# be exempt from the pin requirement. Before this fix, closed-mode mirror
+# auth (#294) silently fell through to unauthenticated (401) once the #291
+# guard shipped, because nothing pinned the mirror id to its own host.
+class MirrorCredentialResolutionTest(unittest.TestCase):
+    def test_mirror_derived_name_credential_resolves_without_host_pin(self):
+        entry = {"name": "Maven Central", "url": server.MAVEN_CENTRAL_URL}
+        mirrors = [{"id": "corp-mirror", "url": MIRROR_URL, "mirrorOf": "*"}]
+        mirrored = server._apply_mirror_to_entry(entry, mirrors)
+        self.assertTrue(mirrored["mirrored"])
+        self.assertEqual(mirrored["name"], "corp-mirror")
+
+        env = {
+            "MAVEN_REPO_CORP_MIRROR_USER": "mirror-user",
+            "MAVEN_REPO_CORP_MIRROR_PASSWORD": "mirror-pass",
+        }
+        with unittest.mock.patch.dict(os.environ, env, clear=False):
+            os.environ.pop("MAVEN_REPO_CORP_MIRROR_HOST", None)  # no pin set
+            with unittest.mock.patch.object(
+                server, "_load_settings_xml_servers", return_value={}
+            ), unittest.mock.patch.object(
+                server, "_load_gradle_properties", return_value={}
+            ):
+                creds = server.resolve_repo_credentials(mirrored)
+        self.assertEqual(
+            creds,
+            {"type": "basic", "username": "mirror-user", "password": "mirror-pass"},
+        )
+
+    def test_unmirrored_entry_with_same_name_still_needs_host_pin(self):
+        # Contrast case: an ORDINARY (non-mirrored) entry whose name happens
+        # to equal "corp-mirror" is untrusted build-file input and MUST still
+        # require the pin — the exception is keyed on `mirrored`, never on
+        # the name string alone coinciding with a mirror id.
+        entry = {"name": "corp-mirror", "url": "https://attacker.evil/repo"}
+        env = {
+            "MAVEN_REPO_CORP_MIRROR_USER": "mirror-user",
+            "MAVEN_REPO_CORP_MIRROR_PASSWORD": "mirror-pass",
+        }
+        with unittest.mock.patch.dict(os.environ, env, clear=False):
+            os.environ.pop("MAVEN_REPO_CORP_MIRROR_HOST", None)
+            with unittest.mock.patch.object(
+                server, "_load_settings_xml_servers", return_value={}
+            ), unittest.mock.patch.object(
+                server, "_load_gradle_properties", return_value={}
+            ):
+                with self.assertLogs("maven_mcp", level="WARNING"):
+                    creds = server.resolve_repo_credentials(entry)
+        self.assertIsNone(creds)
+
+    def test_settings_mirror_end_to_end_fetch_metadata_attaches_auth(self):
+        # Full path: discover_repositories (empty declared repos) -> _repos_for
+        # public fallback -> _finalize_repo_entries applies the mirror ->
+        # fetch_metadata attaches Authorization from the mirror's OWN
+        # settings.xml <servers> entry, with no _HOST pin configured anywhere.
+        xml = _settings_xml("*", mirror_url=MIRROR_URL, mirror_id="corp-mirror")
+        ctx = server.ResolutionContext(
+            "/__x__", {"dependency": [], "plugin": []}, False,
+            mirrors=server._parse_settings_xml_mirrors(xml),
+        )
+        env = {"MAVEN_REPO_CORP_MIRROR_TOKEN": "mirror-secret-tok"}
+        with unittest.mock.patch.dict(os.environ, env, clear=False):
+            os.environ.pop("MAVEN_REPO_CORP_MIRROR_HOST", None)
+            with unittest.mock.patch.object(
+                server, "_load_settings_xml_servers", return_value={}
+            ), unittest.mock.patch.object(
+                server, "_load_gradle_properties", return_value={}
+            ), unittest.mock.patch(
+                "urllib.request.urlopen",
+                side_effect=mock_urlopen([(200, _meta(["1.0.0"]))]),
+            ) as urlopen:
+                result = server.fetch_metadata("com.acme", "lib", ctx)
+        self.assertEqual(result["versions"], ["1.0.0"])
+        req = urlopen.call_args.args[0]
+        headers = {k.lower(): v for k, v in req.header_items()}
+        self.assertEqual(headers["authorization"], "Bearer mirror-secret-tok")
+
+
+# ---------------------------------------------------------------------------
 # Offline / repository_base
 # ---------------------------------------------------------------------------
 class OfflineAndRepositoryBaseTest(unittest.TestCase):

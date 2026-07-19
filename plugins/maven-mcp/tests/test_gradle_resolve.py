@@ -1,5 +1,6 @@
 """Gradle-resolved dependency scanning (#392 / #393 / #394)."""
 
+import os
 import subprocess
 import unittest
 import unittest.mock
@@ -172,6 +173,133 @@ class TestRunGradleCommand(unittest.TestCase):
         self.assertEqual(code, 124)
         self.assertEqual(stdout, "")
         self.assertIn("timed out", stderr)
+
+    def test_secret_env_scrubbed_from_subprocess_call(self):
+        # GHSA-4778-r7hp-92v7: the scanned project's OWN Gradle build scripts
+        # (buildSrc, convention plugins) run arbitrary code that can read
+        # System.getenv() — credential-bearing vars must never be passed to
+        # that subprocess. Captures the exact `env=` kwarg _run_gradle_command
+        # hands to subprocess.run (via the injectable _gradle_run seam).
+        captured = {}
+
+        def _capture_env(cmd, cwd=None, capture_output=None, text=None, timeout=None, env=None):
+            captured["env"] = env
+            return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+        with unittest.mock.patch.dict(
+            os.environ,
+            {
+                "MAVEN_REPO_TESTREPO_TOKEN": "supersecret",
+                "MAVEN_REPO_TESTREPO_USER": "alice",
+                "GITHUB_TOKEN": "ghsecret",
+                "JAVA_HOME": "/usr/lib/jvm/test",
+            },
+            clear=False,
+        ):
+            with unittest.mock.patch.object(server, "_gradle_run", side_effect=_capture_env):
+                server._run_gradle_command("/tmp", "gradlew", ["-q", "projects"])
+        env = captured["env"]
+        self.assertIsNotNone(env)
+        self.assertNotIn("MAVEN_REPO_TESTREPO_TOKEN", env)
+        self.assertNotIn("MAVEN_REPO_TESTREPO_USER", env)
+        self.assertNotIn("GITHUB_TOKEN", env)
+        # Non-secret env (JAVA_HOME, PATH, ...) must still reach the subprocess.
+        self.assertEqual(env.get("JAVA_HOME"), "/usr/lib/jvm/test")
+
+    def test_proxy_userinfo_redacted_not_dropped(self):
+        # R2a follow-up to GHSA-4778-r7hp-92v7: HTTP(S)_PROXY/ALL_PROXY
+        # routinely embed user:pass@host (#298) — a scanned build's own code
+        # could read them via System.getenv() and exfiltrate the proxy
+        # password. The var must NOT be dropped (Gradle needs host:port to
+        # route through the proxy at all) — only the userinfo is redacted,
+        # via the same _strip_userinfo used for #317 tool-output redaction
+        # (produces "***@host", not a bare host — see test_resolution.py's
+        # REDACTED_URL contract).
+        captured = {}
+
+        def _capture_env(cmd, cwd=None, capture_output=None, text=None, timeout=None, env=None):
+            captured["env"] = env
+            return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+        with unittest.mock.patch.dict(
+            os.environ,
+            {
+                "HTTPS_PROXY": "http://proxyuser:proxypass@proxy.corp.example:8080",
+                "http_proxy": "http://otheruser:otherpass@proxy2.corp.example:3128",
+                "MAVEN_MCP_REPOSITORY_BASE": "https://repouser:repopass@nexus.corp.example/repo",
+            },
+            clear=False,
+        ):
+            with unittest.mock.patch.object(server, "_gradle_run", side_effect=_capture_env):
+                server._run_gradle_command("/tmp", "gradlew", ["-q", "projects"])
+        env = captured["env"]
+        self.assertEqual(env["HTTPS_PROXY"], "http://***@proxy.corp.example:8080")
+        self.assertEqual(env["http_proxy"], "http://***@proxy2.corp.example:3128")
+        self.assertEqual(
+            env["MAVEN_MCP_REPOSITORY_BASE"], "https://***@nexus.corp.example/repo"
+        )
+        # Host:port must survive the redaction — Gradle still needs the address.
+        self.assertIn("proxy.corp.example:8080", env["HTTPS_PROXY"])
+        self.assertIn("proxy2.corp.example:3128", env["http_proxy"])
+        dump = repr(env)
+        self.assertNotIn("proxyuser", dump)
+        self.assertNotIn("proxypass", dump)
+        self.assertNotIn("otheruser", dump)
+        self.assertNotIn("otherpass", dump)
+        self.assertNotIn("repouser", dump)
+        self.assertNotIn("repopass", dump)
+
+    def test_proxy_userinfo_not_visible_to_real_gradlew_subprocess(self):
+        # End-to-end companion to the capture-based test above: a real
+        # subprocess.run call, no mocking of _gradle_run — proves the
+        # redacted (not dropped) value is what the child process actually
+        # sees, not merely what is captured at the call-arg boundary.
+        with temp_project({}) as root:
+            gradlew = os.path.join(root, "gradlew")
+            with open(gradlew, "w", encoding="utf-8") as fh:
+                fh.write('#!/bin/sh\necho "PROXY=[${HTTPS_PROXY}]"\n')
+            os.chmod(gradlew, 0o700)
+            with unittest.mock.patch.dict(
+                os.environ,
+                {"HTTPS_PROXY": "http://proxyuser:proxypass@proxy.corp.example:8080"},
+                clear=False,
+            ):
+                code, stdout, _stderr = server._run_gradle_command(
+                    root, gradlew, ["-q", "noop"]
+                )
+        self.assertEqual(code, 0)
+        self.assertNotIn("proxyuser", stdout)
+        self.assertNotIn("proxypass", stdout)
+        self.assertIn("PROXY=[http://***@proxy.corp.example:8080]", stdout)
+
+    def test_secret_env_not_visible_to_real_gradlew_subprocess(self):
+        # End-to-end (real subprocess.run, no mocking of _gradle_run): a fake
+        # gradlew script that echoes the env vars back proves they are
+        # genuinely absent from the child process, not merely from a mocked
+        # call-arg capture.
+        with temp_project({}) as root:
+            gradlew = os.path.join(root, "gradlew")
+            with open(gradlew, "w", encoding="utf-8") as fh:
+                fh.write(
+                    "#!/bin/sh\n"
+                    'echo "TOKEN=[${MAVEN_REPO_TESTREPO_TOKEN}][${GITHUB_TOKEN}]"\n'
+                )
+            os.chmod(gradlew, 0o700)
+            with unittest.mock.patch.dict(
+                os.environ,
+                {
+                    "MAVEN_REPO_TESTREPO_TOKEN": "supersecret",
+                    "GITHUB_TOKEN": "ghsecret",
+                },
+                clear=False,
+            ):
+                code, stdout, _stderr = server._run_gradle_command(
+                    root, gradlew, ["-q", "noop"]
+                )
+        self.assertEqual(code, 0)
+        self.assertNotIn("supersecret", stdout)
+        self.assertNotIn("ghsecret", stdout)
+        self.assertIn("TOKEN=[][]", stdout)
 
 
 class TestMergeGradleWithProvenance(unittest.TestCase):

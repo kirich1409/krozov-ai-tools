@@ -180,12 +180,40 @@ class ResolveRepoCredentialsTest(unittest.TestCase):
                 creds = server.resolve_repo_credentials(entry)
         self.assertEqual(creds, {"type": "bearer", "token": "tok"})
 
-    def test_env_by_maven_id_preferred_over_host(self):
+    def test_name_keyed_cred_skipped_without_host_pin_falls_back_to_host(self):
+        # GHSA-m2hv-xh72-cccw: `name` comes from the untrusted, scanned build
+        # file. Absent an explicit MAVEN_REPO_<NAME>_HOST pin, a name/id-keyed
+        # credential must NEVER be used — resolution falls back to the (safe,
+        # destination-derived) host-keyed credential instead. This replaces
+        # the pre-fix `test_env_by_maven_id_preferred_over_host`, which
+        # asserted the vulnerable "name wins unconditionally" behavior.
         entry = {"name": "corp-nexus", "url": PRIVATE_URL}
         env = {
             "MAVEN_REPO_CORP_NEXUS_USER": "id-user",
             "MAVEN_REPO_CORP_NEXUS_PASSWORD": "id-pass",
             "MAVEN_REPO_NEXUS_EXAMPLE_COM_TOKEN": "host-tok",
+        }
+        with unittest.mock.patch.dict(os.environ, env, clear=False):
+            os.environ.pop("MAVEN_REPO_CORP_NEXUS_HOST", None)
+            with unittest.mock.patch.object(
+                server, "_load_settings_xml_servers", return_value={}
+            ), unittest.mock.patch.object(
+                server, "_load_gradle_properties", return_value={}
+            ):
+                with self.assertLogs("maven_mcp", level="WARNING") as cm:
+                    creds = server.resolve_repo_credentials(entry)
+        self.assertEqual(creds, {"type": "bearer", "token": "host-tok"})
+        self.assertTrue(any("corp-nexus" in m for m in cm.output))
+
+    def test_name_keyed_cred_used_when_host_pin_matches(self):
+        # Explicit opt-in: pinning the name to its real destination host
+        # trusts it — legitimate name-only credential users are not broken,
+        # they just need one extra env var.
+        entry = {"name": "corp-nexus", "url": PRIVATE_URL}
+        env = {
+            "MAVEN_REPO_CORP_NEXUS_USER": "id-user",
+            "MAVEN_REPO_CORP_NEXUS_PASSWORD": "id-pass",
+            "MAVEN_REPO_CORP_NEXUS_HOST": "nexus.example.com",
         }
         with unittest.mock.patch.dict(os.environ, env, clear=False):
             with unittest.mock.patch.object(
@@ -197,6 +225,37 @@ class ResolveRepoCredentialsTest(unittest.TestCase):
         self.assertEqual(
             creds, {"type": "basic", "username": "id-user", "password": "id-pass"}
         )
+
+    def test_attacker_build_file_cannot_redirect_pinned_secret_to_own_host(self):
+        # The exact exploit scenario (GHSA-m2hv-xh72-cccw): the user pins
+        # "internal-nexus" to their real internal host. An attacker's OWN
+        # build file declares a repo with the SAME name but a DIFFERENT
+        # (attacker-controlled) url — `_repo_id_candidates` would return
+        # "internal-nexus" as the first candidate for both entries, so
+        # pre-fix, both got the same credential regardless of `url`. The pin
+        # must anchor the credential to the one host it names.
+        env = {
+            "MAVEN_REPO_INTERNAL_NEXUS_TOKEN": "victim-secret",
+            "MAVEN_REPO_INTERNAL_NEXUS_HOST": "nexus.corp.internal",
+        }
+        with unittest.mock.patch.dict(os.environ, env, clear=False):
+            with unittest.mock.patch.object(
+                server, "_load_settings_xml_servers", return_value={}
+            ), unittest.mock.patch.object(
+                server, "_load_gradle_properties", return_value={}
+            ):
+                victim_entry = {
+                    "name": "internal-nexus",
+                    "url": "https://nexus.corp.internal/repo",
+                }
+                attacker_entry = {
+                    "name": "internal-nexus",
+                    "url": "https://attacker.evil/repo",
+                }
+                victim_creds = server.resolve_repo_credentials(victim_entry)
+                attacker_creds = server.resolve_repo_credentials(attacker_entry)
+        self.assertEqual(victim_creds, {"type": "bearer", "token": "victim-secret"})
+        self.assertIsNone(attacker_creds)
 
     def test_public_repo_no_creds(self):
         entry = {"name": "Maven Central", "url": server.MAVEN_CENTRAL_URL}
