@@ -303,13 +303,19 @@ class ToolExecutionErrorTest(unittest.TestCase):
     """A tool handler's own failures are MCP tool-execution errors (#397).
 
     Per the MCP spec (2024-11-05), a failure raised BY a tool handler while
-    doing its job (resolution failure, ValueError, network error, ...) is a
-    "Tool Execution Error": a successful JSON-RPC response whose result is a
-    CallToolResult with isError:true, not a JSON-RPC protocol error — the
-    model must see `result.content`, not `error`, to self-correct. A missing/
-    malformed required argument is a different case (client/model mistake,
-    not the handler failing at its job): Invalid params (-32602), not
-    Internal error with a raw Python KeyError repr.
+    doing its job (resolution failure, ValueError, network error, an internal
+    KeyError unrelated to the request's arguments, ...) is a "Tool Execution
+    Error": a successful JSON-RPC response whose result is a CallToolResult
+    with isError:true, not a JSON-RPC protocol error — the model must see
+    `result.content`, not `error`, to self-correct.
+
+    A missing/malformed required argument is a different case (client/model
+    mistake, not the handler failing at its job): Invalid params (-32602).
+    This is detected by a dispatcher-level PRE-CHECK against the tool's own
+    `inputSchema.required`, BEFORE the handler ever runs — not by catching
+    KeyError around the handler call, which would also catch (and mislabel)
+    a KeyError the handler raises internally for reasons that have nothing
+    to do with the arguments the client sent (code review follow-up on #397).
     """
 
     def test_handler_exception_is_isError_content_not_protocol_error(self):
@@ -341,12 +347,53 @@ class ToolExecutionErrorTest(unittest.TestCase):
         self.assertEqual(content[0]["type"], "text")
         self.assertIn("could not resolve coordinate", content[0]["text"])
 
-    def test_handler_keyerror_is_invalid_params_not_internal_error(self):
-        def _needs_group_id(arguments):
-            return arguments["groupId"]  # deliberately raises KeyError when absent
+    def test_handler_internal_keyerror_is_isError_not_invalid_params(self):
+        # The exact shape the code review flagged: a KeyError raised INSIDE a
+        # handler's own logic (e.g. handle_get_dependency_health's
+        # metadata["versions"], check_android_kotlin_compatibility's
+        # agp_entry["minGradle"]) has nothing to do with which arguments the
+        # client sent. It must come back as a tool execution failure
+        # (isError:true), never misdiagnosed as -32602 Invalid params just
+        # because the exception type happens to be KeyError.
+        def _internal_lookup_bug(_arguments):
+            internal_state = {"a": 1}
+            return internal_state["b"]  # KeyError unrelated to `arguments`
 
         with unittest.mock.patch.dict(
-            server.TOOL_HANDLERS, {"scan_project_dependencies": _needs_group_id}
+            server.TOOL_HANDLERS, {"scan_project_dependencies": _internal_lookup_bug}
+        ):
+            out = _run_main(
+                [
+                    json.dumps(
+                        {
+                            "jsonrpc": "2.0",
+                            "id": 53,
+                            "method": "tools/call",
+                            "params": {"name": "scan_project_dependencies", "arguments": {}},
+                        }
+                    )
+                ]
+            )
+        self.assertEqual(len(out), 1)
+        resp = out[0]
+        self.assertEqual(resp["id"], 53)
+        self.assertNotIn("error", resp, "internal handler KeyError must not be Invalid params")
+        result = resp["result"]
+        self.assertIs(result["isError"], True)
+        content = result["content"]
+        self.assertEqual(content[0]["type"], "text")
+        self.assertIn("'b'", content[0]["text"])
+
+    def test_missing_required_arg_is_invalid_params_precheck(self):
+        # get_latest_version requires groupId + artifactId (see TOOLS). The
+        # handler is swapped for a spy that fails the test if ever called —
+        # proving the -32602 comes from the dispatcher's pre-check against
+        # inputSchema.required, not from the handler running and raising.
+        def _must_not_be_called(_arguments):
+            raise AssertionError("handler must not run when a required arg is missing")
+
+        with unittest.mock.patch.dict(
+            server.TOOL_HANDLERS, {"get_latest_version": _must_not_be_called}
         ):
             out = _run_main(
                 [
@@ -355,7 +402,10 @@ class ToolExecutionErrorTest(unittest.TestCase):
                             "jsonrpc": "2.0",
                             "id": 51,
                             "method": "tools/call",
-                            "params": {"name": "scan_project_dependencies", "arguments": {}},
+                            "params": {
+                                "name": "get_latest_version",
+                                "arguments": {"artifactId": "guava"},  # groupId missing
+                            },
                         }
                     )
                 ]

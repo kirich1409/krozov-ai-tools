@@ -9635,6 +9635,11 @@ TOOL_HANDLERS = {
     "verify_coordinates": handle_verify_coordinates,
 }
 
+# Name -> inputSchema, for the dispatcher's own required-argument pre-check
+# (see _handle_tools_call) — built once from TOOLS rather than re-scanning
+# the list per call.
+TOOL_SCHEMAS = {t["name"]: t["inputSchema"] for t in TOOLS}
+
 
 # ---------------------------------------------------------------------------
 # MCP JSON-RPC 2.0 dispatcher
@@ -9676,20 +9681,36 @@ def _handle_tools_call(msg_id: Any, params: Dict) -> Dict:
             "id": msg_id,
             "error": {"code": -32601, "message": f"Unknown tool: {tool_name}"},
         }
-    try:
-        result = handler(arguments)
-    except KeyError as e:
-        # Missing/malformed required argument is a client (or model) mistake,
-        # not a tool execution failure — Invalid params (#397 audit nit), not
-        # Internal error with a raw KeyError repr.
+    # Validate required top-level arguments BEFORE calling the handler, using
+    # the tool's OWN inputSchema.required — a missing/malformed client argument
+    # (Invalid params, #397) must be detected here, not inferred from catching
+    # KeyError around the handler call: a handler can just as well raise a
+    # KeyError from an INTERNAL lookup with nothing to do with `arguments`
+    # (e.g. handle_get_dependency_health's metadata["versions"],
+    # check_android_kotlin_compatibility's agp_entry["minGradle"]) — catching
+    # KeyError there mislabels an internal bug as a client mistake and hides
+    # it from the isError:true self-correction path below (code review
+    # follow-up on #397).
+    required = (TOOL_SCHEMAS.get(tool_name) or {}).get("required") or []
+    if isinstance(arguments, dict):
+        missing = [name for name in required if name not in arguments]
+    else:
+        missing = list(required)
+    if missing:
         return {
             "jsonrpc": "2.0",
             "id": msg_id,
-            "error": {"code": -32602, "message": f"Invalid params: missing required field {e}"},
+            "error": {
+                "code": -32602,
+                "message": f"Invalid params: missing required field {missing[0]!r}",
+            },
         }
+    try:
+        result = handler(arguments)
     except Exception as e:
         # MCP spec (2024-11-05): a TOOL execution failure (handler raised while
-        # doing its job — resolution failure, ValueError, network error, etc.)
+        # doing its job — resolution failure, ValueError, network error, an
+        # internal KeyError unrelated to the arguments the client sent, etc.)
         # is reported as a successful response with isError:true, not a
         # JSON-RPC protocol error, so the model can see it and self-correct (#397).
         return {
