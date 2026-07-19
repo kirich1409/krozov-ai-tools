@@ -1,6 +1,6 @@
 {
   "name": "maven-mcp",
-  "version": "0.24.0",
+  "version": "0.25.0",
   "description": "Maven dependency intelligence — provides /check-deps, /check-deps-vulnerabilities, /latest-version, /dependency-changes, and /dependency-health skills. Works in Claude cloud and local without any NPM setup.",
   "author": {
     "name": "kirich1409"
