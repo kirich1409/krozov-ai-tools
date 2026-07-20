@@ -257,24 +257,21 @@ class TestAuditIncludeLicenses(unittest.TestCase):
         ).encode()
         # Per dep with version: fetch_metadata (Central) then resolve license
         # (fetch_metadata again + fetch_pom). includeVulnerabilities=False.
-        # Order follows audit_deps then license loop over the same list.
-        responses = [
-            # audit metadata for com.a:one, com.a:two, com.b:agpl
-            (200, _meta(["1.0.0"])),
-            (200, _meta(["1.0.0"])),
-            (200, _meta(["1.0.0"])),
-            # license resolve: one
-            (200, _meta(["1.0.0"])),
-            (200, apache_pom),
-            # license resolve: two
-            (200, _meta(["1.0.0"])),
-            (200, apache_pom),
-            # license resolve: agpl
-            (200, _meta(["1.0.0"])),
-            (200, agpl_pom),
-        ]
+        # #400: both the metadata loop and the license loop now run on a
+        # ThreadPoolExecutor, so urlopen calls are no longer guaranteed to
+        # happen in input order -- route by URL (which embeds the
+        # artifactId and, for the license pass, the "maven-metadata.xml"
+        # vs ".pom" suffix) instead of a position-based queue.
+        def _route(req, *args, **kwargs):
+            url = req.full_url if hasattr(req, "full_url") else str(req)
+            if not url.endswith(".pom"):
+                return mock_urlopen([(200, _meta(["1.0.0"]))])(req, *args, **kwargs)
+            if "/agpl/" in url:
+                return mock_urlopen([(200, agpl_pom)])(req, *args, **kwargs)
+            return mock_urlopen([(200, apache_pom)])(req, *args, **kwargs)
+
         with temp_project({"pom.xml": pom}) as root:
-            with _patch_urlopen(responses):
+            with unittest.mock.patch("urllib.request.urlopen", side_effect=_route):
                 out = server.handle_audit_project_dependencies({
                     "projectPath": root,
                     "includeVulnerabilities": False,
