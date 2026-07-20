@@ -153,10 +153,22 @@ MAX_LICENSE_COMPLIANCE_NODES = 500
 # ThreadPoolExecutor per call (never a module-global executor in this
 # long-lived stdio process). The bound is deliberately modest — some target
 # hosts (search.maven.org in particular) have a documented rate-limit/403-
-# lockout history under bulk load (see MAX_GATED_SOLR_CALLS_PER_BATCH above),
+# lockout history under bulk load (see MAX_GATED_SOLR_CALLS_PER_BATCH below),
 # so higher concurrency is not free. Calibratable starting point, not proven
 # against a labeled benchmark.
 MAX_PARALLEL_FETCHES = 8
+
+# R2c (perf review of #400): handle_get_dependency_health's per-dependency
+# fan-out makes SEVERAL api.github.com calls each (gh_repo_exists/fetch_repo/
+# fetch_releases/issue-stats/discover, plus the rate-limited Search API for
+# issue stats, plus a deps.dev Scorecard call) — GitHub's SECONDARY rate
+# limiter specifically penalizes CONCURRENT requests (independent of the
+# primary per-hour quota, which is 60/h unauthenticated, 5000/h with
+# GITHUB_TOKEN — see the Environment section), so running this fan-out at the
+# same width as CDN-metadata/deps.dev/OSV lookups (MAX_PARALLEL_FETCHES) risks
+# tripping it. A smaller, dedicated bound keeps this ONE fan-out gentler on
+# GitHub without slowing down the other seven, which have no such penalty.
+MAX_GITHUB_PARALLEL_FETCHES = 3
 
 # Overall wall-clock budget (#402), in seconds, for a single tool invocation
 # whose fan-out is otherwise unbounded by any MAX_* cap (audit_project_
@@ -4588,23 +4600,32 @@ def check_license_compliance(
         deadline_hit = True
 
     for root, fetched in zip(roots, root_graphs):
-        if fetched is None:
-            # #402: this root's graph fetch was cut off by the tool-wide
-            # deadline before it completed — synthesize the same shape
-            # fetch_depsdev_dependencies uses for "unavailable" so the
-            # existing not-ok recovery branch below handles it unchanged.
+        # R2a fix: this loop must NEVER `break` out early on a deadline —
+        # doing so silently drops every root from that point on (the exact
+        # bug: the deadline check used to fire immediately after synthesizing
+        # a cut-off root's placeholder, before that root's own review row was
+        # ever added, then `break` skipped ALL subsequent roots too, since a
+        # once-exceeded deadline never un-expires). Instead: once the
+        # deadline is exceeded — whether THIS root's own graph fetch was cut
+        # off (`fetched is None`) or time simply ran out by the time we
+        # reached this iteration (a prior root's node walk used the rest of
+        # the budget) — this root degrades to a cheap review row (no further
+        # network calls) and the loop continues to the NEXT root exactly the
+        # same way. Every root in `roots` therefore always reaches the
+        # bottom of one iteration and gets exactly one row.
+        deadline_cutoff = fetched is None or _now() >= deadline
+        if deadline_cutoff:
             deadline_hit = True
+        cap = fetched.get("capabilityUnavailable") if fetched is not None else None
+        if cap and capability is None:
+            capability = cap
+        if deadline_cutoff:
+            err = (fetched or {}).get("error") if fetched is not None else None
             fetched = {
                 "ok": False,
-                "error": f"skipped: exceeded the {TOOL_DEADLINE}s tool deadline",
+                "error": err or f"skipped: exceeded the {TOOL_DEADLINE}s tool deadline",
             }
-        if _now() >= deadline:
-            # #402: time is already up — do not start ANY more roots, even
-            # ones whose graph we already have in hand.
-            deadline_hit = True
-            break
-        if fetched.get("capabilityUnavailable") and capability is None:
-            capability = fetched["capabilityUnavailable"]
+
         if not fetched.get("ok"):
             partial = True
             err = fetched.get("error") or "deps.dev unavailable"
@@ -4644,15 +4665,17 @@ def check_license_compliance(
         if fetched.get("truncated") or fetched.get("partial"):
             partial = True
 
-        stopped_early = False
         for node in fetched.get("nodes") or []:
             if _now() >= deadline:
                 # #402: bound the sequential per-node dedup/license-fetch
                 # walk — see the concurrency note in this function's
                 # docstring for why this loop stays sequential rather than
-                # joining the #400 executor.
+                # joining the #400 executor. Breaks only the NODE loop for
+                # THIS root (nodes already added stay); the OUTER root loop
+                # continues naturally to the next root, which will see
+                # `deadline_cutoff=True` at the top of its own iteration and
+                # degrade to a review row instead of attempting its nodes.
                 deadline_hit = True
-                stopped_early = True
                 break
             g = node.get("groupId") or ""
             a = node.get("artifactId") or ""
@@ -4666,8 +4689,6 @@ def check_license_compliance(
             if relation == "":
                 via = False
             _add_result(g, a, v, via_transitive=via, relation=relation or "DIRECT", root=root)
-        if stopped_early:
-            break
 
     by_verdict = {"ok": 0, "review": 0, "violation": 0}
     by_category: Dict[str, int] = {}
@@ -5602,6 +5623,28 @@ def _search_capability_for_status(status: int) -> str:
     return "unreachable"
 
 
+# R2b (perf/security review of #400): bounds CONCURRENT calls against
+# search.maven.org specifically — a much tighter cap than MAX_PARALLEL_FETCHES
+# (8). This host has a documented 403 bulk-load LOCKOUT that
+# _request_with_retry does NOT retry, and both callers below fail-open on
+# failure (search_maven_central -> [], _fetch_gav_timestamp -> None); for
+# verify_coordinates in particular, a failed did-you-mean search silently
+# turns likelyHallucination=False, which the write-time pre-edit-deps.sh hook
+# then reads as "allow" — a fail-OPEN security path, not just a perf one.
+# #322's own MAX_GATED_SOLR_CALLS_PER_BATCH already assumed near-sequential
+# access to this host; parallelizing verify_coordinates' per-coordinate loop
+# at the full executor width would let up to 8 coordinates hammer Solr at
+# once and undermine that assumption. Acquired inside BOTH low-level
+# functions that build a SEARCH_API request (_search_maven_central_with_
+# capability and _fetch_gav_timestamp) — not just at verify_coordinates' two
+# call sites — so every current and future caller against this host is
+# covered automatically; repo-metadata probes (fetch_metadata/fetch_pom/etc,
+# a different host per coordinate) are unaffected and keep the full
+# MAX_PARALLEL_FETCHES concurrency.
+MAX_CONCURRENT_SOLR_CALLS = 2
+_SOLR_SEMAPHORE = threading.Semaphore(MAX_CONCURRENT_SOLR_CALLS)
+
+
 def _search_maven_central_with_capability(
     query: str, limit: int = 10, use_cache: bool = True
 ) -> Tuple[List[Dict], Optional[str]]:
@@ -5622,7 +5665,10 @@ def _search_maven_central_with_capability(
     """
     try:
         url = f"{SEARCH_API}?q={urllib.parse.quote(query)}&rows={limit}&wt=json"
-        status, body = http_get_cached(url, TTL_SEARCH) if use_cache else http_get(url)
+        # R2b: bound CONCURRENT access to this host specifically (see
+        # _SOLR_SEMAPHORE) — held only across the network round-trip itself.
+        with _SOLR_SEMAPHORE:
+            status, body = http_get_cached(url, TTL_SEARCH) if use_cache else http_get(url)
     except (urllib.error.URLError, socket.timeout) as e:
         # Transport failure after every retry attempt -- the search backend
         # could not be reached at all.
@@ -5687,7 +5733,10 @@ def _fetch_gav_timestamp(group_id: str, artifact_id: str, version: str) -> Optio
     )
     try:
         url = f"{SEARCH_API}?q={urllib.parse.quote(query)}&core=gav&rows=1&wt=json"
-        status, body = http_get_cached(url, TTL_SEARCH)
+        # R2b: bound CONCURRENT access to this host specifically (see
+        # _SOLR_SEMAPHORE) — held only across the network round-trip itself.
+        with _SOLR_SEMAPHORE:
+            status, body = http_get_cached(url, TTL_SEARCH)
         if status != 200:
             return None
         data = json.loads(body)
@@ -8991,7 +9040,13 @@ def handle_get_dependency_health(args: Dict) -> Any:
 
         return result
 
-    results, _partial = _map_parallel(args["dependencies"], _check_one)
+    # R2c: a smaller dedicated bound than the default MAX_PARALLEL_FETCHES —
+    # see MAX_GITHUB_PARALLEL_FETCHES for why (GitHub's secondary rate
+    # limiter penalizes concurrent requests, and this fan-out makes several
+    # api.github.com calls per dependency).
+    results, _partial = _map_parallel(
+        args["dependencies"], _check_one, max_workers=MAX_GITHUB_PARALLEL_FETCHES,
+    )
     return {"results": results}
 
 

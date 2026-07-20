@@ -317,6 +317,15 @@ class TestCheckLicenseCompliance(unittest.TestCase):
         self.assertEqual(len(out["results"]), 1)
         self.assertEqual(out["results"][0]["verdict"], "review")
 
+    def _mock_urlopen_always_offline(self, *args, **kwargs):
+        """Fails every urlopen call instantly (no real network I/O). The
+        not-ok recovery branch's _add_result -> _ensure_license ->
+        fetch_depsdev_licenses call goes through urlopen directly (it is
+        NOT covered by a fetch_depsdev_dependencies mock), so any deadline
+        test that reaches that branch needs this too, or it silently
+        depends on real network access and real-world latency."""
+        raise urllib.error.URLError("offline")
+
     def test_deadline_marks_partial_without_hanging(self):
         # #402: force the deadline path deterministically by making
         # fetch_depsdev_dependencies artificially slow relative to a tiny
@@ -333,6 +342,11 @@ class TestCheckLicenseCompliance(unittest.TestCase):
         with unittest.mock.patch.object(server, "TOOL_DEADLINE", 0.02), \
                 unittest.mock.patch.object(
                     server, "fetch_depsdev_dependencies", side_effect=_slow_graph,
+                ), \
+                unittest.mock.patch.object(server, "_sleep"), \
+                unittest.mock.patch(
+                    "urllib.request.urlopen",
+                    side_effect=self._mock_urlopen_always_offline,
                 ):
             start = time.monotonic()
             out = server.check_license_compliance(
@@ -348,6 +362,43 @@ class TestCheckLicenseCompliance(unittest.TestCase):
         # Returned well before the 0.2s the slow mock would need per root --
         # proves the call did not block waiting for the cut-off fetches.
         self.assertLess(elapsed, 0.2)
+
+    def test_deadline_cutoff_still_gives_every_root_a_row(self):
+        # R2a (CRITICAL, code review, 100% reproduced): the deadline path
+        # used to synthesize a not-ok placeholder for a root whose fetch was
+        # cut off, then IMMEDIATELY check "is the deadline already past"
+        # (always true -- that's WHY the fetch was cut off) and `break` --
+        # skipping the placeholder's own row-emission AND every subsequent
+        # root, since a `break` (not `continue`) stops the whole loop and a
+        # once-exceeded deadline never un-expires. 2 roots + a slow fetch +
+        # a tiny deadline reproduced partial:True but len(results) == 0.
+        # Every root in the input must still get exactly one row (review or
+        # error-shaped) even when none of the fetches complete in time.
+        def _slow_graph(group_id, artifact_id, version):
+            time.sleep(0.2)
+            return {"ok": True, "nodes": [], "edges": []}
+
+        roots = [
+            {"groupId": "com.example", "artifactId": "root1", "version": "1.0"},
+            {"groupId": "com.example", "artifactId": "root2", "version": "1.0"},
+        ]
+        with unittest.mock.patch.object(server, "TOOL_DEADLINE", 0.02), \
+                unittest.mock.patch.object(
+                    server, "fetch_depsdev_dependencies", side_effect=_slow_graph,
+                ), \
+                unittest.mock.patch.object(server, "_sleep"), \
+                unittest.mock.patch(
+                    "urllib.request.urlopen",
+                    side_effect=self._mock_urlopen_always_offline,
+                ):
+            out = server.check_license_compliance(roots, project_license="MIT")
+
+        self.assertTrue(out["partial"])
+        self.assertEqual(len(out["results"]), len(roots))
+        seen = {(r["groupId"], r["artifactId"]) for r in out["results"]}
+        self.assertEqual(seen, {("com.example", "root1"), ("com.example", "root2")})
+        for r in out["results"]:
+            self.assertEqual(r["verdict"], "review")
 
     def test_handler_wires_args(self):
         graph = _graph(

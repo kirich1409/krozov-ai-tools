@@ -702,6 +702,44 @@ class TestGetDependencyHealth(unittest.TestCase):
         self.assertIsNone(result["github"])
         self.assertIn("healthError", result)
 
+    def test_fan_out_bounded_to_max_github_workers(self):
+        # R2c (perf review of #400): this fan-out makes SEVERAL api.github.com
+        # calls per dependency (gh_repo_exists/fetch_repo/fetch_releases/
+        # issue-stats/discover, plus the rate-limited Search API), and
+        # GitHub's secondary rate limiter specifically penalizes CONCURRENT
+        # requests -- it must run at MAX_GITHUB_PARALLEL_FETCHES, a smaller
+        # dedicated bound, not the default MAX_PARALLEL_FETCHES (8) every
+        # other fan-out uses. fetch_metadata is the ONLY mock needed: it
+        # tracks peak concurrency, sleeps to widen the race window, then
+        # raises so _check_one short-circuits before any GitHub call (the
+        # bound on the FAN-OUT itself is what's under test, not what each
+        # dep's body happens to do afterward).
+        lock = threading.Lock()
+        state = {"current": 0, "peak": 0}
+
+        def _tracking_fetch_metadata(group_id, artifact_id, ctx):
+            with lock:
+                state["current"] += 1
+                state["peak"] = max(state["peak"], state["current"])
+            time.sleep(0.03)
+            with lock:
+                state["current"] -= 1
+            raise ValueError("boom")
+
+        deps = [{"groupId": "com.example", "artifactId": f"lib{i}"} for i in range(8)]
+        with unittest.mock.patch.object(
+            server, "fetch_metadata", side_effect=_tracking_fetch_metadata,
+        ):
+            out = server.handle_get_dependency_health({"dependencies": deps})
+
+        self.assertEqual(len(out["results"]), 8)
+        for r in out["results"]:
+            self.assertIn("healthError", r)
+        self.assertLessEqual(state["peak"], server.MAX_GITHUB_PARALLEL_FETCHES)
+        # Sanity: real overlap was actually attempted, so the assertion above
+        # meaningfully exercises the bound rather than being vacuously true.
+        self.assertGreater(state["peak"], 1)
+
 
 # --- handle_search_artifacts ------------------------------------------------
 
