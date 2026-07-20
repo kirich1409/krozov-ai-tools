@@ -21,6 +21,8 @@ call_args_list, since the server builds a urllib.request.Request per call.
 """
 
 import json
+import threading
+import time
 import unittest
 import urllib.error
 import unittest.mock
@@ -520,6 +522,63 @@ class TestSearchMavenCentral(unittest.TestCase):
                     ),
                 ):
             self.assertEqual(server.search_maven_central("network-fail"), [])
+
+
+class TestSolrConcurrencyBound(unittest.TestCase):
+    """R2b (perf/security review of #400): verify_coordinates now runs its
+    per-coordinate loop on a ThreadPoolExecutor (up to MAX_PARALLEL_FETCHES=8
+    concurrently). search.maven.org has a documented 403 bulk-load LOCKOUT
+    that _request_with_retry does not retry, and both call sites below
+    fail-open ([] / None) on failure — for verify_coordinates specifically, a
+    failed did-you-mean search silently turns likelyHallucination=False,
+    which the write-time hook then reads as "allow" (a fail-open SECURITY
+    path, not just a perf one). _SOLR_SEMAPHORE must keep TRUE concurrent
+    access to this host bounded to MAX_CONCURRENT_SOLR_CALLS regardless of how
+    many callers invoke search_maven_central / _fetch_gav_timestamp at once.
+    """
+
+    def test_solr_calls_bounded_to_max_concurrent(self):
+        lock = threading.Lock()
+        state = {"current": 0, "peak": 0}
+
+        def _tracking_get(*_args, **_kwargs):
+            with lock:
+                state["current"] += 1
+                state["peak"] = max(state["peak"], state["current"])
+            time.sleep(0.03)  # widen the race window so overlap is observable
+            with lock:
+                state["current"] -= 1
+            return (200, json.dumps({"response": {"docs": []}}).encode())
+
+        def _call_search(i):
+            server.search_maven_central(f"q{i}", use_cache=False)
+
+        def _call_timestamp(i):
+            server._fetch_gav_timestamp("com.example", f"lib{i}", "1.0.0")
+
+        # Both call sites share ONE semaphore -- drive them concurrently
+        # together to prove the bound holds on their COMBINED total, not just
+        # each individually. http_get covers search_maven_central's
+        # use_cache=False path; http_get_cached covers _fetch_gav_timestamp
+        # (always cached) and search_maven_central's use_cache=True path.
+        with unittest.mock.patch.object(server, "http_get", side_effect=_tracking_get), \
+                unittest.mock.patch.object(
+                    server, "http_get_cached", side_effect=_tracking_get,
+                ):
+            threads = []
+            for i in range(6):
+                threads.append(threading.Thread(target=_call_search, args=(i,)))
+                threads.append(threading.Thread(target=_call_timestamp, args=(i,)))
+            for t in threads:
+                t.start()
+            for t in threads:
+                t.join()
+
+        self.assertLessEqual(state["peak"], server.MAX_CONCURRENT_SOLR_CALLS)
+        # Sanity: real overlap was actually attempted (not accidentally
+        # serialized by the test harness itself), so the assertion above is
+        # meaningfully exercising the semaphore, not vacuously true.
+        self.assertGreater(state["peak"], 1)
 
 
 # ---------------------------------------------------------------------------

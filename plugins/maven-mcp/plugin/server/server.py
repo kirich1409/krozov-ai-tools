@@ -5,6 +5,7 @@ No external dependencies; Python 3.9+ standard library only.
 """
 
 import base64
+import concurrent.futures
 import datetime
 import email.utils
 import functools
@@ -21,6 +22,7 @@ import ssl
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import urllib.request
 import urllib.parse
@@ -146,6 +148,40 @@ MAX_DEPSDEV_ERRORS_REPORTED = 20
 # graph + GetVersion per unique node for SPDX licenses. Caps bound fan-out.
 MAX_LICENSE_COMPLIANCE_ROOTS = 20
 MAX_LICENSE_COMPLIANCE_NODES = 500
+
+# Bounded parallel fan-out (#400): the batch tools below resolve N coordinates
+# (and, for a few, M repos/roots per coordinate) over the network. Each such
+# loop is executed via `_map_parallel`, which creates and tears down its OWN
+# ThreadPoolExecutor per call (never a module-global executor in this
+# long-lived stdio process). The bound is deliberately modest — some target
+# hosts (search.maven.org in particular) have a documented rate-limit/403-
+# lockout history under bulk load (see MAX_GATED_SOLR_CALLS_PER_BATCH below),
+# so higher concurrency is not free. Calibratable starting point, not proven
+# against a labeled benchmark.
+MAX_PARALLEL_FETCHES = 8
+
+# R2c (perf review of #400): handle_get_dependency_health's per-dependency
+# fan-out makes SEVERAL api.github.com calls each (gh_repo_exists/fetch_repo/
+# fetch_releases/issue-stats/discover, plus the rate-limited Search API for
+# issue stats, plus a deps.dev Scorecard call) — GitHub's SECONDARY rate
+# limiter specifically penalizes CONCURRENT requests (independent of the
+# primary per-hour quota, which is 60/h unauthenticated, 5000/h with
+# GITHUB_TOKEN — see the Environment section), so running this fan-out at the
+# same width as CDN-metadata/deps.dev/OSV lookups (MAX_PARALLEL_FETCHES) risks
+# tripping it. A smaller, dedicated bound keeps this ONE fan-out gentler on
+# GitHub without slowing down the other seven, which have no such penalty.
+MAX_GITHUB_PARALLEL_FETCHES = 3
+
+# Overall wall-clock budget (#402), in seconds, for a single tool invocation
+# whose fan-out is otherwise unbounded by any MAX_* cap (audit_project_
+# dependencies scans a whole project; check_license_compliance's per-node
+# GetVersion fetch can run up to MAX_LICENSE_COMPLIANCE_NODES times). When the
+# deadline is reached mid-batch, the tool returns whatever it already gathered
+# with `partial: true` instead of blocking indefinitely. Calibratable starting
+# point — deliberately smaller than MAX_LICENSE_COMPLIANCE_NODES/MAX_PARALLEL_
+# FETCHES sequential-worst-case, so a degenerate batch fails fast with partial
+# data rather than running to real completion.
+TOOL_DEADLINE = 30.0
 
 # End-of-life / support status via endoflife.date (#415). Support windows are
 # announced well in advance and change rarely — cache far longer than the
@@ -719,6 +755,88 @@ def http_get_cached(
 
 
 # ---------------------------------------------------------------------------
+# Bounded parallel fan-out (#400)
+# ---------------------------------------------------------------------------
+
+def _map_parallel(
+    items: List[Any],
+    fn: Callable[[Any], Any],
+    max_workers: int = MAX_PARALLEL_FETCHES,
+    deadline: Optional[float] = None,
+) -> Tuple[List[Any], bool]:
+    """Run ``fn(item)`` for every item in ``items`` on a bounded
+    ThreadPoolExecutor created and torn down within THIS call — never a
+    module-global executor in this long-lived stdio process.
+
+    Returns ``(results, partial)``:
+      - ``results`` is INDEX-MAPPED to ``items`` (same order as the input),
+        never completion order. Every "first/Nth in order" contract a caller
+        already relies on (``resolvedFrom`` provenance, capability-signal
+        first-wins, error-list ordering, …) is therefore unaffected by which
+        worker thread happens to finish first.
+      - ``partial`` is True only when ``deadline`` was given and was reached
+        before every item finished; unfinished slots are left as ``None`` —
+        the caller decides how to render them (see #402 call sites).
+
+    PER-ITEM ISOLATION is the caller's responsibility: ``fn`` must catch its
+    own exceptions and return an error-shaped result, exactly mirroring the
+    try/except-and-append-in-order pattern every one of these loops already
+    had before this helper existed. An exception ``fn`` does NOT catch
+    propagates out of ``future.result()`` and thus out of this call — i.e.
+    the whole batch fails, matching what the equivalent sequential loop would
+    have done if it also had no try/except around that step.
+
+    ``len(items) <= 1`` skips the executor entirely: nothing to parallelize,
+    and it avoids thread-pool startup overhead for the common single-item
+    call (batch tools are very frequently called with exactly one dependency).
+    """
+    n = len(items)
+    if n == 0:
+        return [], False
+    if n == 1:
+        return [fn(items[0])], False
+
+    results: List[Any] = [None] * n
+    workers = max(1, min(max_workers, n))
+    partial = False
+    executor = concurrent.futures.ThreadPoolExecutor(max_workers=workers)
+    future_map: Dict[concurrent.futures.Future, int] = {}
+    try:
+        future_map = {executor.submit(fn, item): i for i, item in enumerate(items)}
+        pending = set(future_map)
+        while pending:
+            timeout: Optional[float] = None
+            if deadline is not None:
+                remaining = deadline - _now()
+                if remaining <= 0:
+                    partial = True
+                    break
+                timeout = remaining
+            done, pending = concurrent.futures.wait(
+                pending, timeout=timeout, return_when=concurrent.futures.FIRST_COMPLETED
+            )
+            for future in done:
+                results[future_map[future]] = future.result()
+            if deadline is not None and not done:
+                # wait()'s own timeout elapsed with nothing finished yet.
+                partial = True
+                break
+    finally:
+        # Bounded shutdown (#402): never block THIS call past the deadline
+        # waiting on already-running futures — Python cannot kill a running
+        # thread, so cancel() only drops NOT-YET-STARTED futures from the
+        # queue (no new work begins after the deadline) and `wait=False` lets
+        # this call return promptly; any in-flight worker still finishes
+        # naturally in the background (bounded by its own HTTP timeout) and
+        # the pool's worker threads exit on their own once idle post-shutdown
+        # — never leaked past process lifetime, just not joined by this call.
+        for future in future_map:
+            future.cancel()
+        executor.shutdown(wait=not partial)
+    return results, partial
+
+
+# ---------------------------------------------------------------------------
 # Private Maven repository credentials (#291)
 # ---------------------------------------------------------------------------
 # Credentials are NEVER read from build files. Resolution order (first match
@@ -1172,6 +1290,14 @@ _TLS_STATE: Dict[str, Any] = {
     "ssl_context_cache": None,  # Optional[Tuple[str, ssl.SSLContext]]
 }
 
+# Guards a first-build race on _TLS_STATE["ssl_context_cache"] under the #400
+# ThreadPoolExecutor: without it, N concurrent cache-miss callers (e.g. cold
+# start + the first parallel batch) would each independently build their own
+# ssl.SSLContext (redundant CA-bundle loading, not a correctness bug — dict
+# writes are atomic — but wasted work every time). Double-checked below so
+# the overwhelmingly common cache-HIT path stays lock-free.
+_TLS_LOCK = threading.Lock()
+
 
 def _insecure_tls_enabled() -> bool:
     """``MAVEN_MCP_INSECURE_TLS`` — disable TLS verification (off by default)."""
@@ -1228,30 +1354,40 @@ def _ssl_context() -> "ssl.SSLContext":
     """SSL context for outbound HTTPS: system CAs + optional internal bundle.
 
     Verification stays ON unless ``MAVEN_MCP_INSECURE_TLS`` is explicitly set.
+
+    Thread-safe (#400): the fast path (cache hit) reads ``_TLS_STATE`` without
+    the lock — a dict read is atomic and the worst case on a stale read is
+    falling through to the locked slow path. The slow (rebuild) path
+    re-checks under ``_TLS_LOCK`` so a build that races another thread's
+    build in flight reuses ITS result instead of doing the work twice.
     """
     fp = _ssl_config_fingerprint()
     cached = _TLS_STATE["ssl_context_cache"]
     if cached is not None and cached[0] == fp:
         return cached[1]
-    if _insecure_tls_enabled():
-        _warn_insecure_tls_once()
-        ctx = ssl._create_unverified_context()
-    else:
-        ctx = ssl.create_default_context()
-        for ca_path in _ca_cert_files():
-            if not os.path.isfile(ca_path):
-                _logger.warning(
-                    "CA certificate path not found (%s); ignoring", ca_path
-                )
-                continue
-            try:
-                ctx.load_verify_locations(cafile=ca_path)
-            except (ssl.SSLError, OSError) as e:
-                _logger.warning(
-                    "Failed to load CA bundle %s: %s", ca_path, type(e).__name__
-                )
-    _TLS_STATE["ssl_context_cache"] = (fp, ctx)
-    return ctx
+    with _TLS_LOCK:
+        cached = _TLS_STATE["ssl_context_cache"]
+        if cached is not None and cached[0] == fp:
+            return cached[1]
+        if _insecure_tls_enabled():
+            _warn_insecure_tls_once()
+            ctx = ssl._create_unverified_context()
+        else:
+            ctx = ssl.create_default_context()
+            for ca_path in _ca_cert_files():
+                if not os.path.isfile(ca_path):
+                    _logger.warning(
+                        "CA certificate path not found (%s); ignoring", ca_path
+                    )
+                    continue
+                try:
+                    ctx.load_verify_locations(cafile=ca_path)
+                except (ssl.SSLError, OSError) as e:
+                    _logger.warning(
+                        "Failed to load CA bundle %s: %s", ca_path, type(e).__name__
+                    )
+        _TLS_STATE["ssl_context_cache"] = (fp, ctx)
+        return ctx
 
 
 def _env_proxy_url(scheme: str) -> Optional[str]:
@@ -3127,10 +3263,23 @@ def detect_dependency_conflicts(
     graphs_failed = 0
     capability: Optional[str] = None
 
-    for root in unique_roots:
-        fetched = fetch_depsdev_dependencies(
+    # #400: fetch every root's transitive graph in parallel (pure, independent
+    # per-root network calls; no shared state touched) — then aggregate
+    # SEQUENTIALLY below in the ORIGINAL root order, exactly as before. Unlike
+    # check_license_compliance's per-node walk, this aggregation (min-depth,
+    # append-to-sources) has no order-sensitive "upgrade in place" logic, so
+    # keeping it sequential is purely for a minimal/obviously-correct diff,
+    # not a correctness requirement.
+    def _fetch_conflict_root_graph(root: Dict[str, str]) -> Dict[str, Any]:
+        return fetch_depsdev_dependencies(
             root["groupId"], root["artifactId"], root["version"]
         )
+
+    root_graphs, _partial = _map_parallel(
+        unique_roots, _fetch_conflict_root_graph, max_workers=MAX_PARALLEL_FETCHES,
+    )
+
+    for root, fetched in zip(unique_roots, root_graphs):
         root_label = f"{root['groupId']}:{root['artifactId']}:{root['version']}"
         if fetched.get("capabilityUnavailable") and capability is None:
             capability = fetched["capabilityUnavailable"]
@@ -4495,7 +4644,25 @@ def check_license_compliance(
     For each versioned root, fetches the deps.dev GetDependencies graph, then
     GetVersion licenses for each unique GAV (capped). Marks ``viaTransitive``
     from deps.dev ``relation`` (SELF/DIRECT → false, else true).
+
+    #400/#402 concurrency note: the per-ROOT graph fetch below (bounded by
+    MAX_LICENSE_COMPLIANCE_ROOTS, a pure independent network call per root) IS
+    parallelized. The per-NODE license fetch/dedup walk (_ensure_license /
+    _add_result, up to MAX_LICENSE_COMPLIANCE_NODES) deliberately stays
+    SEQUENTIAL: its dedup is order-sensitive (`seen_result_keys`'s
+    "first-seen wins for viaTransitive=false, upgrade in place otherwise"
+    rule depends on processing roots/nodes in a fixed order) and its cache
+    (`license_cache`) is mutated in lockstep with that walk — splitting fetch
+    from decide to parallelize it safely would be a materially larger,
+    higher-risk rewrite of this function's carefully-specified dedup
+    semantics. Instead, TOOL_DEADLINE bounds the sequential node walk
+    directly (see the `_now() >= deadline` checks below): a degenerate
+    large-graph batch returns whatever was gathered so far with
+    `partial: true` rather than blocking indefinitely — which is exactly what
+    #402 asks for on this specific tool.
     """
+    deadline = _now() + TOOL_DEADLINE
+    deadline_hit = False
     policy = resolve_license_policy(project_license, disallow)
     roots = []
     for dep in dependencies or []:
@@ -4613,12 +4780,50 @@ def check_license_compliance(
             row["error"] = fetched["error"]
         results.append(row)
 
-    for root in roots:
-        fetched = fetch_depsdev_dependencies(
+    # #400: fetch every root's transitive graph in parallel first (pure,
+    # independent per-root network calls; no shared state touched) — then
+    # walk roots+nodes SEQUENTIALLY below in the ORIGINAL order, exactly as
+    # before, so the dedup/upgrade-in-place logic in _add_result stays
+    # deterministic regardless of which root's fetch actually completed
+    # first.
+    def _fetch_root_graph(root: Dict[str, str]) -> Dict[str, Any]:
+        return fetch_depsdev_dependencies(
             root["groupId"], root["artifactId"], root["version"],
         )
-        if fetched.get("capabilityUnavailable") and capability is None:
-            capability = fetched["capabilityUnavailable"]
+
+    root_graphs, root_fetch_partial = _map_parallel(
+        roots, _fetch_root_graph, max_workers=MAX_PARALLEL_FETCHES, deadline=deadline,
+    )
+    if root_fetch_partial:
+        deadline_hit = True
+
+    for root, fetched in zip(roots, root_graphs):
+        # R2a fix: this loop must NEVER `break` out early on a deadline —
+        # doing so silently drops every root from that point on (the exact
+        # bug: the deadline check used to fire immediately after synthesizing
+        # a cut-off root's placeholder, before that root's own review row was
+        # ever added, then `break` skipped ALL subsequent roots too, since a
+        # once-exceeded deadline never un-expires). Instead: once the
+        # deadline is exceeded — whether THIS root's own graph fetch was cut
+        # off (`fetched is None`) or time simply ran out by the time we
+        # reached this iteration (a prior root's node walk used the rest of
+        # the budget) — this root degrades to a cheap review row (no further
+        # network calls) and the loop continues to the NEXT root exactly the
+        # same way. Every root in `roots` therefore always reaches the
+        # bottom of one iteration and gets exactly one row.
+        deadline_cutoff = fetched is None or _now() >= deadline
+        if deadline_cutoff:
+            deadline_hit = True
+        cap = fetched.get("capabilityUnavailable") if fetched is not None else None
+        if cap and capability is None:
+            capability = cap
+        if deadline_cutoff:
+            err = (fetched or {}).get("error") if fetched is not None else None
+            fetched = {
+                "ok": False,
+                "error": err or f"skipped: exceeded the {TOOL_DEADLINE}s tool deadline",
+            }
+
         if not fetched.get("ok"):
             partial = True
             err = fetched.get("error") or "deps.dev unavailable"
@@ -4659,6 +4864,17 @@ def check_license_compliance(
             partial = True
 
         for node in fetched.get("nodes") or []:
+            if _now() >= deadline:
+                # #402: bound the sequential per-node dedup/license-fetch
+                # walk — see the concurrency note in this function's
+                # docstring for why this loop stays sequential rather than
+                # joining the #400 executor. Breaks only the NODE loop for
+                # THIS root (nodes already added stay); the OUTER root loop
+                # continues naturally to the next root, which will see
+                # `deadline_cutoff=True` at the top of its own iteration and
+                # degrade to a review row instead of attempting its nodes.
+                deadline_hit = True
+                break
             g = node.get("groupId") or ""
             a = node.get("artifactId") or ""
             v = node.get("version") or ""
@@ -4691,6 +4907,13 @@ def check_license_compliance(
         notes.append(
             f"GetVersion calls capped at {MAX_LICENSE_COMPLIANCE_NODES} "
             f"(MAX_LICENSE_COMPLIANCE_NODES); results are partial."
+        )
+    if deadline_hit:
+        partial = True
+        notes.append(
+            f"Stopped early after exceeding the {TOOL_DEADLINE}s tool "
+            f"deadline; remaining roots/nodes were not processed and "
+            f"results are partial."
         )
 
     out: Dict[str, Any] = {
@@ -5777,6 +6000,28 @@ def _search_capability_for_status(status: int) -> str:
     return "unreachable"
 
 
+# R2b (perf/security review of #400): bounds CONCURRENT calls against
+# search.maven.org specifically — a much tighter cap than MAX_PARALLEL_FETCHES
+# (8). This host has a documented 403 bulk-load LOCKOUT that
+# _request_with_retry does NOT retry, and both callers below fail-open on
+# failure (search_maven_central -> [], _fetch_gav_timestamp -> None); for
+# verify_coordinates in particular, a failed did-you-mean search silently
+# turns likelyHallucination=False, which the write-time pre-edit-deps.sh hook
+# then reads as "allow" — a fail-OPEN security path, not just a perf one.
+# #322's own MAX_GATED_SOLR_CALLS_PER_BATCH already assumed near-sequential
+# access to this host; parallelizing verify_coordinates' per-coordinate loop
+# at the full executor width would let up to 8 coordinates hammer Solr at
+# once and undermine that assumption. Acquired inside BOTH low-level
+# functions that build a SEARCH_API request (_search_maven_central_with_
+# capability and _fetch_gav_timestamp) — not just at verify_coordinates' two
+# call sites — so every current and future caller against this host is
+# covered automatically; repo-metadata probes (fetch_metadata/fetch_pom/etc,
+# a different host per coordinate) are unaffected and keep the full
+# MAX_PARALLEL_FETCHES concurrency.
+MAX_CONCURRENT_SOLR_CALLS = 2
+_SOLR_SEMAPHORE = threading.Semaphore(MAX_CONCURRENT_SOLR_CALLS)
+
+
 def _search_maven_central_with_capability(
     query: str, limit: int = 10, use_cache: bool = True
 ) -> Tuple[List[Dict], Optional[str]]:
@@ -5797,7 +6042,10 @@ def _search_maven_central_with_capability(
     """
     try:
         url = f"{SEARCH_API}?q={urllib.parse.quote(query)}&rows={limit}&wt=json"
-        status, body = http_get_cached(url, TTL_SEARCH) if use_cache else http_get(url)
+        # R2b: bound CONCURRENT access to this host specifically (see
+        # _SOLR_SEMAPHORE) — held only across the network round-trip itself.
+        with _SOLR_SEMAPHORE:
+            status, body = http_get_cached(url, TTL_SEARCH) if use_cache else http_get(url)
     except (urllib.error.URLError, socket.timeout) as e:
         # Transport failure after every retry attempt -- the search backend
         # could not be reached at all.
@@ -5862,7 +6110,10 @@ def _fetch_gav_timestamp(group_id: str, artifact_id: str, version: str) -> Optio
     )
     try:
         url = f"{SEARCH_API}?q={urllib.parse.quote(query)}&core=gav&rows=1&wt=json"
-        status, body = http_get_cached(url, TTL_SEARCH)
+        # R2b: bound CONCURRENT access to this host specifically (see
+        # _SOLR_SEMAPHORE) — held only across the network round-trip itself.
+        with _SOLR_SEMAPHORE:
+            status, body = http_get_cached(url, TTL_SEARCH)
         if status != 200:
             return None
         data = json.loads(body)
@@ -8793,8 +9044,8 @@ def handle_check_version_exists(args: Dict) -> Any:
 
 def handle_check_multiple_dependencies(args: Dict) -> Any:
     ctx = build_resolution_context(args)
-    results = []
-    for dep in args["dependencies"]:
+
+    def _check_one(dep: Dict) -> Dict[str, Any]:
         # resolved_from is captured as soon as fetch_metadata succeeds, so a
         # downstream "no version found" still carries provenance (#317 finding 1:
         # a repo did answer, so resolvedFrom is known even on a not-found result).
@@ -8805,13 +9056,13 @@ def handle_check_multiple_dependencies(args: Dict) -> Any:
             latest = find_latest_version(metadata["versions"], "PREFER_STABLE")
             if not latest:
                 raise ValueError("No version found")
-            results.append({
+            return {
                 "groupId": dep["groupId"],
                 "artifactId": dep["artifactId"],
                 "latestVersion": latest,
                 "stability": classify_version(latest),
                 "resolvedFrom": resolved_from,
-            })
+            }
         except Exception as e:
             error_entry = {
                 "groupId": dep["groupId"],
@@ -8822,14 +9073,21 @@ def handle_check_multiple_dependencies(args: Dict) -> Any:
             }
             if resolved_from is not None:
                 error_entry["resolvedFrom"] = resolved_from
-            results.append(error_entry)
+            return error_entry
+
+    # #400: bounded parallel fan-out. _map_parallel is index-mapped, so
+    # `results` stays in the SAME order as args["dependencies"] regardless of
+    # which worker thread finishes first; per-item isolation is unchanged —
+    # _check_one still catches its own exceptions exactly as the sequential
+    # loop did.
+    results, _partial = _map_parallel(args["dependencies"], _check_one)
     return {"results": results}
 
 
 def handle_compare_dependency_versions(args: Dict) -> Any:
     ctx = build_resolution_context(args)
-    results = []
-    for dep in args["dependencies"]:
+
+    def _compare_one(dep: Dict) -> Dict[str, Any]:
         # resolved_from is captured as soon as fetch_metadata succeeds, so a
         # downstream "no matching version" still carries provenance (#317 finding 1:
         # a repo did answer, so resolvedFrom is known even on a not-found result).
@@ -8841,7 +9099,7 @@ def handle_compare_dependency_versions(args: Dict) -> Any:
             if not latest:
                 raise ValueError("No matching version found")
             upgrade_type = get_upgrade_type(dep["currentVersion"], latest)
-            results.append({
+            return {
                 "groupId": dep["groupId"],
                 "artifactId": dep["artifactId"],
                 "currentVersion": dep["currentVersion"],
@@ -8850,7 +9108,7 @@ def handle_compare_dependency_versions(args: Dict) -> Any:
                 "upgradeType": upgrade_type,
                 "upgradeAvailable": upgrade_type != "none",
                 "resolvedFrom": resolved_from,
-            })
+            }
         except Exception as e:
             error_entry = {
                 "groupId": dep["groupId"],
@@ -8864,7 +9122,11 @@ def handle_compare_dependency_versions(args: Dict) -> Any:
             }
             if resolved_from is not None:
                 error_entry["resolvedFrom"] = resolved_from
-            results.append(error_entry)
+            return error_entry
+
+    # #400: bounded parallel fan-out, order preserved (see
+    # handle_check_multiple_dependencies for the same pattern/rationale).
+    results, _partial = _map_parallel(args["dependencies"], _compare_one)
     summary = {
         "total": len(results),
         "upgradeable": sum(1 for r in results if r.get("upgradeAvailable")),
@@ -8952,18 +9214,25 @@ def handle_get_dependency_vulnerabilities(args: Dict) -> Any:
         except Exception:
             ctx = None  # degrade: markers stay unresolved, queried as-is below
 
-    query_deps = []
-    resolutions = []
-    for dep in original_deps:
-        resolved = (
+    # #400: marker resolution is a per-dependency POM fetch — parallelize it
+    # the same way as the other batch fan-outs. No new try/except is added
+    # here: resolve_plugin_marker_implementation is documented as never
+    # raising (degrades to None on any failure), matching the original
+    # sequential loop, which had none either.
+    def _resolve_one(dep: Dict) -> Optional[Dict]:
+        return (
             resolve_plugin_marker_implementation(
                 dep["groupId"], dep["artifactId"], dep.get("version"), ctx
             )
             if ctx is not None
             else None
         )
-        resolutions.append(resolved)
-        query_deps.append(resolved if resolved else dep)
+
+    resolutions, _partial = _map_parallel(original_deps, _resolve_one)
+    query_deps = [
+        resolved if resolved else dep
+        for dep, resolved in zip(original_deps, resolutions)
+    ]
 
     # NOTE: unlike handle_audit_project_dependencies, this does not dedupe
     # identical (groupId, artifactId, version) requests before querying OSV —
@@ -8992,8 +9261,15 @@ def handle_get_dependency_vulnerabilities(args: Dict) -> Any:
 
 def handle_get_dependency_health(args: Dict) -> Any:
     ctx = build_resolution_context(args)
-    results = []
-    for dep in args["dependencies"]:
+
+    # #400: parallelize the per-dependency fan-out (metadata + POM + GitHub
+    # API calls, several per dep). Per-item error handling is preserved
+    # EXACTLY as it was in the sequential loop: only the initial
+    # fetch_metadata call is guarded by a try/except (as before) — anything
+    # raised further down still propagates and fails the whole call, matching
+    # the original code, which had no try/except around the rest of the body
+    # either. #400 changes performance, not error-handling semantics.
+    def _check_one(dep: Dict) -> Dict[str, Any]:
         group_id = dep["groupId"]
         artifact_id = dep["artifactId"]
         requested_version = dep.get("version")
@@ -9010,8 +9286,7 @@ def handle_get_dependency_health(args: Dict) -> Any:
             metadata = fetch_metadata(group_id, artifact_id, ctx)
         except Exception as e:
             result["healthError"] = str(e)
-            results.append(result)
-            continue
+            return result
         result["resolvedFrom"] = metadata.get("resolvedFrom")
 
         versions = metadata["versions"]
@@ -9058,8 +9333,7 @@ def handle_get_dependency_health(args: Dict) -> Any:
             else:
                 result["signals"].append("no public GitHub repository found")
                 result["healthError"] = "GitHub repository not found; activity metrics unavailable"
-            results.append(result)
-            continue
+            return result
 
         owner = gh_repo["owner"]
         repo = gh_repo["repo"]
@@ -9088,8 +9362,7 @@ def handle_get_dependency_health(args: Dict) -> Any:
             result["signals"].append("GitHub metrics unavailable (offline/closed mode)")
             result["healthError"] = "GitHub unavailable (offline/closed mode)"
             result["capabilityUnavailable"] = github_cap
-            results.append(result)
-            continue
+            return result
 
         repo_meta = cached_repo_meta or gh_fetch_repo(owner, repo)
         if not repo_meta:
@@ -9097,8 +9370,7 @@ def handle_get_dependency_health(args: Dict) -> Any:
                 result["signals"].append("no license declared")
             result["healthError"] = "GitHub repository metadata unavailable (rate limit or network)"
             result["capabilityUnavailable"] = "unreachable"
-            results.append(result)
-            continue
+            return result
 
         releases = gh_fetch_releases(owner, repo)
         issue_stats = gh_fetch_issue_stats(owner, repo)
@@ -9148,7 +9420,15 @@ def handle_get_dependency_health(args: Dict) -> Any:
             if mtc is not None and mtc >= 180:
                 result["signals"].append(f"slow issue response (median {mtc} days to close)")
 
-        results.append(result)
+        return result
+
+    # R2c: a smaller dedicated bound than the default MAX_PARALLEL_FETCHES —
+    # see MAX_GITHUB_PARALLEL_FETCHES for why (GitHub's secondary rate
+    # limiter penalizes concurrent requests, and this fan-out makes several
+    # api.github.com calls per dependency).
+    results, _partial = _map_parallel(
+        args["dependencies"], _check_one, max_workers=MAX_GITHUB_PARALLEL_FETCHES,
+    )
     return {"results": results}
 
 
@@ -9176,22 +9456,21 @@ def handle_get_dependency_license(args: Dict) -> Any:
     if len(deps) > MAX_LICENSE_DEPENDENCIES:
         deps = deps[:MAX_LICENSE_DEPENDENCIES]
     ctx = build_resolution_context(args)
-    results = []
-    for dep in deps:
+
+    def _license_one(dep: Dict) -> Dict[str, Any]:
         group_id = dep["groupId"]
         artifact_id = dep["artifactId"]
         version = dep.get("version")
         try:
-            results.append(
-                resolve_dependency_license(group_id, artifact_id, version, ctx)
-            )
+            return resolve_dependency_license(group_id, artifact_id, version, ctx)
         except Exception as e:
-            results.append(
-                _license_result(
-                    group_id, artifact_id, version, None, None, None, "unknown", None,
-                    error=str(e),
-                )
+            return _license_result(
+                group_id, artifact_id, version, None, None, None, "unknown", None,
+                error=str(e),
             )
+
+    # #400: bounded parallel fan-out, order preserved.
+    results, _partial = _map_parallel(deps, _license_one)
     return {"results": results}
 
 
@@ -9274,6 +9553,60 @@ def _detect_new_license_categories(
     return sorted(cat for cat, n in counts.items() if n == 1)
 
 
+def _dedup_resolved_from(audit_deps: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    """Hoist the most-common ``resolvedFrom`` value to a top-level default and
+    strip it from every entry that matches it exactly (#405).
+
+    A large audit routinely resolves 200-300 dependencies from the SAME one
+    or two declared repositories, repeating an identical ``resolvedFrom``
+    object on nearly every entry — pure token bloat. No provenance is lost:
+    an entry with no ``resolvedFrom`` of its own falls back to the top-level
+    ``defaultResolvedFrom``; an entry whose provenance genuinely DIFFERS (a
+    different repo answered, or public-fallback was used only for that one)
+    keeps its own ``resolvedFrom`` untouched. Returns ``None`` (no top-level
+    field added, no entries touched) when no value is shared by >=2 entries —
+    hoisting a value used by exactly one entry would save nothing.
+    """
+    counts: Dict[str, int] = {}
+    by_key: Dict[str, Dict[str, Any]] = {}
+    for entry in audit_deps:
+        rf = entry.get("resolvedFrom")
+        if not rf:
+            continue
+        key = json.dumps(rf, sort_keys=True)
+        counts[key] = counts.get(key, 0) + 1
+        by_key[key] = rf
+    if not counts:
+        return None
+    best_key = max(counts, key=lambda k: counts[k])
+    if counts[best_key] < 2:
+        return None
+    default_rf = by_key[best_key]
+    for entry in audit_deps:
+        if entry.get("resolvedFrom") == default_rf:
+            del entry["resolvedFrom"]
+    return default_rf
+
+
+def _has_audit_issue(entry: Dict[str, Any]) -> bool:
+    """True when an audit_deps entry carries a signal worth surfacing under
+    ``onlyIssues`` (#405): a fetch error, an available upgrade, a known
+    vulnerability, or a license-category signal. audit_project_dependencies
+    does not itself compute dependency conflicts or dead-repository hints
+    (those live in detect_dependency_conflicts / scan_project's
+    deadRepositoryHints) so they are not part of this predicate."""
+    if entry.get("error"):
+        return True
+    upgrade_type = entry.get("upgradeType")
+    if upgrade_type and upgrade_type != "none":
+        return True
+    if entry.get("vulnerabilities"):
+        return True
+    if entry.get("signals"):
+        return True
+    return False
+
+
 def handle_audit_project_dependencies(args: Dict) -> Any:
     project_path = args.get("projectPath") or os.getcwd()
     include_vulns = args.get("includeVulnerabilities", True)
@@ -9285,8 +9618,18 @@ def handle_audit_project_dependencies(args: Dict) -> Any:
     include_licenses = args.get("includeLicenses", False)
     if include_licenses is None:
         include_licenses = False
+    only_issues = bool(args.get("onlyIssues", False))
 
     ctx = build_resolution_context(args)
+    # #402: one wall-clock budget for the WHOLE tool invocation, shared across
+    # every fan-out phase below (metadata, vulnerabilities, licenses) — not a
+    # separate budget per phase, since a project large enough to blow through
+    # TOOL_DEADLINE in one phase would otherwise just move the same risk to
+    # the next. `partial`/`notes` are only added to the output when the
+    # deadline actually fires (see below) — the common, fast case is
+    # byte-for-byte unchanged.
+    deadline = _now() + TOOL_DEADLINE
+    deadline_hit = False
     scan = scan_project(project_path)
     if scan.get("resolvedBy") != "gradle":
         apply_bom_managed_versions(scan, ctx)
@@ -9315,10 +9658,40 @@ def handle_audit_project_dependencies(args: Dict) -> Any:
 
     audit_deps: List[Dict] = []
 
-    # Memoize metadata fetches per GA
-    metadata_cache: Dict[str, Any] = {}
+    def _audit_error_entry(
+        dep: Dict, current_version: Optional[str], error_msg: str,
+        resolved_from: Optional[Dict] = None,
+    ) -> Dict[str, Any]:
+        error_entry: Dict[str, Any] = {
+            "groupId": dep["groupId"],
+            "artifactId": dep["artifactId"],
+            "currentVersion": current_version,
+            "source": dep["source"],
+            "usages": dep.get("usages", []),
+            "module": (dep.get("usages") or [{}])[0].get("module"),
+            "configuration": (dep.get("usages") or [{}])[0].get("configuration"),
+            "error": error_msg,
+        }
+        if resolved_from is not None:
+            error_entry["resolvedFrom"] = resolved_from
+        if dep.get("effectiveVersion") is not None:
+            error_entry["effectiveVersion"] = dep["effectiveVersion"]
+        if dep.get("managedBy") is not None:
+            error_entry["managedBy"] = dep["managedBy"]
+        return error_entry
 
-    for dep in deps_with_version:
+    # Memoize metadata fetches per GA. #400: shared across worker threads, so
+    # every read-then-maybe-write against it goes through metadata_cache_lock
+    # (double-checked: the network fetch itself runs OUTSIDE the lock). A
+    # check-then-fetch race between two threads for the SAME ga_key can still
+    # cause a redundant duplicate fetch (perf, not correctness) — the lock's
+    # job is solely to make the dict read/write atomic and to guarantee every
+    # dep sharing a ga_key ends up with the SAME metadata object (setdefault,
+    # first-writer-wins), never a corrupted or inconsistent cache entry.
+    metadata_cache: Dict[str, Any] = {}
+    metadata_cache_lock = threading.Lock()
+
+    def _fetch_one_audit_dep(dep: Dict) -> Dict[str, Any]:
         current_version = _effective_version(dep)
         ga_key = f"{dep['groupId']}:{dep['artifactId']}"
         # resolved_from is captured as soon as fetch_metadata succeeds, so an
@@ -9327,9 +9700,12 @@ def handle_audit_project_dependencies(args: Dict) -> Any:
         # handle_compare_dependency_versions.
         resolved_from = None
         try:
-            if ga_key not in metadata_cache:
-                metadata_cache[ga_key] = fetch_metadata(dep["groupId"], dep["artifactId"], ctx)
-            metadata = metadata_cache[ga_key]
+            with metadata_cache_lock:
+                metadata = metadata_cache.get(ga_key)
+            if metadata is None:
+                fetched = fetch_metadata(dep["groupId"], dep["artifactId"], ctx)
+                with metadata_cache_lock:
+                    metadata = metadata_cache.setdefault(ga_key, fetched)
             resolved_from = metadata.get("resolvedFrom")
             latest = find_latest_version_for_current(metadata["versions"], current_version)
             upgrade_type = get_upgrade_type(current_version, latest) if latest else "none"
@@ -9352,29 +9728,31 @@ def handle_audit_project_dependencies(args: Dict) -> Any:
             if dep.get("isPlatform"):
                 entry["isPlatform"] = True
                 entry["platformKind"] = dep.get("platformKind")
-            audit_deps.append(entry)
+            return entry
         except Exception as e:
             # str(e) is safe here: fetch_metadata's own messages are redacted
             # at the source (see fetch_metadata), and find_latest_version_for_
             # current/get_upgrade_type are pure version-string functions that
             # never embed a repo URL.
-            error_entry = {
-                "groupId": dep["groupId"],
-                "artifactId": dep["artifactId"],
-                "currentVersion": current_version,
-                "source": dep["source"],
-                "usages": dep.get("usages", []),
-                "module": (dep.get("usages") or [{}])[0].get("module"),
-                "configuration": (dep.get("usages") or [{}])[0].get("configuration"),
-                "error": str(e),
-            }
-            if resolved_from is not None:
-                error_entry["resolvedFrom"] = resolved_from
-            if dep.get("effectiveVersion") is not None:
-                error_entry["effectiveVersion"] = dep["effectiveVersion"]
-            if dep.get("managedBy") is not None:
-                error_entry["managedBy"] = dep["managedBy"]
-            audit_deps.append(error_entry)
+            return _audit_error_entry(dep, current_version, str(e), resolved_from)
+
+    # #400/#402: bounded parallel fan-out, order preserved, bounded by the
+    # shared tool-wide deadline. A dep left unprocessed when the deadline
+    # fires gets a placeholder error entry below — every scanned dependency
+    # still gets exactly one row in `dependencies`, never silently dropped.
+    metadata_results, metadata_partial = _map_parallel(
+        deps_with_version, _fetch_one_audit_dep,
+        max_workers=MAX_PARALLEL_FETCHES, deadline=deadline,
+    )
+    if metadata_partial:
+        deadline_hit = True
+    for dep, entry in zip(deps_with_version, metadata_results):
+        if entry is None:
+            entry = _audit_error_entry(
+                dep, _effective_version(dep),
+                f"skipped: exceeded the {TOOL_DEADLINE}s tool deadline",
+            )
+        audit_deps.append(entry)
 
     for dep in deps_without_version:
         entry = {
@@ -9400,21 +9778,38 @@ def handle_audit_project_dependencies(args: Dict) -> Any:
             key = f"{a['groupId']}:{a['artifactId']}:{a['currentVersion']}"
             gav_map.setdefault(key, []).append(a)
 
-        unique_gavs = []
-        unique_keys = []
-        resolved_impls: Dict[str, Optional[Dict]] = {}
-        for key, entries in gav_map.items():
-            first = entries[0]
-            resolved = resolve_plugin_marker_implementation(
+        # #400/#402: parallelize the per-unique-GAV marker-resolution fan-out
+        # (each is its OWN POM fetch). unique_keys fixes gav_map's insertion
+        # order up front so results stay index-mapped to it. No try/except is
+        # added here: resolve_plugin_marker_implementation never raises
+        # (degrades to None), matching the original loop. A deadline cutoff
+        # ALSO surfaces as None here — indistinguishable from (and handled
+        # identically to) a coordinate that genuinely resolved to "not a
+        # marker": both fall back to querying OSV with the ORIGINAL GAV below,
+        # which was already this loop's existing behavior for a falsy result.
+        unique_keys = list(gav_map.keys())
+        firsts = [gav_map[key][0] for key in unique_keys]
+
+        def _resolve_marker_one(first: Dict) -> Optional[Dict]:
+            return resolve_plugin_marker_implementation(
                 first["groupId"], first["artifactId"], first["currentVersion"], ctx
             )
-            resolved_impls[key] = resolved
-            unique_gavs.append(resolved if resolved else {
+
+        resolved_list, marker_partial = _map_parallel(
+            firsts, _resolve_marker_one,
+            max_workers=MAX_PARALLEL_FETCHES, deadline=deadline,
+        )
+        if marker_partial:
+            deadline_hit = True
+        resolved_impls: Dict[str, Optional[Dict]] = dict(zip(unique_keys, resolved_list))
+        unique_gavs = [
+            resolved if resolved else {
                 "groupId": first["groupId"],
                 "artifactId": first["artifactId"],
                 "version": first["currentVersion"],
-            })
-            unique_keys.append(key)
+            }
+            for first, resolved in zip(firsts, resolved_list)
+        ]
 
         vuln_results = query_osv_batch(unique_gavs)
         for i, key in enumerate(unique_keys):
@@ -9447,24 +9842,58 @@ def handle_audit_project_dependencies(args: Dict) -> Any:
     new_license_categories: Optional[List[str]] = None
     if include_licenses:
         # Resolve licenses for versioned deps only (POM fetch needs a version).
-        # Memoize per GAV so duplicate audit entries share one resolution.
+        # #400: split into a cheap sequential PLANNING pass (collect the
+        # unique GAVs needing a fetch, first-seen order — identical dedup
+        # criterion to the original inline `if gav_key not in license_cache`
+        # check) and a PARALLEL fetch pass, then a final sequential ASSEMBLE
+        # pass that mutates `a["signals"]` in the SAME order as before. This
+        # keeps the deterministic dedup/signal bookkeeping single-threaded
+        # while parallelizing the actual network fetch.
+        unique_license_keys: List[str] = []
+        unique_license_items: List[Tuple[str, str, str]] = []
+        seen_license_keys: set = set()
+        for a in audit_deps:
+            ver = a.get("currentVersion")
+            if not ver:
+                continue
+            gav_key = f"{a['groupId']}:{a['artifactId']}:{ver}"
+            if gav_key not in seen_license_keys:
+                seen_license_keys.add(gav_key)
+                unique_license_keys.append(gav_key)
+                unique_license_items.append((a["groupId"], a["artifactId"], ver))
+
+        def _fetch_one_license(item: Tuple[str, str, str]) -> Dict[str, Any]:
+            gid, aid, ver = item
+            try:
+                return resolve_dependency_license(gid, aid, ver, ctx)
+            except Exception as e:
+                return _license_result(
+                    gid, aid, ver, None, None, None, "unknown", None, error=str(e),
+                )
+
+        fetched_licenses, license_partial = _map_parallel(
+            unique_license_items, _fetch_one_license,
+            max_workers=MAX_PARALLEL_FETCHES, deadline=deadline,
+        )
+        if license_partial:
+            deadline_hit = True
         license_cache: Dict[str, Dict[str, Any]] = {}
+        for key, (gid, aid, ver), result in zip(
+            unique_license_keys, unique_license_items, fetched_licenses
+        ):
+            if result is None:
+                result = _license_result(
+                    gid, aid, ver, None, None, None, "unknown", None,
+                    error=f"skipped: exceeded the {TOOL_DEADLINE}s tool deadline",
+                )
+            license_cache[key] = result
+
         license_entries: List[Dict[str, Any]] = []
         for a in audit_deps:
             ver = a.get("currentVersion")
             if not ver:
                 continue
             gav_key = f"{a['groupId']}:{a['artifactId']}:{ver}"
-            if gav_key not in license_cache:
-                try:
-                    license_cache[gav_key] = resolve_dependency_license(
-                        a["groupId"], a["artifactId"], ver, ctx
-                    )
-                except Exception as e:
-                    license_cache[gav_key] = _license_result(
-                        a["groupId"], a["artifactId"], ver,
-                        None, None, None, "unknown", None, error=str(e),
-                    )
             lic = license_cache[gav_key]
             license_entries.append(lic)
             signals = a.setdefault("signals", [])
@@ -9478,6 +9907,12 @@ def handle_audit_project_dependencies(args: Dict) -> Any:
         licenses_section = _build_license_audit(license_entries)
         new_license_categories = _detect_new_license_categories(license_entries)
 
+    # #405: hoist a repeated resolvedFrom to one top-level default BEFORE
+    # summary/onlyIssues filtering — the dedup ratio and the "default repo"
+    # itself are more representative computed over the FULL scanned set than
+    # over whatever onlyIssues later narrows `dependencies` down to.
+    default_resolved_from = _dedup_resolved_from(audit_deps)
+
     summary = {
         "total": len(audit_deps),
         "upgradeable": sum(1 for d in audit_deps if d.get("upgradeType") and d["upgradeType"] != "none"),
@@ -9487,15 +9922,39 @@ def handle_audit_project_dependencies(args: Dict) -> Any:
         "patch": sum(1 for d in audit_deps if d.get("upgradeType") == "patch"),
     }
 
+    # #405: onlyIssues (default false, unchanged output) filters `dependencies`
+    # down to entries carrying a signal, while `summary` still describes the
+    # WHOLE scanned set — the counts above are computed before filtering.
+    output_deps = audit_deps
+    if only_issues:
+        output_deps = [d for d in audit_deps if _has_audit_issue(d)]
+        summary["withIssues"] = len(output_deps)
+        summary["clean"] = summary["total"] - summary["withIssues"]
+
     out: Dict[str, Any] = {
         "buildSystem": scan["buildSystem"],
-        "dependencies": audit_deps,
+        "dependencies": output_deps,
         "summary": summary,
     }
+    if only_issues:
+        out["onlyIssues"] = True
+    if default_resolved_from is not None:
+        out["defaultResolvedFrom"] = default_resolved_from
     if licenses_section is not None:
         out["licenses"] = licenses_section
     if new_license_categories is not None:
         out["newLicenseCategories"] = new_license_categories
+    if deadline_hit:
+        # #402: at least one fan-out phase above hit the shared tool-wide
+        # deadline and stopped early — surfaced only in this (rare,
+        # degenerate-batch) case so the common fast path's output shape is
+        # completely unchanged.
+        out["partial"] = True
+        out["notes"] = [
+            f"Stopped early after exceeding the {TOOL_DEADLINE}s tool "
+            f"deadline; some dependencies were not fully processed and are "
+            f"marked with an error noting the skip."
+        ]
     return _with_capability(out, osv_capability)
 
 
@@ -9562,6 +10021,7 @@ def _compute_typosquat_risk(
     version_count: int,
     versions: List[str],
     gated_calls: List[int],
+    gated_calls_lock: Optional["threading.Lock"] = None,
 ) -> Dict[str, Any]:
     """Heuristic typosquat/popularity signal for an ``exists`` coordinate.
 
@@ -9577,6 +10037,16 @@ def _compute_typosquat_risk(
     a module-level global: server.py runs as a long-lived stdio process, so a
     global counter would accumulate gated-call usage across the entire process
     lifetime instead of resetting per batch.
+
+    ``gated_calls_lock`` (#400): the per-coordinate fan-out in
+    ``handle_verify_coordinates`` now runs on a ThreadPoolExecutor, so this
+    function can be entered concurrently by multiple worker threads sharing
+    the SAME ``gated_calls`` cell -- an unguarded check-then-increment would
+    let the total exceed ``MAX_GATED_SOLR_CALLS_PER_BATCH`` (a real, documented
+    load-safety cap, not just a perf nicety). Optional and defaults to
+    ``None`` so direct single-threaded callers (tests exercising this counter
+    in isolation) are unaffected; ``handle_verify_coordinates`` always passes
+    a real lock created fresh alongside ``gated_calls``.
 
     Coverage boundary: `group_mismatch` targets identical/near-identical-name
     impersonation (`GROUP_MISMATCH_SIMILARITY`, near-identical, not merely
@@ -9594,6 +10064,26 @@ def _compute_typosquat_risk(
     Layer 1's authoritative `deny` path (independent of version count) is
     unaffected.
     """
+    def _reserve_gated_call() -> bool:
+        """Atomically check-and-increment ``gated_calls[0]`` against the cap.
+
+        The check and the increment MUST happen as one atomic step under
+        ``gated_calls_lock`` — otherwise two concurrent callers could both
+        observe room under the cap and both increment, exceeding it by up to
+        (worker count - 1). Falls back to an unguarded (but still correct
+        for a single-threaded caller) check when no lock is supplied.
+        """
+        if gated_calls_lock is not None:
+            with gated_calls_lock:
+                if gated_calls[0] < MAX_GATED_SOLR_CALLS_PER_BATCH:
+                    gated_calls[0] += 1
+                    return True
+                return False
+        if gated_calls[0] < MAX_GATED_SOLR_CALLS_PER_BATCH:
+            gated_calls[0] += 1
+            return True
+        return False
+
     reasons: List[str] = []
     if version_count <= LOW_VERSION_COUNT_THRESHOLD:
         reasons.append("low_version_count")
@@ -9616,8 +10106,7 @@ def _compute_typosquat_risk(
     # 2x the named/documented call budget in exactly the cold-cache/
     # large-batch scenario this cap exists to bound.
     if "low_version_count" in reasons:
-        if gated_calls[0] < MAX_GATED_SOLR_CALLS_PER_BATCH:
-            gated_calls[0] += 1
+        if _reserve_gated_call():
             candidates = search_maven_central(_solr_escape(artifact_id), _SUGGEST_SEARCH_ROWS, use_cache=True)
             for cand in candidates:
                 cand_g = cand.get("groupId", "")
@@ -9648,8 +10137,7 @@ def _compute_typosquat_risk(
         # reasonable, but imperfect, first-publish proxy under this
         # <=LOW_VERSION_COUNT_THRESHOLD-version gate. Cap checked
         # independently of the group-mismatch call above (its own Solr call).
-        if versions and gated_calls[0] < MAX_GATED_SOLR_CALLS_PER_BATCH:
-            gated_calls[0] += 1
+        if versions and _reserve_gated_call():
             ts = _fetch_gav_timestamp(group_id, artifact_id, versions[0])
             if ts is not None:
                 now_ms = time.time() * 1000
@@ -9673,6 +10161,7 @@ def _verify_one(
     suggest_limit: int,
     ctx: "ResolutionContext",
     gated_calls: List[int],
+    gated_calls_lock: Optional["threading.Lock"] = None,
 ) -> Dict[str, Any]:
     """Verify a single coordinate. Runs its OWN per-repo existence probe (not
     fetch_metadata's raise, which conflates absent vs unreachable and drops the
@@ -9681,7 +10170,9 @@ def _verify_one(
     EXISTS, additionally computes `typosquatRisk` (#322 Layer 2) -- see
     `_compute_typosquat_risk`. ``gated_calls`` is the per-batch Solr-call
     counter shared across the whole `handle_verify_coordinates` invocation;
-    callers must pass a list created fresh at the top of that call."""
+    callers must pass a list created fresh at the top of that call.
+    ``gated_calls_lock`` (#400) guards it under the parallel per-coordinate
+    fan-out -- see `_compute_typosquat_risk`."""
     union_versions = set()
     first_answering_repo: Optional[str] = None
     any_200 = False
@@ -9763,7 +10254,8 @@ def _verify_one(
         # absent/unknown -- and a SEPARATE field from likelyHallucination,
         # which stays absent-only with no shared code path or threshold.
         result["typosquatRisk"] = _compute_typosquat_risk(
-            group_id, artifact_id, len(union_versions), versions, gated_calls
+            group_id, artifact_id, len(union_versions), versions, gated_calls,
+            gated_calls_lock,
         )
 
     if existence_status == "absent":
@@ -9830,13 +10322,20 @@ def handle_verify_coordinates(args: Dict) -> Any:
     # accumulate across the entire process lifetime instead of resetting per
     # batch. Shared across every coordinate in THIS call only.
     gated_calls = [0]
-    results = []
-    for dep in dependencies:
+    # #400: the per-coordinate fan-out below now runs on a bounded
+    # ThreadPoolExecutor (via _map_parallel), so gated_calls needs a real lock
+    # -- also created fresh per call, same "local, never module-level" reasoning.
+    gated_calls_lock = threading.Lock()
+
+    def _verify_dep(dep: Dict) -> Dict[str, Any]:
         group_id = dep.get("groupId", "")
         artifact_id = dep.get("artifactId", "")
         version = dep.get("version")
         try:
-            results.append(_verify_one(group_id, artifact_id, version, suggest_limit, ctx, gated_calls))
+            return _verify_one(
+                group_id, artifact_id, version, suggest_limit, ctx,
+                gated_calls, gated_calls_lock,
+            )
         except Exception as e:
             # Per-item isolation for an UNEXPECTED failure (distinct from a probe
             # transport error, which _verify_one already folds into "unknown"):
@@ -9851,7 +10350,9 @@ def handle_verify_coordinates(args: Dict) -> Any:
             }
             if version is not None:
                 item["version"] = version
-            results.append(item)
+            return item
+
+    results, _partial = _map_parallel(dependencies, _verify_dep)
     return {"results": results}
 
 
@@ -10237,7 +10738,7 @@ TOOLS = [
     },
     {
         "name": "audit_project_dependencies",
-        "description": "Orchestrates a full dependency audit: scans project build files, checks for available updates, and optionally queries OSV.dev for vulnerabilities. Optional includeLicenses adds license categorization, summary, and newLicenseCategories (categories unique in the scanned set).",
+        "description": "Orchestrates a full dependency audit: scans project build files, checks for available updates, and optionally queries OSV.dev for vulnerabilities. Optional includeLicenses adds license categorization, summary, and newLicenseCategories (categories unique in the scanned set). Optional onlyIssues narrows the returned dependencies to only those with a signal (error, available upgrade, vulnerability, or license flag); summary always covers the full scanned set.",
         "inputSchema": {
             "type": "object",
             "additionalProperties": False,
@@ -10246,6 +10747,7 @@ TOOLS = [
                 "includeVulnerabilities": {"type": "boolean", "description": "Include OSV vulnerability check (default true)"},
                 "productionOnly": {"type": "boolean", "description": "Exclude test-scope dependencies (default true)"},
                 "includeLicenses": {"type": "boolean", "description": "Include license intelligence (POM/GitHub resolve + category summary). Default false to avoid extra POM fetches."},
+                "onlyIssues": {"type": "boolean", "description": "Return only dependencies with a signal (error, upgrade available, vulnerability, or license flag) plus a compact summary. Default false (unchanged full output). Reduces response size on large projects."},
             },
         },
     },
