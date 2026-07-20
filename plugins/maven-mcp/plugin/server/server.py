@@ -2369,6 +2369,20 @@ def _depsdev_version_url(group_id: str, artifact_id: str, version: str) -> str:
     )
 
 
+def _depsdev_project_url(owner: str, repo: str) -> str:
+    """Build the deps.dev v3 GetProject URL for a GitHub repository (#411).
+
+    ``projectKey`` embeds literal ``/`` separators (``github.com/{owner}/{repo}``)
+    and is percent-encoded as a SINGLE path segment — verified live against
+    api.deps.dev: mixed-case owner/repo is accepted and normalized server-side,
+    but an uppercase host segment is rejected with HTTP 400 "invalid project
+    key", which is why the ``github.com`` literal here is always lowercase.
+    """
+    key = f"github.com/{owner}/{repo}"
+    base = _depsdev_api_base()
+    return f"{base}/projects/{urllib.parse.quote(key, safe='')}"
+
+
 def fetch_depsdev_licenses(
     group_id: str,
     artifact_id: str,
@@ -2425,6 +2439,80 @@ def fetch_depsdev_licenses(
         raw = [str(raw)]
     licenses = [str(x).strip() for x in raw if str(x).strip()]
     out.update({"ok": True, "licenses": licenses, "error": None})
+    return out
+
+
+def fetch_depsdev_scorecard(owner: str, repo: str) -> Dict[str, Any]:
+    """Fetch the OpenSSF Scorecard for a GitHub repo via deps.dev GetProject (#411).
+
+    Returns ``{ok, status, scorecard, error}``. ``scorecard`` is the trimmed
+    ``{overallScore, date, checks, generatedBy}`` shape when deps.dev has one on
+    file; ``None`` when the deps.dev call itself succeeded but no scorecard is
+    available. deps.dev's project index does not cover every GitHub repository —
+    verified live against api.deps.dev: a 404 plain-text ``"project not found"``
+    body is the common response for a repo deps.dev has not indexed (e.g.
+    small/personal repos), not a transport failure, so it degrades to
+    ``scorecard: None`` rather than an error callers should alarm on.
+
+    Never raises for network/HTTP/parse failures — mirrors
+    fetch_depsdev_licenses / fetch_depsdev_dependencies: callers degrade to no
+    scorecard plus an error/capabilityUnavailable.
+    """
+    empty: Dict[str, Any] = {"ok": False, "status": None, "scorecard": None, "error": None}
+    cap = _external_capability("depsdev")
+    if cap:
+        out = dict(empty)
+        out["error"] = "deps.dev unavailable (offline/closed mode)"
+        out["capabilityUnavailable"] = cap
+        return out
+    url = _depsdev_project_url(owner, repo)
+    try:
+        status, body = http_get_cached(
+            url, TTL_DEPSDEV, timeout=HTTP_TIMEOUT_EXTERNAL
+        )
+    except Exception as e:
+        out = dict(empty)
+        out["error"] = f"{type(e).__name__}: deps.dev unreachable"
+        out["capabilityUnavailable"] = "unreachable"
+        return out
+
+    out = dict(empty)
+    out["status"] = status
+    if status != 200 or not body:
+        # Covers the empirically-confirmed 404 "project not found" case (a repo
+        # deps.dev has not indexed) alongside genuine transport/HTTP failures —
+        # both simply mean "no scorecard data", never a crash.
+        out["error"] = (
+            f"deps.dev returned HTTP {status}" if status is not None
+            else "deps.dev returned empty response"
+        )
+        return out
+
+    try:
+        payload = json.loads(body.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as e:
+        out["error"] = f"deps.dev response not JSON: {type(e).__name__}"
+        return out
+
+    out["ok"] = True
+    raw_sc = payload.get("scorecard")
+    if not isinstance(raw_sc, dict):
+        return out  # project known to deps.dev, but no scorecard on file
+
+    checks: List[Dict[str, Any]] = []
+    for c in (raw_sc.get("checks") or []):
+        if isinstance(c, dict) and c.get("name"):
+            checks.append({
+                "name": c.get("name"),
+                "score": c.get("score"),
+                "reason": c.get("reason"),
+            })
+    out["scorecard"] = {
+        "overallScore": raw_sc.get("overallScore"),
+        "date": raw_sc.get("date"),
+        "checks": checks,
+        "generatedBy": "OpenSSF",
+    }
     return out
 
 
@@ -5133,6 +5221,57 @@ def _vuln_info_from_osv(v: Dict) -> Dict:
     if fixed:
         vuln_info["fixedVersion"] = fixed
     return vuln_info
+
+
+def _compute_safe_upgrade(vulnerabilities: List[Dict]) -> Optional[Dict[str, Any]]:
+    """Synthesize the minimum version clearing every known CVE (#412).
+
+    ADVISORY ONLY — a candidate to verify, never a guaranteed-safe pin: fixed
+    versions are self-reported by upstream OSV advisories and can be wrong,
+    stale, or simply unknown for a given CVE. Reuses each vuln's already-
+    hydrated ``fixedVersion`` (query_osv_batch / _extract_fixed_version) — no
+    new network call. The minimum version clearing every known vulnerability is
+    the HIGHEST individual fixedVersion across them (a version must be >= every
+    CVE's own fix boundary to clear all of them at once).
+
+    Returns ``None`` when there is nothing to synthesize (no vulnerabilities —
+    the dependency is already clear of every KNOWN CVE, so there is nothing to
+    flag either). Never raises: an unparseable/missing fixed version degrades
+    the result rather than crashing the handler.
+    """
+    if not vulnerabilities:
+        return None
+
+    fixed_versions: List[str] = []
+    unresolved_ids: List[str] = []
+    for v in vulnerabilities:
+        fixed = v.get("fixedVersion")
+        if isinstance(fixed, str) and fixed.strip():
+            fixed_versions.append(fixed)
+        else:
+            unresolved_ids.append(v.get("id") or "unknown")
+
+    if unresolved_ids:
+        return {
+            "fixesAllKnown": False,
+            "reason": "no fixed version known for: " + ", ".join(unresolved_ids),
+        }
+
+    best_version = fixed_versions[0]
+    try:
+        for fixed in fixed_versions[1:]:
+            if compare_versions(fixed, best_version) > 0:
+                best_version = fixed
+    except Exception:
+        # Defensive only — compare_versions tolerates malformed input by design
+        # (never raises), but a synthesized advisory field must never crash the
+        # handler over a version string it cannot make sense of.
+        return {
+            "fixesAllKnown": False,
+            "reason": "could not compare fixed-version strings across known CVEs",
+        }
+
+    return {"version": best_version, "fixesAllKnown": True}
 
 
 def query_osv_batch(deps: List[Dict]) -> List[Dict]:
@@ -8459,6 +8598,9 @@ def handle_get_dependency_vulnerabilities(args: Dict) -> Any:
             entry["version"] = original_deps[i]["version"]
             entry["resolvedImplementation"] = resolutions[i]
         entry["vulnerabilityCount"] = len(entry["vulnerabilities"])
+        safe_upgrade = _compute_safe_upgrade(entry["vulnerabilities"])
+        if safe_upgrade is not None:
+            entry["safeUpgrade"] = safe_upgrade
         if entry.get("capabilityUnavailable") and capability is None:
             capability = entry["capabilityUnavailable"]
         results.append(entry)
@@ -8542,6 +8684,19 @@ def handle_get_dependency_health(args: Dict) -> Any:
         result["repository"] = {"owner": owner, "repo": repo, "url": f"https://github.com/{owner}/{repo}"}
         if not result.get("scm"):
             result["scm"] = {"url": result["repository"]["url"], "host": "github"}
+
+        # OpenSSF Scorecard (#411): a SEPARATE deps.dev capability from the
+        # GitHub API used below, so this runs regardless of github_cap — an
+        # offline/rate-limited GitHub API does not automatically also skip
+        # this enrichment (and vice versa). Only real scorecard data or a
+        # genuine capability failure is surfaced; deps.dev simply having no
+        # scorecard on file for this repo (common — not every repo is scored)
+        # degrades to silent omission, never a flagged failure.
+        scorecard_result = fetch_depsdev_scorecard(owner, repo)
+        if scorecard_result.get("scorecard"):
+            result["scorecard"] = scorecard_result["scorecard"]
+        elif scorecard_result.get("capabilityUnavailable"):
+            result["scorecard"] = {"capabilityUnavailable": scorecard_result["capabilityUnavailable"]}
 
         if github_cap:
             # gh_repo came from POM SCM while GitHub API is offline — keep
@@ -9347,6 +9502,7 @@ TOOLS = [
         "description": "Get the latest version of a Maven artifact from Maven Central, Google Maven, or Gradle Plugin Portal.",
         "inputSchema": {
             "type": "object",
+            "additionalProperties": False,
             "properties": {
                 "groupId": {"type": "string", "description": "Maven group ID"},
                 "artifactId": {"type": "string", "description": "Maven artifact ID"},
@@ -9362,13 +9518,14 @@ TOOLS = [
     },
     {
         "name": "check_version_exists",
-        "description": "Check if a specific version of a Maven artifact exists in any known repository.",
+        "description": "Check if a specific version of a Maven artifact exists in any repository resolved for the project: declared repositories first, then the public Maven Central / Google Maven / Gradle Plugin Portal fallback when the project declares none (see projectPath).",
         "inputSchema": {
             "type": "object",
+            "additionalProperties": False,
             "properties": {
-                "groupId": {"type": "string"},
-                "artifactId": {"type": "string"},
-                "version": {"type": "string"},
+                "groupId": {"type": "string", "description": "Maven group ID"},
+                "artifactId": {"type": "string", "description": "Maven artifact ID"},
+                "version": {"type": "string", "description": "Version to check for existence"},
                 "projectPath": {"type": "string", "description": "Project root used to resolve declared repositories. Defaults to the current working directory."},
             },
             "required": ["groupId", "artifactId", "version"],
@@ -9379,14 +9536,17 @@ TOOLS = [
         "description": "Batch lookup of latest versions for multiple Maven dependencies.",
         "inputSchema": {
             "type": "object",
+            "additionalProperties": False,
             "properties": {
                 "dependencies": {
                     "type": "array",
+                    "description": "Dependencies to look up — no version needed; this tool reports the latest available version for each.",
                     "items": {
                         "type": "object",
+                        "additionalProperties": False,
                         "properties": {
-                            "groupId": {"type": "string"},
-                            "artifactId": {"type": "string"},
+                            "groupId": {"type": "string", "description": "Maven group ID"},
+                            "artifactId": {"type": "string", "description": "Maven artifact ID"},
                         },
                         "required": ["groupId", "artifactId"],
                     },
@@ -9401,15 +9561,18 @@ TOOLS = [
         "description": "Compare current dependency versions against the latest available and determine upgrade types (major/minor/patch).",
         "inputSchema": {
             "type": "object",
+            "additionalProperties": False,
             "properties": {
                 "dependencies": {
                     "type": "array",
+                    "description": "Dependencies with their currently pinned version, compared against the latest available.",
                     "items": {
                         "type": "object",
+                        "additionalProperties": False,
                         "properties": {
-                            "groupId": {"type": "string"},
-                            "artifactId": {"type": "string"},
-                            "currentVersion": {"type": "string"},
+                            "groupId": {"type": "string", "description": "Maven group ID"},
+                            "artifactId": {"type": "string", "description": "Maven artifact ID"},
+                            "currentVersion": {"type": "string", "description": "Currently pinned version to compare against the latest available"},
                         },
                         "required": ["groupId", "artifactId", "currentVersion"],
                     },
@@ -9424,9 +9587,10 @@ TOOLS = [
         "description": "Get changelog/release notes between two versions (AndroidX/AGP developer docs when applicable, else GitHub releases).",
         "inputSchema": {
             "type": "object",
+            "additionalProperties": False,
             "properties": {
-                "groupId": {"type": "string"},
-                "artifactId": {"type": "string"},
+                "groupId": {"type": "string", "description": "Maven group ID"},
+                "artifactId": {"type": "string", "description": "Maven artifact ID"},
                 "fromVersion": {"type": "string", "description": "Starting version (exclusive)"},
                 "toVersion": {"type": "string", "description": "Target version (inclusive)"},
                 "projectPath": {"type": "string", "description": "Project root used to resolve declared repositories. Defaults to the current working directory."},
@@ -9439,6 +9603,7 @@ TOOLS = [
         "description": "Scan a local project directory to extract declared dependencies from build files (Gradle, Maven). Applies BOM/platform managed versions (effectiveVersion/managedBy) via network POM fetch when platforms are declared.",
         "inputSchema": {
             "type": "object",
+            "additionalProperties": False,
             "properties": {
                 "projectPath": {"type": "string", "description": "Path to the project root. Defaults to current working directory."},
             },
@@ -9449,6 +9614,7 @@ TOOLS = [
         "description": "Expand a Maven BOM (Bill of Materials) into its managed dependency versions. Recursively expands import-scope BOMs with first-wins ordering.",
         "inputSchema": {
             "type": "object",
+            "additionalProperties": False,
             "properties": {
                 "groupId": {"type": "string", "description": "BOM group ID"},
                 "artifactId": {"type": "string", "description": "BOM artifact ID"},
@@ -9463,6 +9629,7 @@ TOOLS = [
         "description": "Fetch the resolved transitive dependency graph for a Maven GAV via deps.dev GetDependencies. Returns nodes (g/a/v) and edges (from/to indices). Partial results are flagged when deps.dev is unreachable, returns errors, or the graph is truncated by the node cap.",
         "inputSchema": {
             "type": "object",
+            "additionalProperties": False,
             "properties": {
                 "groupId": {"type": "string", "description": "Maven group ID"},
                 "artifactId": {"type": "string", "description": "Maven artifact ID"},
@@ -9476,6 +9643,7 @@ TOOLS = [
         "description": "Detect version conflicts by unioning deps.dev transitive graphs for each direct project dependency. Flags GAs appearing at ≥2 versions and reports the version Maven nearest-wins or Gradle highest-wins would pick. Approximation of a full project resolve — see notes[] for limitations.",
         "inputSchema": {
             "type": "object",
+            "additionalProperties": False,
             "properties": {
                 "projectPath": {"type": "string", "description": "Path to the project root. Defaults to current working directory."},
                 "buildSystem": {
@@ -9488,9 +9656,10 @@ TOOLS = [
     },
     {
         "name": "check_version_compatibility",
-        "description": "Check whether a set of versions is mutually compatible. Validates (1) dependency versions against the Spring Boot BOM (spring-boot-dependencies) when springBoot is set, (2) AGP↔Gradle↔JDK and Kotlin Gradle plugin↔Gradle/AGP ranges from a shipped matrix file, and (3) javax→jakarta EE coordinate migration when Spring Boot ≥ 3. Returns conflicts with suggested compatible versions and reference URLs. v1 coverage is intentionally bounded — see notes[] / AGENTS.md; matrices are not scraped at runtime and must be refreshed via the documented procedure in compat-matrices.json.",
+        "description": "Check whether a set of versions is mutually compatible. Validates (1) dependency versions against the Spring Boot BOM (spring-boot-dependencies) when springBoot is set, (2) AGP↔Gradle↔JDK and Kotlin Gradle plugin↔Gradle/AGP ranges from a shipped matrix file, and (3) javax→jakarta EE coordinate migration when Spring Boot ≥ 3. Returns conflicts with suggested compatible versions and reference URLs. v1 coverage is intentionally bounded — see notes[] in the response; matrices are not scraped at runtime and must be refreshed via the documented procedure in compat-matrices.json.",
         "inputSchema": {
             "type": "object",
+            "additionalProperties": False,
             "properties": {
                 "springBoot": {
                     "type": "string",
@@ -9498,6 +9667,7 @@ TOOLS = [
                 },
                 "android": {
                     "type": "object",
+                    "additionalProperties": False,
                     "description": "Android / Kotlin toolchain versions to validate against the shipped AGP and KGP matrices.",
                     "properties": {
                         "agp": {"type": "string", "description": "Android Gradle Plugin version"},
@@ -9512,10 +9682,11 @@ TOOLS = [
                     "description": "Dependencies to check against the Spring Boot BOM and/or javax→jakarta map.",
                     "items": {
                         "type": "object",
+                        "additionalProperties": False,
                         "properties": {
-                            "groupId": {"type": "string"},
-                            "artifactId": {"type": "string"},
-                            "version": {"type": "string"},
+                            "groupId": {"type": "string", "description": "Maven group ID"},
+                            "artifactId": {"type": "string", "description": "Maven artifact ID"},
+                            "version": {"type": "string", "description": "Version to compare against the Spring Boot BOM / javax→jakarta map. A dependency without a version is skipped by those checks."},
                         },
                         "required": ["groupId", "artifactId"],
                     },
@@ -9526,19 +9697,22 @@ TOOLS = [
     },
     {
         "name": "get_dependency_vulnerabilities",
-        "description": "Check dependencies for known vulnerabilities using the OSV.dev database.",
+        "description": "Check dependencies for known vulnerabilities using the OSV.dev database. Each dependency requires a pinned version — OSV lookups are version-specific and version-less coordinates are not queried. An empty vulnerabilities list means no known CVE/GHSA advisory was found for that coordinate+version in OSV.dev; it is NOT a safety guarantee (OSV coverage is incomplete and reporting lags real-world disclosure). When ≥1 vulnerability is found, a per-dependency safeUpgrade candidate is synthesized from the already-fetched fixed-version data (the highest fixed version across all known CVEs) — ADVISORY ONLY, a candidate to verify, never a guaranteed-safe pin; fixesAllKnown is false when at least one CVE has no known fix.",
         "inputSchema": {
             "type": "object",
+            "additionalProperties": False,
             "properties": {
                 "dependencies": {
                     "type": "array",
                     "maxItems": 100,
+                    "description": "Dependencies to check, each with a pinned version (required).",
                     "items": {
                         "type": "object",
+                        "additionalProperties": False,
                         "properties": {
-                            "groupId": {"type": "string"},
-                            "artifactId": {"type": "string"},
-                            "version": {"type": "string"},
+                            "groupId": {"type": "string", "description": "Maven group ID"},
+                            "artifactId": {"type": "string", "description": "Maven artifact ID"},
+                            "version": {"type": "string", "description": "Pinned version to check — required; OSV lookups are version-specific"},
                         },
                         "required": ["groupId", "artifactId", "version"],
                     },
@@ -9550,18 +9724,21 @@ TOOLS = [
     },
     {
         "name": "get_dependency_health",
-        "description": "Get health signals for Maven dependencies: version info, GitHub activity, issue stats, license, and maintenance signals.",
+        "description": "Get health signals for Maven dependencies: version info, GitHub activity, issue stats, license, and maintenance signals. When the GitHub repository is known, also surfaces the OpenSSF Scorecard (overallScore + per-check name/score/reason) from deps.dev when one is on file — omitted (or flagged with capabilityUnavailable) when deps.dev has no scorecard for that repo, is offline, or is unreachable.",
         "inputSchema": {
             "type": "object",
+            "additionalProperties": False,
             "properties": {
                 "dependencies": {
                     "type": "array",
+                    "description": "Dependencies to evaluate for maintenance/health signals.",
                     "items": {
                         "type": "object",
+                        "additionalProperties": False,
                         "properties": {
-                            "groupId": {"type": "string"},
-                            "artifactId": {"type": "string"},
-                            "version": {"type": "string"},
+                            "groupId": {"type": "string", "description": "Maven group ID"},
+                            "artifactId": {"type": "string", "description": "Maven artifact ID"},
+                            "version": {"type": "string", "description": "Optional. When omitted, the latest preferred-stable version is evaluated."},
                         },
                         "required": ["groupId", "artifactId"],
                     },
@@ -9576,15 +9753,18 @@ TOOLS = [
         "description": "Resolve license intelligence for Maven dependencies: SPDX id, category (permissive / weak-copyleft / strong-copyleft / network-copyleft / proprietary / unknown), plain-English notes, and source (pom / github / spdx-normalized). Uses POM <licenses> plus optional GitHub license metadata; category mapping is a static lookup (no external license API).",
         "inputSchema": {
             "type": "object",
+            "additionalProperties": False,
             "properties": {
                 "dependencies": {
                     "type": "array",
                     "maxItems": 100,
+                    "description": "Dependencies to resolve license info for.",
                     "items": {
                         "type": "object",
+                        "additionalProperties": False,
                         "properties": {
-                            "groupId": {"type": "string"},
-                            "artifactId": {"type": "string"},
+                            "groupId": {"type": "string", "description": "Maven group ID"},
+                            "artifactId": {"type": "string", "description": "Maven artifact ID"},
                             "version": {"type": "string", "description": "Optional. When omitted, the latest preferred-stable version is used."},
                         },
                         "required": ["groupId", "artifactId"],
@@ -9600,6 +9780,7 @@ TOOLS = [
         "description": "Aggregate SPDX licenses across the transitive closure of one or more Maven GAVs (deps.dev GetDependencies + GetVersion) and flag risky/incompatible licenses against a projectLicense posture or an explicit disallow list (SPDX ids and/or categories). Verdicts: ok / review / violation. Missing license metadata degrades to review, never a false ok. Heuristic policy signal — not legal advice; see notes[].",
         "inputSchema": {
             "type": "object",
+            "additionalProperties": False,
             "properties": {
                 "dependencies": {
                     "type": "array",
@@ -9607,10 +9788,11 @@ TOOLS = [
                     "description": "Root GAVs whose transitive graphs are scanned. Version is required. Capped at MAX_LICENSE_COMPLIANCE_ROOTS.",
                     "items": {
                         "type": "object",
+                        "additionalProperties": False,
                         "properties": {
-                            "groupId": {"type": "string"},
-                            "artifactId": {"type": "string"},
-                            "version": {"type": "string"},
+                            "groupId": {"type": "string", "description": "Maven group ID"},
+                            "artifactId": {"type": "string", "description": "Maven artifact ID"},
+                            "version": {"type": "string", "description": "Required — used to resolve the transitive graph for license aggregation."},
                         },
                         "required": ["groupId", "artifactId", "version"],
                     },
@@ -9633,6 +9815,7 @@ TOOLS = [
         "description": "Search Maven artifacts by keyword. Uses Maven Central Solr by default; in closed/offline mode (or with repositoryType) routes to Nexus 3 REST or Artifactory AQL/GAVC against MAVEN_MCP_REPOSITORY_BASE / mirrors.",
         "inputSchema": {
             "type": "object",
+            "additionalProperties": False,
             "properties": {
                 "query": {"type": "string", "description": "Search query (keyword, or groupId:artifactId for coordinate search)"},
                 "limit": {"type": "integer", "default": 10, "minimum": 1, "maximum": 100, "description": "Maximum number of results. Default 10, clamped to [1, 100]."},
@@ -9651,6 +9834,7 @@ TOOLS = [
         "description": "Orchestrates a full dependency audit: scans project build files, checks for available updates, and optionally queries OSV.dev for vulnerabilities. Optional includeLicenses adds license categorization, summary, and newLicenseCategories (categories unique in the scanned set).",
         "inputSchema": {
             "type": "object",
+            "additionalProperties": False,
             "properties": {
                 "projectPath": {"type": "string", "description": "Project root used to resolve declared repositories. Defaults to the current working directory."},
                 "includeVulnerabilities": {"type": "boolean", "description": "Include OSV vulnerability check (default true)"},
@@ -9664,6 +9848,7 @@ TOOLS = [
         "description": "Generate or validate Gradle version-catalog (libs.versions.toml) entries. mode=generate builds a rule-correct [versions]/[libraries]/[plugins] snippet with kebab alias + libs/alias(libs.plugins.*) accessor; mode=validate flags reserved aliases, invalid first subgroups, undefined version.ref, accessor clashes, id(libs.plugins.*) misuse, and libs usage inside subprojects/buildscript. Returns a minimal diff suggestion, not a full file rewrite.",
         "inputSchema": {
             "type": "object",
+            "additionalProperties": False,
             "properties": {
                 "mode": {
                     "type": "string",
@@ -9672,11 +9857,12 @@ TOOLS = [
                 },
                 "coordinate": {
                     "type": "object",
+                    "additionalProperties": False,
                     "description": "Required for generate. Maven GAV or plugin marker coordinate.",
                     "properties": {
-                        "groupId": {"type": "string"},
-                        "artifactId": {"type": "string"},
-                        "version": {"type": "string"},
+                        "groupId": {"type": "string", "description": "Maven group ID"},
+                        "artifactId": {"type": "string", "description": "Maven artifact ID"},
+                        "version": {"type": "string", "description": "Optional; when omitted, generates a version-less accessor (no [versions] pin)."},
                     },
                     "required": ["groupId", "artifactId"],
                 },
@@ -9718,15 +9904,18 @@ TOOLS = [
         "description": "Verify whether Maven coordinates exist (tri-state: exists / absent / unknown) and, for absent ones, suggest the closest real coordinates. Detects hallucinated / slopsquat-shaped names an LLM may invent. Existence is NOT a safety guarantee: a published typosquat reports exists and is not flagged. Suggestions are candidates to verify, not endorsements.",
         "inputSchema": {
             "type": "object",
+            "additionalProperties": False,
             "properties": {
                 "dependencies": {
                     "type": "array",
                     "maxItems": 100,
+                    "description": "Coordinates to verify for existence; version is optional per item (see items.version).",
                     "items": {
                         "type": "object",
+                        "additionalProperties": False,
                         "properties": {
-                            "groupId": {"type": "string"},
-                            "artifactId": {"type": "string"},
+                            "groupId": {"type": "string", "description": "Maven group ID"},
+                            "artifactId": {"type": "string", "description": "Maven artifact ID"},
                             "version": {"type": "string", "description": "Optional. When given, gavExists reports whether this exact version exists."},
                         },
                         "required": ["groupId", "artifactId"],
@@ -9760,6 +9949,11 @@ TOOL_HANDLERS = {
     "catalog_entry": handle_catalog_entry,
     "verify_coordinates": handle_verify_coordinates,
 }
+
+# Name -> inputSchema, for the dispatcher's own required-argument pre-check
+# (see _handle_tools_call) — built once from TOOLS rather than re-scanning
+# the list per call.
+TOOL_SCHEMAS = {t["name"]: t["inputSchema"] for t in TOOLS}
 
 
 # ---------------------------------------------------------------------------
@@ -9802,21 +9996,53 @@ def _handle_tools_call(msg_id: Any, params: Dict) -> Dict:
             "id": msg_id,
             "error": {"code": -32601, "message": f"Unknown tool: {tool_name}"},
         }
+    # Validate required top-level arguments BEFORE calling the handler, using
+    # the tool's OWN inputSchema.required — a missing/malformed client argument
+    # (Invalid params, #397) must be detected here, not inferred from catching
+    # KeyError around the handler call: a handler can just as well raise a
+    # KeyError from an INTERNAL lookup with nothing to do with `arguments`
+    # (e.g. handle_get_dependency_health's metadata["versions"],
+    # check_android_kotlin_compatibility's agp_entry["minGradle"]) — catching
+    # KeyError there mislabels an internal bug as a client mistake and hides
+    # it from the isError:true self-correction path below (code review
+    # follow-up on #397).
+    required = (TOOL_SCHEMAS.get(tool_name) or {}).get("required") or []
+    if isinstance(arguments, dict):
+        missing = [name for name in required if name not in arguments]
+    else:
+        missing = list(required)
+    if missing:
+        return {
+            "jsonrpc": "2.0",
+            "id": msg_id,
+            "error": {
+                "code": -32602,
+                "message": f"Invalid params: missing required field {missing[0]!r}",
+            },
+        }
     try:
         result = handler(arguments)
+    except Exception as e:
+        # MCP spec (2024-11-05): a TOOL execution failure (handler raised while
+        # doing its job — resolution failure, ValueError, network error, an
+        # internal KeyError unrelated to the arguments the client sent, etc.)
+        # is reported as a successful response with isError:true, not a
+        # JSON-RPC protocol error, so the model can see it and self-correct (#397).
         return {
             "jsonrpc": "2.0",
             "id": msg_id,
             "result": {
-                "content": [{"type": "text", "text": json.dumps(result)}],
+                "content": [{"type": "text", "text": str(e)}],
+                "isError": True,
             },
         }
-    except Exception as e:
-        return {
-            "jsonrpc": "2.0",
-            "id": msg_id,
-            "error": {"code": -32603, "message": str(e)},
-        }
+    return {
+        "jsonrpc": "2.0",
+        "id": msg_id,
+        "result": {
+            "content": [{"type": "text", "text": json.dumps(result)}],
+        },
+    }
 
 
 def _handle_ping(msg_id: Any, params: Dict) -> Dict:

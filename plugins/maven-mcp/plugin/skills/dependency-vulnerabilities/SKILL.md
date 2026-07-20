@@ -33,6 +33,12 @@ scan.
    (OSSF Malicious Packages convention) — call it out separately and first; recommend
    removing the dependency rather than just tracking the CVE.
 
+   When findings exist, the tool also returns a per-dependency `safeUpgrade` — a
+   synthesized minimum version clearing every known CVE, computed from the same
+   `fixedVersion` data (ADVISORY ONLY, never a guaranteed-safe pin). Present
+   `safeUpgrade.version` as the suggested target when `fixesAllKnown: true`; when it is
+   `false`, say a version fixing every known issue is not yet known and surface `reason`.
+
 **No findings:** say so plainly.
 
 **Disclaimer (always mention once):** OSV does not cover shaded/uber JARs — a dependency

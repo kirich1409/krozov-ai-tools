@@ -58,6 +58,48 @@ class ToolsSchemaTest(unittest.TestCase):
             with self.subTest(tool=name):
                 self.assertTrue(callable(handler), f"{name} handler is not callable")
 
+    def _assert_object_schemas_closed(self, schema, path):
+        """Recursively assert every ``type: object`` node sets additionalProperties: False.
+
+        The server does not itself run a JSON Schema validator against
+        inputSchema (stdlib-only, no jsonschema dependency) — `maxItems` and
+        friends are advisory client-side metadata (see server.py's own
+        comments on this). additionalProperties: False is the one piece of
+        schema tightening a spec-compliant MCP client (or a well-behaved LLM)
+        DOES enforce client-side, so pinning it here is the correctness gate
+        (#399), not runtime validation.
+        """
+        if not isinstance(schema, dict):
+            return
+        if schema.get("type") == "object":
+            self.assertIs(
+                schema.get("additionalProperties"),
+                False,
+                f"{path}: object schema must set additionalProperties: False",
+            )
+            for prop_name, prop_schema in (schema.get("properties") or {}).items():
+                self._assert_object_schemas_closed(prop_schema, f"{path}.{prop_name}")
+        elif schema.get("type") == "array":
+            items = schema.get("items")
+            if items:
+                self._assert_object_schemas_closed(items, f"{path}[]")
+
+    def test_object_schemas_reject_additional_properties(self):
+        # Every tool's top-level inputSchema, and every nested object schema
+        # (array items, nested option bags), must be closed — an LLM client
+        # should never be invited to guess at unsupported properties (#399).
+        for tool in server.TOOLS:
+            with self.subTest(tool=tool["name"]):
+                self._assert_object_schemas_closed(tool["inputSchema"], tool["name"])
+
+    def test_no_tool_description_references_agents_md(self):
+        # AGENTS.md is a repo file never seen by an MCP client — any guidance
+        # a tool needs must be inline in description or in the response's
+        # notes[] field, not a pointer to a file the model can't read (#399).
+        for tool in server.TOOLS:
+            with self.subTest(tool=tool["name"]):
+                self.assertNotIn("AGENTS.md", tool["description"])
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -37,6 +37,9 @@ Present the tool fields as raw signals (do not invent an adopt/reject verdict):
 - Version: latest / stability / version count / last Maven publish / `resolvedFrom`
 - Repository: GitHub URL, license, stars, forks, archived, last commit / release, cadence
 - Issues: open / closed / close ratio when present
+- `scorecard` — OpenSSF Scorecard overall score + notable check reasons, when the GitHub
+  repo is known and deps.dev has one on file. Absent is normal (not every repo is scored) —
+  do not treat a missing `scorecard` as a red flag by itself.
 - `signals` — list red flags from the tool as bullet points
 
 **No GitHub data:** state what Maven data was returned and link
