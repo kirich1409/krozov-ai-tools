@@ -512,6 +512,100 @@ class TestSearchMavenCentral(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
+# _search_maven_central_with_capability (#416)
+# search_maven_central() alone swallows every failure into a bare [], making a
+# Sonatype rate-limit/block indistinguishable from "zero results". The
+# capability-reporting variant used by search_artifacts_with_backend must
+# surface which is which.
+# ---------------------------------------------------------------------------
+class TestSearchMavenCentralWithCapability(unittest.TestCase):
+    def test_success_reports_no_capability(self):
+        body = json.dumps({
+            "response": {"docs": [
+                {"g": "io.ktor", "a": "ktor-client-core", "latestVersion": "3.1.1", "versionCount": 50},
+            ]},
+        }).encode()
+        with unittest.mock.patch(
+            "urllib.request.urlopen", side_effect=mock_urlopen([(200, body)]),
+        ):
+            results, capability = server._search_maven_central_with_capability("ktor")
+        self.assertEqual(len(results), 1)
+        self.assertIsNone(capability)
+
+    def test_genuine_zero_results_reports_no_capability(self):
+        # A clean 200 with an empty docs list is a real "nothing found" —
+        # must NOT be confused with a blocked/rate-limited search.
+        body = json.dumps({"response": {"docs": []}}).encode()
+        with unittest.mock.patch(
+            "urllib.request.urlopen", side_effect=mock_urlopen([(200, body)]),
+        ):
+            results, capability = server._search_maven_central_with_capability("nonexistent-lib")
+        self.assertEqual(results, [])
+        self.assertIsNone(capability)
+
+    def test_persistent_429_reports_rate_limited(self):
+        # Retry budget already exhausted by _request_with_retry before this
+        # function ever sees the (429, b"") tri-state result.
+        url = "https://search.maven.org/solrsearch/select"
+        errs = [http_error(url, 429) for _ in range(server.HTTP_MAX_ATTEMPTS)]
+        with unittest.mock.patch.object(server, "_sleep"), \
+                unittest.mock.patch(
+                    "urllib.request.urlopen", side_effect=mock_urlopen(errs),
+                ):
+            results, capability = server._search_maven_central_with_capability("ktor")
+        self.assertEqual(results, [])
+        self.assertEqual(capability, "rate_limited")
+
+    def test_persistent_5xx_reports_rate_limited(self):
+        url = "https://search.maven.org/solrsearch/select"
+        errs = [http_error(url, 503) for _ in range(server.HTTP_MAX_ATTEMPTS)]
+        with unittest.mock.patch.object(server, "_sleep"), \
+                unittest.mock.patch(
+                    "urllib.request.urlopen", side_effect=mock_urlopen(errs),
+                ):
+            results, capability = server._search_maven_central_with_capability("ktor")
+        self.assertEqual(results, [])
+        self.assertEqual(capability, "rate_limited")
+
+    def test_403_lockout_reports_rate_limited(self):
+        # search.maven.org has a documented history of 403-locking out clients
+        # under bulk load; 403 is not a retryable status (_is_retryable_status)
+        # so it is a definitive first-attempt response — must still surface
+        # the same "search backend is blocking us" signal, not a bare [].
+        with unittest.mock.patch(
+            "urllib.request.urlopen",
+            side_effect=mock_urlopen([http_error("u", 403, "Forbidden")]),
+        ):
+            results, capability = server._search_maven_central_with_capability("ktor")
+        self.assertEqual(results, [])
+        self.assertEqual(capability, "rate_limited")
+
+    def test_transport_error_reports_rate_limited(self):
+        with unittest.mock.patch.object(server, "_sleep"), \
+                unittest.mock.patch(
+                    "urllib.request.urlopen",
+                    side_effect=mock_urlopen(
+                        [urllib.error.URLError("network error")] * server.HTTP_MAX_ATTEMPTS
+                    ),
+                ):
+            results, capability = server._search_maven_central_with_capability("ktor")
+        self.assertEqual(results, [])
+        self.assertEqual(capability, "rate_limited")
+
+    def test_search_maven_central_wrapper_unaffected_by_capability(self):
+        # The legacy bare-list wrapper must still degrade to a plain [] on
+        # the same failure — its existing callers (verify_coordinates'
+        # did-you-mean/#322 heuristics) are unchanged by #416.
+        url = "https://search.maven.org/solrsearch/select"
+        errs = [http_error(url, 429) for _ in range(server.HTTP_MAX_ATTEMPTS)]
+        with unittest.mock.patch.object(server, "_sleep"), \
+                unittest.mock.patch(
+                    "urllib.request.urlopen", side_effect=mock_urlopen(errs),
+                ):
+            self.assertEqual(server.search_maven_central("ktor"), [])
+
+
+# ---------------------------------------------------------------------------
 # query_osv_batch + /v1/vulns/{id} hydration (#338) + severity extraction
 # Mirrors src/vulnerabilities/__tests__/osv-client.test.ts
 # Real OSV querybatch returns only {id, modified}; full fields come from GET.

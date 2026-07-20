@@ -133,15 +133,75 @@ class TestFileCache(unittest.TestCase):
         result = server._file_cache.get(url, 3600)
         self.assertIsNone(result)
 
-    def test_non_200_set_writes_nothing(self):
-        """set() with status != 200 must not write any file."""
-        url = "https://repo1.maven.org/maven2/not_found.xml"
-        server._file_cache.set(url, 404, b"Not Found")
+    def test_non_cacheable_status_set_writes_nothing(self):
+        """set() with a status that is neither 200 nor 404 (#404) must not
+        write any file — e.g. a transient 500 must always re-hit the network."""
+        url = "https://repo1.maven.org/maven2/error.xml"
+        server._file_cache.set(url, 500, b"Internal Server Error")
         self.assertIsNone(server._file_cache.get(url, 3600))
         cache_dir = os.path.join(self.tmpdir, "maven-central-mcp")
         if os.path.exists(cache_dir):
             json_files = [f for f in os.listdir(cache_dir) if f.endswith(".json")]
             self.assertEqual(json_files, [])
+
+    def test_404_set_writes_negative_entry(self):
+        """set() with status 404 (#404 negative cache) MUST write an entry,
+        and get() returns it with the stored 404 status (not silently rewritten
+        to 200 — a regression guard on the entry's own ``status`` field)."""
+        url = "https://repo1.maven.org/maven2/absent.xml"
+        server._file_cache.set(url, 404, b"")
+        result = server._file_cache.get(url, 3600)
+        self.assertEqual(result, (404, b""))
+
+    def test_404_negative_entry_uses_negative_ttl_not_positive_ttl(self):
+        """A cached 404 expires against ``negative_ttl``, independent of a much
+        longer positive ``ttl`` passed in the same call (#404)."""
+        url = "https://repo1.maven.org/maven2/absent2.xml"
+        t0 = 1_000_000.0
+        original_now = server._now
+        server._now = lambda: t0
+        try:
+            server._file_cache.set(url, 404, b"")
+            # Past negative_ttl (60s) but well within the much longer positive ttl (3600s).
+            server._now = lambda: t0 + 61
+            result = server._file_cache.get(url, 3600, negative_ttl=60)
+            self.assertIsNone(
+                result,
+                "404 entry must expire at negative_ttl even though the positive "
+                "ttl has not elapsed",
+            )
+        finally:
+            server._now = original_now
+
+    def test_404_negative_entry_hit_within_negative_ttl(self):
+        """A cached 404 is still a HIT strictly within negative_ttl."""
+        url = "https://repo1.maven.org/maven2/absent3.xml"
+        t0 = 1_000_000.0
+        original_now = server._now
+        server._now = lambda: t0
+        try:
+            server._file_cache.set(url, 404, b"")
+            server._now = lambda: t0 + 59
+            result = server._file_cache.get(url, 3600, negative_ttl=60)
+            self.assertEqual(result, (404, b""))
+        finally:
+            server._now = original_now
+
+    def test_200_entry_freshness_unaffected_by_negative_ttl_argument(self):
+        """A 200 entry is ALWAYS freshness-checked against ``ttl``, never
+        ``negative_ttl`` — passing a short negative_ttl must not shrink the
+        freshness window of an unrelated positive cache entry (#404)."""
+        url = "https://repo1.maven.org/maven2/present.xml"
+        t0 = 1_000_000.0
+        original_now = server._now
+        server._now = lambda: t0
+        try:
+            server._file_cache.set(url, 200, b"body")
+            server._now = lambda: t0 + 61  # past a hypothetical short negative_ttl
+            result = server._file_cache.get(url, 3600, negative_ttl=60)
+            self.assertEqual(result, (200, b"body"))
+        finally:
+            server._now = original_now
 
     def test_url_mismatch_returns_miss(self):
         """A stored url != requested url (simulated hash collision) -> None."""
@@ -493,29 +553,81 @@ class TestHttpGetCached(unittest.TestCase):
         self.assertEqual(m.call_count, 5,
                          "_verify_one must bypass cache for both probe and suggestion")
 
-    # ---- T-2 (7): non-200 responses not cached ------------------------------
+    # ---- T-2 (7): 404 negatively cached; other non-200 responses are not ----
 
-    def test_404_not_cached(self):
-        """A 404 Maven metadata response must not be written to cache."""
+    def test_404_negatively_cached_second_call_served_without_network(self):
+        """A definitive 404 Maven metadata response IS negatively cached
+        (#404): a second lookup of the same absent coordinate within
+        TTL_NEGATIVE_404 must be served WITHOUT a second network call."""
         ctx = empty_ctx()
         with unittest.mock.patch(
             "urllib.request.urlopen",
-            side_effect=mock_urlopen([
-                (404, b""),  # call 1
-                (404, b""),  # call 2 — must hit network, not cache
-            ]),
+            # Only ONE response queued: a second urlopen call would raise
+            # AssertionError from mock_urlopen, failing the test outright.
+            side_effect=mock_urlopen([(404, b"")]),
         ) as m:
             try:
                 server.fetch_metadata("com.missing", "artifact", ctx)
             except ValueError:
-                pass  # ValueError is expected when no repo returns 200; we only care about call_count
+                pass  # expected: no repo answered 200 (network miss, populates negative cache)
             try:
                 server.fetch_metadata("com.missing", "artifact", ctx)
             except ValueError:
-                pass  # ValueError is expected when no repo returns 200; we only care about call_count
-        self.assertEqual(m.call_count, 2, "404 must not be cached")
+                pass  # expected again: served from the negative cache
+        self.assertEqual(m.call_count, 1,
+                         "second lookup of the same absent coordinate must not hit the network")
+        self.assertEqual(len(self._cache_files()), 1,
+                         "a negative-cache entry must be written for the definitive 404")
+
+    def test_404_negative_cache_expires_after_ttl(self):
+        """Once TTL_NEGATIVE_404 elapses, a previously-404'd coordinate must
+        hit the network again — the negative cache must not outlive its TTL,
+        since the artifact may have been published in the meantime (#404)."""
+        ctx = empty_ctx()
+        t0 = 1_000_000.0
+        original_now = server._now
+        server._now = lambda: t0
+        try:
+            with unittest.mock.patch(
+                "urllib.request.urlopen",
+                side_effect=mock_urlopen([(404, b""), (404, b"")]),
+            ) as m:
+                try:
+                    server.fetch_metadata("com.missing", "artifact", ctx)
+                except ValueError:
+                    pass
+                server._now = lambda: t0 + server.TTL_NEGATIVE_404 + 1
+                try:
+                    server.fetch_metadata("com.missing", "artifact", ctx)
+                except ValueError:
+                    pass
+            self.assertEqual(m.call_count, 2,
+                             "a 404 must re-hit the network once TTL_NEGATIVE_404 has elapsed")
+        finally:
+            server._now = original_now
+
+    def test_429_not_negatively_cached(self):
+        """A 429 (rate-limited) response must NEVER be cached — only a clean,
+        definitive 404 qualifies for the #404 negative cache; a transient
+        429 must always re-hit the network on every call."""
+        ctx = empty_ctx()
+        attempts = server.HTTP_MAX_ATTEMPTS
+        with unittest.mock.patch(
+            "urllib.request.urlopen",
+            side_effect=mock_urlopen([(429, b"")] * (attempts * 2)),
+        ) as m:
+            try:
+                server.fetch_metadata("com.throttled", "artifact", ctx)
+            except Exception:
+                pass  # any exception from retry exhaustion is expected; only call_count matters
+            try:
+                server.fetch_metadata("com.throttled", "artifact", ctx)
+            except Exception:
+                pass
+        self.assertEqual(m.call_count, attempts * 2,
+                         "429 must never be cached: each call must retry independently")
         self.assertEqual(self._cache_files(), [],
-                         "no cache file must be written for 404")
+                         "no cache file must be written for 429")
 
     def test_503_retried_and_not_cached(self):
         """A 503 response must be retried per HTTP_MAX_ATTEMPTS and never cached."""

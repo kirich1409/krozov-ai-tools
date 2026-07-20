@@ -25,6 +25,7 @@ import time
 import urllib.request
 import urllib.parse
 import urllib.error
+import zlib
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 # ---------------------------------------------------------------------------
@@ -105,6 +106,11 @@ MAX_LICENSE_DEPENDENCIES = 100
 TTL_POM = 7 * 86400     # 7 days — release POMs are immutable once published
 TTL_METADATA = 3600     # 1 hour — version lists change, but not constantly
 TTL_SEARCH = 3600       # 1 hour — Maven Central Solr search index
+# Negative-cache TTL for a definitive HTTP 404 (#404): a known-absent
+# coordinate is not re-fetched within this window. Kept far shorter than the
+# positive TTLs above — an absent artifact can become present the moment it
+# is published, unlike a resolved metadata/POM document, which is immutable.
+TTL_NEGATIVE_404 = 300  # 5 minutes
 
 CACHE_MAX_ENTRIES = 2000
 
@@ -172,7 +178,11 @@ SCOPE_TO_CONFIG = {
 # ---------------------------------------------------------------------------
 
 def _make_headers(extra: Optional[Dict[str, str]] = None) -> Dict[str, str]:
-    h = {"User-Agent": USER_AGENT}
+    # Accept-Encoding: gzip (#403) — Maven metadata/POM/search bodies are
+    # 50-200KB text/XML/JSON and compress ~70-80%; _read_response_body
+    # transparently inflates a gzip-encoded response. A caller-supplied
+    # `extra` can still override this, same as any other default header.
+    h = {"User-Agent": USER_AGENT, "Accept-Encoding": "gzip"}
     if extra:
         h.update(extra)
     return h
@@ -305,6 +315,47 @@ class ResponseTooLargeError(urllib.error.URLError):
     """
 
 
+def _response_header(resp: Any, name: str) -> str:
+    """Case-insensitively read a single response header, or ``""`` if absent."""
+    headers = getattr(resp, "headers", None)
+    if headers is None:
+        return ""
+    get = getattr(headers, "get", None)
+    raw = get(name) if callable(get) else None
+    return (raw or "").strip()
+
+
+def _inflate_gzip_capped(data: bytes, cap: int) -> bytes:
+    """Incrementally inflate a gzip payload, aborting once the DECOMPRESSED
+    size would exceed ``cap`` (#403 zip-bomb guard).
+
+    A small compressed body can expand enormously (empirically ~750x for a
+    highly repetitive payload) — ``Content-Length`` only ever describes the
+    size on the wire, so it cannot be trusted to bound the inflated size.
+    ``zlib.decompressobj``'s ``max_length`` argument stops production of
+    output at the cap without ever materializing the full inflated buffer, so
+    a hostile stream cannot force a large allocation even transiently; once
+    the cap is exceeded this stops feeding the decompressor further input.
+    """
+    decompressor = zlib.decompressobj(zlib.MAX_WBITS | 16)  # 16+wbits = expect gzip header/trailer
+    try:
+        out = decompressor.decompress(data, cap + 1)
+        while decompressor.unconsumed_tail and len(out) <= cap:
+            out += decompressor.decompress(decompressor.unconsumed_tail, cap + 1 - len(out))
+        if len(out) <= cap:
+            out += decompressor.flush()
+    except zlib.error as e:
+        # Malformed/corrupt gzip body — treat like any other transport-level
+        # problem so it flows through the existing retry contract instead of
+        # escaping as a novel exception type callers don't expect.
+        raise urllib.error.URLError(f"invalid gzip response body: {e}")
+    if len(out) > cap:
+        raise ResponseTooLargeError(
+            f"HTTP response too large: decompressed gzip body exceeds {cap} bytes"
+        )
+    return out
+
+
 def _read_response_body(resp: Any) -> bytes:
     """Read ``resp`` body with an explicit size cap (#350).
 
@@ -312,6 +363,14 @@ def _read_response_body(resp: Any) -> bytes:
     reads at most ``HTTP_MAX_RESPONSE_BYTES + 1`` bytes and raises
     ``ResponseTooLargeError`` if the body exceeds the cap. Chunked / missing
     Content-Length still cannot grow without bound because of the read cap.
+
+    A ``Content-Encoding: gzip`` response (sent when the server honors the
+    ``Accept-Encoding: gzip`` request header from ``_make_headers``, #403) is
+    transparently inflated after the raw-bytes cap above has already applied
+    to the WIRE size. The cap is enforced a SECOND time against the
+    DECOMPRESSED size (``_inflate_gzip_capped``) — a small compressed body can
+    still expand far past ``HTTP_MAX_RESPONSE_BYTES`` (zip bomb), and
+    Content-Length only ever describes the wire size, never the inflated one.
     """
     headers = getattr(resp, "headers", None)
     if headers is not None:
@@ -332,6 +391,8 @@ def _read_response_body(resp: Any) -> bytes:
         raise ResponseTooLargeError(
             f"HTTP response too large: body exceeds {HTTP_MAX_RESPONSE_BYTES} bytes"
         )
+    if _response_header(resp, "Content-Encoding").lower() == "gzip":
+        body = _inflate_gzip_capped(body, HTTP_MAX_RESPONSE_BYTES)
     return body
 
 
@@ -462,7 +523,8 @@ class FileCache:
     caller's credentials).
 
     Security properties:
-    - Only status == 200 is ever written; error bodies are never cached.
+    - Only status == 200 or 404 is ever written (#404 negative cache);
+      429/5xx and other error bodies are never cached.
     - Each entry JSON stores the full URL; stored url != requested url
       (hash collision, practically impossible) is treated as a miss.
     - Cache dir and files use owner-only permissions (0o700 / 0o600).
@@ -495,10 +557,18 @@ class FileCache:
         h = hashlib.sha256(url.encode("utf-8")).hexdigest()
         return os.path.join(cache_dir, h + ".json")
 
-    def get(self, url: str, ttl: float) -> Optional[Tuple[int, bytes]]:
+    def get(
+        self, url: str, ttl: float, negative_ttl: Optional[float] = None
+    ) -> Optional[Tuple[int, bytes]]:
         """Return (status, body) if a fresh entry exists, else None.
 
-        TTL check is strictly >, so exactly-at-TTL is a HIT.
+        TTL check is strictly >, so exactly-at-TTL is a HIT. A cached negative
+        (404) entry (#404) is freshness-checked against ``negative_ttl``
+        instead of ``ttl`` when given, since a definitive-absence result must
+        expire much sooner than a positive metadata/POM/search hit — an
+        absent artifact can become present the moment it is published.
+        Callers that never write 404 entries can omit ``negative_ttl`` and
+        this behaves exactly as before.
         Any error (missing file, corrupt JSON, OSError, url mismatch) -> None.
         """
         if os.environ.get("MAVEN_MCP_CACHE_DISABLE", "").lower() in ("1", "true", "yes", "on"):
@@ -512,15 +582,25 @@ class FileCache:
                 entry = json.loads(fh.read())
             if entry.get("url") != url:
                 return None
-            if _now() - entry["ts"] > ttl:
+            status = entry["status"]
+            effective_ttl = ttl if (status == 200 or negative_ttl is None) else negative_ttl
+            if _now() - entry["ts"] > effective_ttl:
                 return None
-            return (entry["status"], base64.b64decode(entry["body_b64"]))
+            return (status, base64.b64decode(entry["body_b64"]))
         except Exception:
             return None
 
     def set(self, url: str, status: int, body: bytes) -> None:
-        """Write url->body to cache. No-op for non-200, disabled, or dir failure."""
-        if status != 200:
+        """Write url->body to cache. No-op for a non-cacheable status, disabled,
+        or dir failure.
+
+        Cacheable statuses are 200 (positive) and 404 (negative — #404, a
+        clean/definitive absence). Every other status — 429/5xx (transient;
+        `_request_with_retry` already exhausted its own retry budget before
+        returning one of these) and any other 4xx — must always re-hit the
+        network on the next call and is never written.
+        """
+        if status not in (200, 404):
             return
         if os.environ.get("MAVEN_MCP_CACHE_DISABLE", "").lower() in ("1", "true", "yes", "on"):
             return
@@ -531,7 +611,7 @@ class FileCache:
         entry = {
             "v": 1,
             "url": url,
-            "status": 200,
+            "status": status,
             "body_b64": base64.b64encode(body).decode("ascii"),
             "ts": _now(),
         }
@@ -607,19 +687,26 @@ def http_get_cached(
 
     A cache hit short-circuits ABOVE the #306 retry layer: the response is
     returned directly without ever calling http_get (and thus without consuming
-    any retry budget).  Non-200 responses and propagating transport errors are
-    never cached; the caller receives them exactly as http_get would return/raise.
+    any retry budget).
+
+    A definitive HTTP 404 is ALSO cached — a negative cache (#404): a known-
+    absent coordinate is not re-fetched on every call within ``TTL_NEGATIVE_404``,
+    which is intentionally far shorter than ``ttl_seconds`` since a 404 can turn
+    into a 200 the moment the artifact is published. 429/5xx and any raised
+    transport error are never cached — matching ``FileCache.set``'s own
+    allow-list — and propagate to the caller exactly as ``http_get`` would
+    return/raise, same as before this change.
     """
     if _headers_have_authorization(headers):
         return http_get(url, headers, timeout=timeout)
     host = urllib.parse.urlparse(url).hostname or ""
     if host in _CACHE_DENYLIST:
         return http_get(url, headers, timeout=timeout)
-    result = _file_cache.get(url, ttl_seconds)
+    result = _file_cache.get(url, ttl_seconds, negative_ttl=TTL_NEGATIVE_404)
     if result is not None:
         return result
     status, body = http_get(url, headers, timeout=timeout)
-    if status == 200:
+    if status in (200, 404):
         _file_cache.set(url, status, body)
     return (status, body)
 
@@ -5148,12 +5235,30 @@ def _query_osv_batch_chunk_bare(
 # Maven Central search
 # ---------------------------------------------------------------------------
 
-def search_maven_central(query: str, limit: int = 10, use_cache: bool = True) -> List[Dict]:
+def _search_maven_central_with_capability(
+    query: str, limit: int = 10, use_cache: bool = True
+) -> Tuple[List[Dict], Optional[str]]:
+    """Like ``search_maven_central`` but also reports a capability signal (#416)
+    so a blocked/rate-limited search is never silently indistinguishable from a
+    genuine zero-result search.
+
+    Returns ``(results, capability)``. ``capability`` is ``"rate_limited"`` on
+    ANY non-200 response or a transport exception: by the time a response
+    reaches here, ``_request_with_retry`` has already exhausted
+    ``HTTP_MAX_ATTEMPTS`` on a retryable 429/5xx, so a non-200 here is a
+    DEFINITIVE final answer, never a mid-retry state. This deliberately also
+    covers a bare HTTP 403 — search.maven.org has a documented history of
+    403-locking out clients under bulk load (see the #322 typosquatRisk
+    gating rationale elsewhere in this file) and 403 is NOT a retried status
+    (`_is_retryable_status`), so it would be wrong to silently exclude it from
+    this same "the shared public search backend is blocking us" signal.
+    ``None`` on success, including a legitimate empty result set. Never raises.
+    """
     try:
         url = f"{SEARCH_API}?q={urllib.parse.quote(query)}&rows={limit}&wt=json"
         status, body = http_get_cached(url, TTL_SEARCH) if use_cache else http_get(url)
         if status != 200:
-            return []
+            return [], "rate_limited"
         data = json.loads(body)
         docs = data.get("response", {}).get("docs", [])
         return [
@@ -5164,9 +5269,24 @@ def search_maven_central(query: str, limit: int = 10, use_cache: bool = True) ->
                 "versionCount": d.get("versionCount", 0),
             }
             for d in docs
-        ]
+        ], None
     except Exception:
-        return []
+        # Transport failure after every retry attempt — the same "could not
+        # search" condition as the persistent non-200 case above.
+        return [], "rate_limited"
+
+
+def search_maven_central(query: str, limit: int = 10, use_cache: bool = True) -> List[Dict]:
+    """Did-you-mean / suggestion search against Maven Central Solr.
+
+    Kept as a bare ``List[Dict]`` for its existing callers (verify_coordinates'
+    did-you-mean suggestions and the #322 Layer 2 heuristics), which already
+    treat a search failure as a silent degrade-to-nothing by design. A caller
+    that needs to distinguish "genuinely zero results" from "search failed /
+    rate-limited" (search_artifacts_with_backend, #416) uses
+    ``_search_maven_central_with_capability`` instead.
+    """
+    return _search_maven_central_with_capability(query, limit, use_cache)[0]
 
 
 def _fetch_gav_timestamp(group_id: str, artifact_id: str, version: str) -> Optional[int]:
@@ -5605,7 +5725,10 @@ def search_artifacts_with_backend(
             return _unavailable(
                 "search backend not available: Maven Central Solr unreachable in offline mode"
             )
-        return {"results": search_maven_central(query, limit), "searchBackend": "central"}
+        results, capability = _search_maven_central_with_capability(query, limit)
+        return _with_capability(
+            {"results": results, "searchBackend": "central"}, capability
+        )
 
     # Explicit nexus / artifactory require a manager base URL.
     if rtype in ("nexus", "artifactory"):
@@ -5627,7 +5750,10 @@ def search_artifacts_with_backend(
 
     # auto: public mode → Solr; closed mode → detect manager.
     if not closed:
-        return {"results": search_maven_central(query, limit), "searchBackend": "central"}
+        results, capability = _search_maven_central_with_capability(query, limit)
+        return _with_capability(
+            {"results": results, "searchBackend": "central"}, capability
+        )
 
     if not base:
         return _unavailable(
