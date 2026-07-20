@@ -32,6 +32,20 @@ Run a single test module:
 python3 -m unittest discover -s plugins/maven-mcp/tests -p test_handlers.py
 ```
 
+**Lint / type-check / coverage (#408).** Dev-only tools, not runtime dependencies —
+install ephemerally (`pip install ruff==0.15.22 mypy==1.20.2 coverage==7.15.2`, or a
+venv). Config lives in `plugins/maven-mcp/pyproject.toml` (`[tool.ruff]`,
+`[tool.mypy]`, `[tool.coverage.*]`); see its comments for what is/isn't enabled and
+why (pragmatic ruleset, per-file-ignores for pre-existing findings, mypy targets the
+3.9 floor independent of the interpreter running it).
+
+```bash
+ruff check plugins/maven-mcp/plugin/server plugins/maven-mcp/tests
+mypy --config-file plugins/maven-mcp/pyproject.toml
+coverage run --rcfile=plugins/maven-mcp/pyproject.toml -m unittest discover -s plugins/maven-mcp/tests
+coverage report --rcfile=plugins/maven-mcp/pyproject.toml   # fail_under=75, ~90% measured
+```
+
 ## Architecture
 
 `server.py` is one file organised into logical sections (no package tree):

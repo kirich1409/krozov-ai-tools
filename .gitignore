@@ -6,6 +6,9 @@ dist/
 # Python
 __pycache__/
 *.pyc
+.coverage
+.mypy_cache/
+.ruff_cache/
 
 .DS_Store
 .claire/
