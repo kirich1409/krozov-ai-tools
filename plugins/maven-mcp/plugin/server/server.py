@@ -2282,6 +2282,20 @@ def _depsdev_version_url(group_id: str, artifact_id: str, version: str) -> str:
     )
 
 
+def _depsdev_project_url(owner: str, repo: str) -> str:
+    """Build the deps.dev v3 GetProject URL for a GitHub repository (#411).
+
+    ``projectKey`` embeds literal ``/`` separators (``github.com/{owner}/{repo}``)
+    and is percent-encoded as a SINGLE path segment — verified live against
+    api.deps.dev: mixed-case owner/repo is accepted and normalized server-side,
+    but an uppercase host segment is rejected with HTTP 400 "invalid project
+    key", which is why the ``github.com`` literal here is always lowercase.
+    """
+    key = f"github.com/{owner}/{repo}"
+    base = _depsdev_api_base()
+    return f"{base}/projects/{urllib.parse.quote(key, safe='')}"
+
+
 def fetch_depsdev_licenses(
     group_id: str,
     artifact_id: str,
@@ -2338,6 +2352,80 @@ def fetch_depsdev_licenses(
         raw = [str(raw)]
     licenses = [str(x).strip() for x in raw if str(x).strip()]
     out.update({"ok": True, "licenses": licenses, "error": None})
+    return out
+
+
+def fetch_depsdev_scorecard(owner: str, repo: str) -> Dict[str, Any]:
+    """Fetch the OpenSSF Scorecard for a GitHub repo via deps.dev GetProject (#411).
+
+    Returns ``{ok, status, scorecard, error}``. ``scorecard`` is the trimmed
+    ``{overallScore, date, checks, generatedBy}`` shape when deps.dev has one on
+    file; ``None`` when the deps.dev call itself succeeded but no scorecard is
+    available. deps.dev's project index does not cover every GitHub repository —
+    verified live against api.deps.dev: a 404 plain-text ``"project not found"``
+    body is the common response for a repo deps.dev has not indexed (e.g.
+    small/personal repos), not a transport failure, so it degrades to
+    ``scorecard: None`` rather than an error callers should alarm on.
+
+    Never raises for network/HTTP/parse failures — mirrors
+    fetch_depsdev_licenses / fetch_depsdev_dependencies: callers degrade to no
+    scorecard plus an error/capabilityUnavailable.
+    """
+    empty: Dict[str, Any] = {"ok": False, "status": None, "scorecard": None, "error": None}
+    cap = _external_capability("depsdev")
+    if cap:
+        out = dict(empty)
+        out["error"] = "deps.dev unavailable (offline/closed mode)"
+        out["capabilityUnavailable"] = cap
+        return out
+    url = _depsdev_project_url(owner, repo)
+    try:
+        status, body = http_get_cached(
+            url, TTL_DEPSDEV, timeout=HTTP_TIMEOUT_EXTERNAL
+        )
+    except Exception as e:
+        out = dict(empty)
+        out["error"] = f"{type(e).__name__}: deps.dev unreachable"
+        out["capabilityUnavailable"] = "unreachable"
+        return out
+
+    out = dict(empty)
+    out["status"] = status
+    if status != 200 or not body:
+        # Covers the empirically-confirmed 404 "project not found" case (a repo
+        # deps.dev has not indexed) alongside genuine transport/HTTP failures —
+        # both simply mean "no scorecard data", never a crash.
+        out["error"] = (
+            f"deps.dev returned HTTP {status}" if status is not None
+            else "deps.dev returned empty response"
+        )
+        return out
+
+    try:
+        payload = json.loads(body.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as e:
+        out["error"] = f"deps.dev response not JSON: {type(e).__name__}"
+        return out
+
+    out["ok"] = True
+    raw_sc = payload.get("scorecard")
+    if not isinstance(raw_sc, dict):
+        return out  # project known to deps.dev, but no scorecard on file
+
+    checks: List[Dict[str, Any]] = []
+    for c in (raw_sc.get("checks") or []):
+        if isinstance(c, dict) and c.get("name"):
+            checks.append({
+                "name": c.get("name"),
+                "score": c.get("score"),
+                "reason": c.get("reason"),
+            })
+    out["scorecard"] = {
+        "overallScore": raw_sc.get("overallScore"),
+        "date": raw_sc.get("date"),
+        "checks": checks,
+        "generatedBy": "OpenSSF",
+    }
     return out
 
 
@@ -5046,6 +5134,57 @@ def _vuln_info_from_osv(v: Dict) -> Dict:
     if fixed:
         vuln_info["fixedVersion"] = fixed
     return vuln_info
+
+
+def _compute_safe_upgrade(vulnerabilities: List[Dict]) -> Optional[Dict[str, Any]]:
+    """Synthesize the minimum version clearing every known CVE (#412).
+
+    ADVISORY ONLY — a candidate to verify, never a guaranteed-safe pin: fixed
+    versions are self-reported by upstream OSV advisories and can be wrong,
+    stale, or simply unknown for a given CVE. Reuses each vuln's already-
+    hydrated ``fixedVersion`` (query_osv_batch / _extract_fixed_version) — no
+    new network call. The minimum version clearing every known vulnerability is
+    the HIGHEST individual fixedVersion across them (a version must be >= every
+    CVE's own fix boundary to clear all of them at once).
+
+    Returns ``None`` when there is nothing to synthesize (no vulnerabilities —
+    the dependency is already clear of every KNOWN CVE, so there is nothing to
+    flag either). Never raises: an unparseable/missing fixed version degrades
+    the result rather than crashing the handler.
+    """
+    if not vulnerabilities:
+        return None
+
+    fixed_versions: List[str] = []
+    unresolved_ids: List[str] = []
+    for v in vulnerabilities:
+        fixed = v.get("fixedVersion")
+        if isinstance(fixed, str) and fixed.strip():
+            fixed_versions.append(fixed)
+        else:
+            unresolved_ids.append(v.get("id") or "unknown")
+
+    if unresolved_ids:
+        return {
+            "fixesAllKnown": False,
+            "reason": "no fixed version known for: " + ", ".join(unresolved_ids),
+        }
+
+    best_version = fixed_versions[0]
+    try:
+        for fixed in fixed_versions[1:]:
+            if compare_versions(fixed, best_version) > 0:
+                best_version = fixed
+    except Exception:
+        # Defensive only — compare_versions tolerates malformed input by design
+        # (never raises), but a synthesized advisory field must never crash the
+        # handler over a version string it cannot make sense of.
+        return {
+            "fixesAllKnown": False,
+            "reason": "could not compare fixed-version strings across known CVEs",
+        }
+
+    return {"version": best_version, "fixesAllKnown": True}
 
 
 def query_osv_batch(deps: List[Dict]) -> List[Dict]:
@@ -8299,6 +8438,9 @@ def handle_get_dependency_vulnerabilities(args: Dict) -> Any:
             entry["version"] = original_deps[i]["version"]
             entry["resolvedImplementation"] = resolutions[i]
         entry["vulnerabilityCount"] = len(entry["vulnerabilities"])
+        safe_upgrade = _compute_safe_upgrade(entry["vulnerabilities"])
+        if safe_upgrade is not None:
+            entry["safeUpgrade"] = safe_upgrade
         if entry.get("capabilityUnavailable") and capability is None:
             capability = entry["capabilityUnavailable"]
         results.append(entry)
@@ -8382,6 +8524,19 @@ def handle_get_dependency_health(args: Dict) -> Any:
         result["repository"] = {"owner": owner, "repo": repo, "url": f"https://github.com/{owner}/{repo}"}
         if not result.get("scm"):
             result["scm"] = {"url": result["repository"]["url"], "host": "github"}
+
+        # OpenSSF Scorecard (#411): a SEPARATE deps.dev capability from the
+        # GitHub API used below, so this runs regardless of github_cap — an
+        # offline/rate-limited GitHub API does not automatically also skip
+        # this enrichment (and vice versa). Only real scorecard data or a
+        # genuine capability failure is surfaced; deps.dev simply having no
+        # scorecard on file for this repo (common — not every repo is scored)
+        # degrades to silent omission, never a flagged failure.
+        scorecard_result = fetch_depsdev_scorecard(owner, repo)
+        if scorecard_result.get("scorecard"):
+            result["scorecard"] = scorecard_result["scorecard"]
+        elif scorecard_result.get("capabilityUnavailable"):
+            result["scorecard"] = {"capabilityUnavailable": scorecard_result["capabilityUnavailable"]}
 
         if github_cap:
             # gh_repo came from POM SCM while GitHub API is offline — keep
@@ -9382,7 +9537,7 @@ TOOLS = [
     },
     {
         "name": "get_dependency_vulnerabilities",
-        "description": "Check dependencies for known vulnerabilities using the OSV.dev database. Each dependency requires a pinned version — OSV lookups are version-specific and version-less coordinates are not queried. An empty vulnerabilities list means no known CVE/GHSA advisory was found for that coordinate+version in OSV.dev; it is NOT a safety guarantee (OSV coverage is incomplete and reporting lags real-world disclosure).",
+        "description": "Check dependencies for known vulnerabilities using the OSV.dev database. Each dependency requires a pinned version — OSV lookups are version-specific and version-less coordinates are not queried. An empty vulnerabilities list means no known CVE/GHSA advisory was found for that coordinate+version in OSV.dev; it is NOT a safety guarantee (OSV coverage is incomplete and reporting lags real-world disclosure). When ≥1 vulnerability is found, a per-dependency safeUpgrade candidate is synthesized from the already-fetched fixed-version data (the highest fixed version across all known CVEs) — ADVISORY ONLY, a candidate to verify, never a guaranteed-safe pin; fixesAllKnown is false when at least one CVE has no known fix.",
         "inputSchema": {
             "type": "object",
             "additionalProperties": False,
@@ -9409,7 +9564,7 @@ TOOLS = [
     },
     {
         "name": "get_dependency_health",
-        "description": "Get health signals for Maven dependencies: version info, GitHub activity, issue stats, license, and maintenance signals.",
+        "description": "Get health signals for Maven dependencies: version info, GitHub activity, issue stats, license, and maintenance signals. When the GitHub repository is known, also surfaces the OpenSSF Scorecard (overallScore + per-check name/score/reason) from deps.dev when one is on file — omitted (or flagged with capabilityUnavailable) when deps.dev has no scorecard for that repo, is offline, or is unreachable.",
         "inputSchema": {
             "type": "object",
             "additionalProperties": False,

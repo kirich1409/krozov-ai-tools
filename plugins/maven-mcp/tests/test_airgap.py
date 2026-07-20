@@ -193,6 +193,62 @@ class DepsdevAirgapTest(unittest.TestCase):
                 out = server.fetch_depsdev_dependencies("com.example", "lib", "1.0")
         self.assertEqual(out["capabilityUnavailable"], "unreachable")
 
+    def test_scorecard_offline_marks_capability(self):
+        # #411: same short-circuit as fetch_depsdev_dependencies/licenses.
+        with unittest.mock.patch.dict(
+            "os.environ", {"MAVEN_MCP_OFFLINE": "1"}, clear=False
+        ):
+            server.os.environ.pop("MAVEN_MCP_DEPSDEV_BASE", None)
+            with unittest.mock.patch("urllib.request.urlopen") as urlopen:
+                out = server.fetch_depsdev_scorecard("acme", "widget")
+        urlopen.assert_not_called()
+        self.assertEqual(out["capabilityUnavailable"], "offline")
+        self.assertIsNone(out["scorecard"])
+
+    def test_health_offline_scorecard_flagged_when_repo_known(self):
+        # #411: unlike test_health_offline_marks_capability below (no SCM ->
+        # gh_repo never resolves -> the scorecard fetch is never reached), a
+        # POM WITH a GitHub SCM lets owner/repo resolve even while github_cap
+        # is also true, so the scorecard fetch runs and is independently
+        # flagged via its own nested capabilityUnavailable, alongside (not
+        # instead of) the existing top-level one from the GitHub API degrade.
+        pom = b"<project><scm><url>https://github.com/acme/widget</url></scm></project>"
+        with unittest.mock.patch.dict(
+            "os.environ", {"MAVEN_MCP_OFFLINE": "1"}, clear=False
+        ):
+            server.os.environ.pop("MAVEN_MCP_GITHUB_BASE", None)
+            server.os.environ.pop("MAVEN_MCP_DEPSDEV_BASE", None)
+            with unittest.mock.patch.object(
+                server, "fetch_metadata", return_value={
+                    "versions": ["1.0"],
+                    "latest": "1.0",
+                    "release": "1.0",
+                    "lastUpdated": None,
+                    "resolvedFrom": {
+                        "url": "https://nexus.example/m2",
+                        "scope": "dependency",
+                        "viaPublicFallback": False,
+                    },
+                }
+            ), unittest.mock.patch.object(
+                server, "fetch_pom", return_value=pom.decode()
+            ), unittest.mock.patch("urllib.request.urlopen") as urlopen:
+                result = server.handle_get_dependency_health(
+                    {
+                        "dependencies": [
+                            {
+                                "groupId": "com.example",
+                                "artifactId": "lib",
+                                "version": "1.0",
+                            }
+                        ]
+                    }
+                )
+        urlopen.assert_not_called()
+        entry = result["results"][0]
+        self.assertEqual(entry["capabilityUnavailable"], "offline")
+        self.assertEqual(entry["scorecard"], {"capabilityUnavailable": "offline"})
+
 
 class GithubAndChangelogAirgapTest(unittest.TestCase):
     def test_offline_github_get_skips_network(self):

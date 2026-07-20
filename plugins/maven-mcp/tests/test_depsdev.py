@@ -155,6 +155,115 @@ class TestFetchDepsdevDependencies(unittest.TestCase):
         self.assertIn("api.deps.dev", args[0])
 
 
+class TestFetchDepsdevScorecard(unittest.TestCase):
+    """OpenSSF Scorecard enrichment for get_dependency_health (#411)."""
+
+    def _scorecard_body(self, overall=8.5, checks=None):
+        return json.dumps({
+            "projectKey": {"id": "github.com/acme/widget"},
+            "description": "an example project",
+            "scorecard": {
+                "date": "2026-07-06T00:00:00Z",
+                "repository": {"name": "github.com/acme/widget", "commit": "abc123"},
+                "scorecard": {"version": "v5.5.1", "commit": "def456"},
+                "overallScore": overall,
+                "checks": checks if checks is not None else [
+                    {
+                        "name": "Maintained",
+                        "documentation": {"shortDescription": "x", "url": "https://x"},
+                        "score": 10,
+                        "reason": "19 commit(s) in the last 90 days",
+                        "details": [],
+                    },
+                    {
+                        "name": "Packaging",
+                        "documentation": {"shortDescription": "y", "url": "https://y"},
+                        "score": -1,
+                        "reason": "packaging workflow not detected",
+                        "details": ["Warn: no publishing workflow detected."],
+                    },
+                ],
+                "metadata": [],
+            },
+        }).encode()
+
+    def test_project_url_encoding_and_lowercase_host(self):
+        url = server._depsdev_project_url("Acme", "Widget")
+        self.assertTrue(url.startswith(server.DEPSDEV_API + "/projects/"))
+        # Single percent-encoded path segment: literal "/" become %2F, and the
+        # host stays lowercase "github.com" (deps.dev rejects an uppercase host
+        # with HTTP 400 "invalid project key" -- verified live).
+        self.assertIn("github.com%2FAcme%2FWidget", url)
+
+    def test_happy_path_extracts_overall_score_and_trimmed_checks(self):
+        with unittest.mock.patch(
+            "urllib.request.urlopen",
+            side_effect=mock_urlopen([(200, self._scorecard_body())]),
+        ):
+            out = server.fetch_depsdev_scorecard("acme", "widget")
+        self.assertTrue(out["ok"])
+        sc = out["scorecard"]
+        self.assertEqual(sc["overallScore"], 8.5)
+        self.assertEqual(sc["date"], "2026-07-06T00:00:00Z")
+        self.assertEqual(sc["generatedBy"], "OpenSSF")
+        self.assertEqual(len(sc["checks"]), 2)
+        self.assertEqual(
+            sc["checks"][0],
+            {"name": "Maintained", "score": 10, "reason": "19 commit(s) in the last 90 days"},
+        )
+        # A -1 (not-applicable/not-run) individual check score passes through
+        # unfiltered -- only overall shape is trimmed, not the raw values.
+        self.assertEqual(sc["checks"][1]["score"], -1)
+        # Verbose per-check sub-objects (documentation/details) are dropped.
+        self.assertNotIn("documentation", sc["checks"][0])
+        self.assertNotIn("details", sc["checks"][0])
+
+    def test_project_not_found_404_yields_no_scorecard(self):
+        # Empirically confirmed live against api.deps.dev: an unindexed repo
+        # returns a plain-text 404 "project not found" body, not JSON.
+        with unittest.mock.patch(
+            "urllib.request.urlopen",
+            side_effect=mock_urlopen([(404, b"project not found")]),
+        ):
+            out = server.fetch_depsdev_scorecard("nobody", "unknown-repo")
+        self.assertFalse(out["ok"])
+        self.assertIsNone(out["scorecard"])
+        self.assertIn("404", out["error"])
+
+    def test_project_known_but_no_scorecard_field(self):
+        # deps.dev knows the project (200) but has not scored it -- a normal
+        # outcome, not a failure: ok=True, scorecard=None.
+        body = json.dumps({"projectKey": {"id": "github.com/acme/widget"}}).encode()
+        with unittest.mock.patch(
+            "urllib.request.urlopen",
+            side_effect=mock_urlopen([(200, body)]),
+        ):
+            out = server.fetch_depsdev_scorecard("acme", "widget")
+        self.assertTrue(out["ok"])
+        self.assertIsNone(out["scorecard"])
+
+    def test_transport_error_marks_unreachable(self):
+        with unittest.mock.patch(
+            "urllib.request.urlopen",
+            side_effect=mock_urlopen([urllib.error.URLError("dns")]),
+        ):
+            out = server.fetch_depsdev_scorecard("acme", "widget")
+        self.assertFalse(out["ok"])
+        self.assertIsNone(out["scorecard"])
+        self.assertEqual(out["capabilityUnavailable"], "unreachable")
+
+    def test_uses_http_get_cached_with_ttl_depsdev(self):
+        with unittest.mock.patch.object(
+            server, "http_get_cached", return_value=(200, self._scorecard_body())
+        ) as cached:
+            out = server.fetch_depsdev_scorecard("acme", "widget")
+        self.assertTrue(out["ok"])
+        cached.assert_called_once()
+        args, _kwargs = cached.call_args
+        self.assertEqual(args[1], server.TTL_DEPSDEV)
+        self.assertIn("api.deps.dev", args[0])
+
+
 class TestResolveConflictVersion(unittest.TestCase):
     def test_highest_wins(self):
         self.assertEqual(
