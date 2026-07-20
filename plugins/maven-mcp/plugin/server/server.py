@@ -35,8 +35,8 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 # ---------------------------------------------------------------------------
 
 SERVER_NAME = "maven-mcp"
-SERVER_VERSION = "0.25.0"
-USER_AGENT = "maven-mcp/0.25.0"
+SERVER_VERSION = "0.26.0"
+USER_AGENT = "maven-mcp/0.26.0"
 
 # MCP protocol revisions this server negotiates (#398). Every message shape this
 # server emits (tool annotations, outputSchema/structuredContent) is additive-only
