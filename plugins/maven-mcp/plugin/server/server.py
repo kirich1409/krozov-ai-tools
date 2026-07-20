@@ -37,6 +37,20 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 SERVER_NAME = "maven-mcp"
 SERVER_VERSION = "0.25.0"
 USER_AGENT = "maven-mcp/0.25.0"
+
+# MCP protocol revisions this server negotiates (#398). Every message shape this
+# server emits (tool annotations, outputSchema/structuredContent) is additive-only
+# across these revisions -- nothing here is gated by which one was negotiated -- so
+# "supported" means "willing to echo back", per the spec's version-negotiation rule:
+# "If the server supports the requested protocol version, it MUST respond with the
+# same version. Otherwise ... another protocol version it supports ... SHOULD be the
+# latest version supported by the server." 2024-11-05 is kept in this set for
+# clients still pinned to it (a real-world MCP client that only ever requests an
+# older revision must get that exact revision back, not be forced onto a newer one
+# it may not recognise and then disconnect per spec).
+MCP_SUPPORTED_PROTOCOL_VERSIONS = ("2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05")
+MCP_LATEST_PROTOCOL_VERSION = "2025-11-25"
+
 HTTP_TIMEOUT = 15
 # Short timeout for enrichment APIs (OSV / GitHub / deps.dev / android.com).
 # Closed contours must fail fast rather than hang on the full HTTP_TIMEOUT (#296).
@@ -10424,6 +10438,68 @@ def handle_get_eol_status(args: Dict) -> Any:
     )
 
 
+# ---------------------------------------------------------------------------
+# Shared outputSchema fragments (#398)
+# ---------------------------------------------------------------------------
+# Reused verbatim across several tools' `outputSchema` — describing a repeated
+# shape once here (instead of copy-pasting it into every tool dict below) is
+# what keeps those copies from silently drifting apart. Deliberately NOT
+# `additionalProperties: False`: unlike inputSchema (where closing the schema
+# stops a client/LLM from inventing unsupported arguments, see
+# test_tools_schema.py), an outputSchema describes a RESULT contract that must
+# stay free to grow additive fields later without that being a breaking
+# change against clients validating strictly — the MCP spec's own
+# `outputSchema` example (server/tools) does the same.
+_GAV_SCHEMA: Dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "groupId": {"type": "string"},
+        "artifactId": {"type": "string"},
+        "version": {"type": "string"},
+    },
+}
+_RESOLVED_FROM_SCHEMA: Dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "url": {"type": "string"},
+        "scope": {"type": "string"},
+        "viaPublicFallback": {"type": "boolean"},
+    },
+}
+# Per-vulnerability shape built by `_vuln_info_from_osv` — shared by
+# get_dependency_vulnerabilities and get_vulnerability_paths.
+_VULN_ITEM_SCHEMA: Dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "id": {"type": "string"},
+        "summary": {"type": "string"},
+        "url": {"type": ["string", "null"]},
+        "malicious": {"type": "boolean"},
+        "severity": {"type": "string"},
+        "fixedVersion": {"type": "string"},
+    },
+    "required": ["id", "summary", "malicious"],
+}
+# Per-dependency shape built by `_license_result` — shared by
+# get_dependency_license (directly) and referenced for check_license_compliance's
+# per-node rows (which carry a superset of these plus transitive-graph fields).
+_LICENSE_RESULT_SCHEMA: Dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "groupId": {"type": "string"},
+        "artifactId": {"type": "string"},
+        "version": {"type": "string"},
+        "spdxId": {"type": ["string", "null"]},
+        "name": {"type": ["string", "null"]},
+        "url": {"type": ["string", "null"]},
+        "category": {"type": "string"},
+        "notes": {"type": "string"},
+        "source": {"type": ["string", "null"]},
+        "error": {"type": "string"},
+    },
+    "required": ["groupId", "artifactId", "category", "notes"],
+}
+
 
 TOOLS = [
     {
@@ -10444,6 +10520,20 @@ TOOLS = [
             },
             "required": ["groupId", "artifactId"],
         },
+        "outputSchema": {
+            "type": "object",
+            "properties": {
+                "groupId": {"type": "string"},
+                "artifactId": {"type": "string"},
+                "latestVersion": {"type": "string"},
+                "stability": {"type": "string"},
+                "allVersionsCount": {"type": "integer"},
+                "resolvedFrom": _RESOLVED_FROM_SCHEMA,
+                "relocatedTo": _GAV_SCHEMA,
+            },
+            "required": ["groupId", "artifactId", "latestVersion", "stability", "allVersionsCount"],
+        },
+        "annotations": {"readOnlyHint": True, "openWorldHint": True},
     },
     {
         "name": "check_version_exists",
@@ -10459,6 +10549,21 @@ TOOLS = [
             },
             "required": ["groupId", "artifactId", "version"],
         },
+        "outputSchema": {
+            "type": "object",
+            "properties": {
+                "groupId": {"type": "string"},
+                "artifactId": {"type": "string"},
+                "version": {"type": "string"},
+                "exists": {"type": "boolean"},
+                "stability": {"type": "string"},
+                "repository": {"type": "string"},
+                "resolvedFrom": _RESOLVED_FROM_SCHEMA,
+                "relocatedTo": _GAV_SCHEMA,
+            },
+            "required": ["groupId", "artifactId", "version", "exists"],
+        },
+        "annotations": {"readOnlyHint": True, "openWorldHint": True},
     },
     {
         "name": "check_multiple_dependencies",
@@ -10484,6 +10589,28 @@ TOOLS = [
             },
             "required": ["dependencies"],
         },
+        "outputSchema": {
+            "type": "object",
+            "properties": {
+                "results": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "groupId": {"type": "string"},
+                            "artifactId": {"type": "string"},
+                            "latestVersion": {"type": "string"},
+                            "stability": {"type": "string"},
+                            "resolvedFrom": _RESOLVED_FROM_SCHEMA,
+                            "error": {"type": "string"},
+                        },
+                        "required": ["groupId", "artifactId", "latestVersion", "stability"],
+                    },
+                },
+            },
+            "required": ["results"],
+        },
+        "annotations": {"readOnlyHint": True, "openWorldHint": True},
     },
     {
         "name": "compare_dependency_versions",
@@ -10510,6 +10637,45 @@ TOOLS = [
             },
             "required": ["dependencies"],
         },
+        "outputSchema": {
+            "type": "object",
+            "properties": {
+                "results": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "groupId": {"type": "string"},
+                            "artifactId": {"type": "string"},
+                            "currentVersion": {"type": "string"},
+                            "latestVersion": {"type": "string"},
+                            "latestStability": {"type": "string"},
+                            "upgradeType": {"type": "string", "enum": ["major", "minor", "patch", "none"]},
+                            "upgradeAvailable": {"type": "boolean"},
+                            "resolvedFrom": _RESOLVED_FROM_SCHEMA,
+                            "error": {"type": "string"},
+                        },
+                        "required": [
+                            "groupId", "artifactId", "currentVersion", "latestVersion",
+                            "latestStability", "upgradeType", "upgradeAvailable",
+                        ],
+                    },
+                },
+                "summary": {
+                    "type": "object",
+                    "properties": {
+                        "total": {"type": "integer"},
+                        "upgradeable": {"type": "integer"},
+                        "major": {"type": "integer"},
+                        "minor": {"type": "integer"},
+                        "patch": {"type": "integer"},
+                    },
+                    "required": ["total", "upgradeable", "major", "minor", "patch"],
+                },
+            },
+            "required": ["results", "summary"],
+        },
+        "annotations": {"readOnlyHint": True, "openWorldHint": True},
     },
     {
         "name": "get_dependency_changes",
@@ -10526,6 +10692,10 @@ TOOLS = [
             },
             "required": ["groupId", "artifactId", "fromVersion", "toVersion"],
         },
+        # No outputSchema: `changes[]` entries vary by changelog provider
+        # (AndroidX/AGP HTML-derived notes vs. GitHub release JSON have
+        # different fields) — see #398 follow-ups in plugins/maven-mcp/CLAUDE.md.
+        "annotations": {"readOnlyHint": True, "openWorldHint": True},
     },
     {
         "name": "scan_project_dependencies",
@@ -10537,6 +10707,11 @@ TOOLS = [
                 "projectPath": {"type": "string", "description": "Path to the project root. Defaults to current working directory."},
             },
         },
+        # No outputSchema: per-dependency entries vary considerably between
+        # Gradle-resolved and Maven-parsed scans (isPlatform/platformKind/
+        # managedBy/effectiveVersion/resolvedBy/usages and more, conditionally
+        # present) — see #398 follow-ups in plugins/maven-mcp/CLAUDE.md.
+        "annotations": {"readOnlyHint": True, "openWorldHint": True},
     },
     {
         "name": "expand_bom",
@@ -10552,6 +10727,17 @@ TOOLS = [
             },
             "required": ["groupId", "artifactId", "version"],
         },
+        "outputSchema": {
+            "type": "object",
+            "properties": {
+                "groupId": {"type": "string"},
+                "artifactId": {"type": "string"},
+                "version": {"type": "string"},
+                "managed": {"type": "array", "items": _GAV_SCHEMA},
+            },
+            "required": ["groupId", "artifactId", "version", "managed"],
+        },
+        "annotations": {"readOnlyHint": True, "openWorldHint": True},
     },
     {
         "name": "get_transitive_graph",
@@ -10566,6 +10752,30 @@ TOOLS = [
             },
             "required": ["groupId", "artifactId", "version"],
         },
+        "outputSchema": {
+            "type": "object",
+            "properties": {
+                "groupId": {"type": "string"},
+                "artifactId": {"type": "string"},
+                "version": {"type": "string"},
+                "nodes": {"type": "array", "items": _GAV_SCHEMA},
+                "edges": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {"from": {"type": "integer"}, "to": {"type": "integer"}},
+                    },
+                },
+                "partial": {"type": "boolean"},
+                "truncated": {"type": "boolean"},
+                "graphError": {"type": "string"},
+                "capabilityUnavailable": {"type": "string"},
+                "error": {"type": "string"},
+                "nodeErrors": {"type": "array", "items": {"type": "object"}},
+            },
+            "required": ["groupId", "artifactId", "version", "nodes", "edges", "partial", "truncated"],
+        },
+        "annotations": {"readOnlyHint": True, "openWorldHint": True},
     },
     {
         "name": "get_vulnerability_paths",
@@ -10580,6 +10790,33 @@ TOOLS = [
             },
             "required": ["groupId", "artifactId", "version"],
         },
+        "outputSchema": {
+            "type": "object",
+            "properties": {
+                "groupId": {"type": "string"},
+                "artifactId": {"type": "string"},
+                "version": {"type": "string"},
+                "vulnerabilityPaths": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "vulnerableNode": {"type": "string"},
+                            "path": {"type": "array", "items": _GAV_SCHEMA},
+                            "vulnerabilities": {"type": "array", "items": _VULN_ITEM_SCHEMA},
+                        },
+                        "required": ["vulnerableNode", "path", "vulnerabilities"],
+                    },
+                },
+                "partial": {"type": "boolean"},
+                "truncated": {"type": "boolean"},
+                "capabilityUnavailable": {"type": "string"},
+                "notes": {"type": "array", "items": {"type": "string"}},
+                "unreachableVulnerabilities": {"type": "array", "items": {"type": "object"}},
+            },
+            "required": ["groupId", "artifactId", "version", "vulnerabilityPaths", "partial", "truncated"],
+        },
+        "annotations": {"readOnlyHint": True, "openWorldHint": True},
     },
     {
         "name": "detect_dependency_conflicts",
@@ -10596,6 +10833,51 @@ TOOLS = [
                 },
             },
         },
+        "outputSchema": {
+            "type": "object",
+            "properties": {
+                "buildSystem": {"type": "string"},
+                "strategy": {"type": "string"},
+                "conflicts": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "groupId": {"type": "string"},
+                            "artifactId": {"type": "string"},
+                            "versions": {"type": "array", "items": {"type": "string"}},
+                            "resolvedTo": {"type": "string"},
+                            "strategy": {"type": "string"},
+                            "risk": {"type": "string", "enum": ["high", "medium", "low"]},
+                            "sources": {
+                                "type": "array",
+                                "items": {
+                                    "type": "object",
+                                    "properties": {
+                                        "version": {"type": "string"},
+                                        "via": {"type": "array", "items": {"type": "string"}},
+                                        "minDepth": {"type": ["integer", "null"]},
+                                    },
+                                },
+                            },
+                        },
+                        "required": ["groupId", "artifactId", "versions", "resolvedTo", "strategy", "risk"],
+                    },
+                },
+                "scannedRoots": {"type": "integer"},
+                "graphsFetched": {"type": "integer"},
+                "graphsFailed": {"type": "integer"},
+                "partial": {"type": "boolean"},
+                "errors": {"type": "array", "items": {"type": "object"}},
+                "notes": {"type": "array", "items": {"type": "string"}},
+                "capabilityUnavailable": {"type": "string"},
+            },
+            "required": [
+                "buildSystem", "strategy", "conflicts", "scannedRoots",
+                "graphsFetched", "graphsFailed", "partial", "errors", "notes",
+            ],
+        },
+        "annotations": {"readOnlyHint": True, "openWorldHint": True},
     },
     {
         "name": "check_version_compatibility",
@@ -10637,6 +10919,29 @@ TOOLS = [
                 "projectPath": {"type": "string", "description": "Project root used to resolve declared repositories for BOM fetch. Defaults to the current working directory."},
             },
         },
+        "outputSchema": {
+            "type": "object",
+            "properties": {
+                "compatible": {"type": "boolean"},
+                "conflicts": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "kind": {"type": "string"},
+                            "requested": {"type": "object"},
+                            "expected": {"type": ["object", "null"]},
+                            "suggestion": {"type": "object"},
+                            "reference": {"type": "string"},
+                        },
+                        "required": ["kind", "requested", "suggestion", "reference"],
+                    },
+                },
+                "notes": {"type": "array", "items": {"type": "string"}},
+            },
+            "required": ["compatible", "conflicts", "notes"],
+        },
+        "annotations": {"readOnlyHint": True, "openWorldHint": True},
     },
     {
         "name": "get_dependency_vulnerabilities",
@@ -10664,6 +10969,39 @@ TOOLS = [
             },
             "required": ["dependencies"],
         },
+        "outputSchema": {
+            "type": "object",
+            "properties": {
+                "results": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "groupId": {"type": "string"},
+                            "artifactId": {"type": "string"},
+                            "version": {"type": "string"},
+                            "vulnerabilities": {"type": "array", "items": _VULN_ITEM_SCHEMA},
+                            "vulnerabilityCount": {"type": "integer"},
+                            "resolvedImplementation": _GAV_SCHEMA,
+                            "safeUpgrade": {
+                                "type": "object",
+                                "properties": {
+                                    "version": {"type": "string"},
+                                    "fixesAllKnown": {"type": "boolean"},
+                                    "reason": {"type": "string"},
+                                },
+                                "required": ["fixesAllKnown"],
+                            },
+                            "capabilityUnavailable": {"type": "string"},
+                        },
+                        "required": ["groupId", "artifactId", "version", "vulnerabilities", "vulnerabilityCount"],
+                    },
+                },
+                "capabilityUnavailable": {"type": "string"},
+            },
+            "required": ["results"],
+        },
+        "annotations": {"readOnlyHint": True, "openWorldHint": True},
     },
     {
         "name": "get_dependency_health",
@@ -10690,6 +11028,11 @@ TOOLS = [
             },
             "required": ["dependencies"],
         },
+        # No outputSchema: per-dependency result has many optional nested
+        # sections (github block, scorecard.checks[], signals[], several
+        # degrade branches) too sprawling to schema confidently in one pass —
+        # see #398 follow-ups in plugins/maven-mcp/CLAUDE.md.
+        "annotations": {"readOnlyHint": True, "openWorldHint": True},
     },
     {
         "name": "get_dependency_license",
@@ -10717,6 +11060,14 @@ TOOLS = [
             },
             "required": ["dependencies"],
         },
+        "outputSchema": {
+            "type": "object",
+            "properties": {
+                "results": {"type": "array", "items": _LICENSE_RESULT_SCHEMA},
+            },
+            "required": ["results"],
+        },
+        "annotations": {"readOnlyHint": True, "openWorldHint": True},
     },
     {
         "name": "check_license_compliance",
@@ -10752,6 +11103,51 @@ TOOLS = [
             },
             "required": ["dependencies"],
         },
+        "outputSchema": {
+            "type": "object",
+            "properties": {
+                "policy": {"type": "object"},
+                "summary": {
+                    "type": "object",
+                    "properties": {
+                        "total": {"type": "integer"},
+                        "byVerdict": {"type": "object"},
+                        "byCategory": {"type": "object"},
+                        "violationCount": {"type": "integer"},
+                        "reviewCount": {"type": "integer"},
+                    },
+                    "required": ["total", "byVerdict", "byCategory", "violationCount", "reviewCount"],
+                },
+                "results": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "groupId": {"type": "string"},
+                            "artifactId": {"type": "string"},
+                            "version": {"type": "string"},
+                            "license": {"type": ["string", "null"]},
+                            "licenses": {"type": "array"},
+                            "category": {"type": "string"},
+                            "viaTransitive": {"type": "boolean"},
+                            "relation": {"type": "string"},
+                            "verdict": {"type": "string"},
+                            "reason": {"type": "string"},
+                            "root": _GAV_SCHEMA,
+                            "source": {"type": "string"},
+                            "error": {"type": "string"},
+                        },
+                        "required": ["groupId", "artifactId", "version", "category", "verdict", "reason"],
+                    },
+                },
+                "partial": {"type": "boolean"},
+                "notes": {"type": "array", "items": {"type": "string"}},
+                "errors": {"type": "array", "items": {"type": "object"}},
+                "capabilityUnavailable": {"type": "string"},
+            },
+            "required": ["policy", "summary", "results", "partial", "notes"],
+        },
+        "annotations": {"readOnlyHint": True, "openWorldHint": True},
     },
     {
         "name": "search_artifacts",
@@ -10771,6 +11167,11 @@ TOOLS = [
             },
             "required": ["query"],
         },
+        # No outputSchema: result rows are not confirmed uniform across the
+        # three search backends (Central Solr / Nexus / Artifactory each have
+        # their own row-mapping function) — see #398 follow-ups in
+        # plugins/maven-mcp/CLAUDE.md.
+        "annotations": {"readOnlyHint": True, "openWorldHint": True},
     },
     {
         "name": "audit_project_dependencies",
@@ -10786,6 +11187,12 @@ TOOLS = [
                 "onlyIssues": {"type": "boolean", "description": "Return only dependencies with a signal (error, upgrade available, vulnerability, or license flag) plus a compact summary. Default false (unchanged full output). Reduces response size on large projects."},
             },
         },
+        # No outputSchema: the most variable tool in the server -- onlyIssues
+        # and includeLicenses each reshape the top level, and per-dependency
+        # entries carry the same sprawl as scan_project_dependencies plus a
+        # vulnerabilities/license overlay — see #398 follow-ups in
+        # plugins/maven-mcp/CLAUDE.md.
+        "annotations": {"readOnlyHint": True, "openWorldHint": True},
     },
     {
         "name": "catalog_entry",
@@ -10842,6 +11249,13 @@ TOOLS = [
             },
             "required": ["mode"],
         },
+        # No outputSchema: generate vs. validate return structurally different
+        # shapes (generate's "entry" sub-object also varies by kind:
+        # library/plugin), plus a distinct early-error shape — a single
+        # accurate schema needs a union the current outputSchema spec
+        # restriction (type: object at the root) doesn't cleanly fit; see
+        # #398 follow-ups in plugins/maven-mcp/CLAUDE.md.
+        "annotations": {"readOnlyHint": True, "openWorldHint": False},
     },
     {
         "name": "verify_coordinates",
@@ -10870,6 +11284,60 @@ TOOLS = [
             },
             "required": ["dependencies"],
         },
+        "outputSchema": {
+            "type": "object",
+            "properties": {
+                "results": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "groupId": {"type": "string"},
+                            "artifactId": {"type": "string"},
+                            "version": {"type": "string"},
+                            "existenceStatus": {"type": "string", "enum": ["exists", "absent", "unknown"]},
+                            "gaExists": {"type": "boolean"},
+                            "gavExists": {"type": "boolean"},
+                            "stability": {"type": "string"},
+                            "repository": {"type": "string"},
+                            "likelyHallucination": {"type": "boolean"},
+                            "suggestions": {
+                                "type": "array",
+                                "items": {
+                                    "type": "object",
+                                    "properties": {
+                                        "groupId": {"type": "string"},
+                                        "artifactId": {"type": "string"},
+                                        "score": {"type": "number"},
+                                        "versionCount": {"type": "integer"},
+                                    },
+                                },
+                            },
+                            "typosquatRisk": {
+                                "type": "object",
+                                "properties": {
+                                    "signal": {"type": "boolean"},
+                                    "reasons": {"type": "array", "items": {"type": "string"}},
+                                    "versionCount": {"type": "integer"},
+                                    "popularMatch": {
+                                        "type": "object",
+                                        "properties": {
+                                            "groupId": {"type": "string"},
+                                            "artifactId": {"type": "string"},
+                                            "versionCount": {"type": "integer"},
+                                        },
+                                    },
+                                },
+                            },
+                            "error": {"type": "string"},
+                        },
+                        "required": ["groupId", "artifactId", "existenceStatus", "gaExists", "likelyHallucination"],
+                    },
+                },
+            },
+            "required": ["results"],
+        },
+        "annotations": {"readOnlyHint": True, "openWorldHint": True},
     },
     {
         "name": "get_eol_status",
@@ -10893,6 +11361,33 @@ TOOLS = [
                 },
             },
         },
+        "outputSchema": {
+            "type": "object",
+            "properties": {
+                "results": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "product": {"type": "string"},
+                            "requestedVersion": {"type": "string"},
+                            "cycle": {"type": "string"},
+                            "isEol": {"type": "boolean"},
+                            "eolDate": {"type": ["string", "null"]},
+                            "isMaintained": {"type": "boolean"},
+                            "isLts": {"type": "boolean"},
+                            "latestInCycle": {"type": ["string", "null"]},
+                            "error": {"type": "string"},
+                            "capabilityUnavailable": {"type": "string"},
+                        },
+                        "required": ["product", "requestedVersion"],
+                    },
+                },
+                "capabilityUnavailable": {"type": "string"},
+            },
+            "required": ["results"],
+        },
+        "annotations": {"readOnlyHint": True, "openWorldHint": True},
     },
 ]
 
@@ -10924,23 +11419,37 @@ TOOL_HANDLERS = {
 # the list per call.
 TOOL_SCHEMAS = {t["name"]: t["inputSchema"] for t in TOOLS}
 
+# Tool names that declared an outputSchema (#398) — derived from TOOLS so the
+# two can never drift: a tool gets structuredContent in _handle_tools_call's
+# success path if and only if it appears here.
+TOOLS_WITH_OUTPUT_SCHEMA = {t["name"] for t in TOOLS if "outputSchema" in t}
+
 
 # ---------------------------------------------------------------------------
 # MCP JSON-RPC 2.0 dispatcher
 # ---------------------------------------------------------------------------
 
 def _write_response(response: Any) -> None:
-    # `response` is a single response object, or a list of them for a batch.
     sys.stdout.write(json.dumps(response) + "\n")
     sys.stdout.flush()
 
 
 def _handle_initialize(msg_id: Any, params: Dict) -> Dict:
+    # Version negotiation (#398): echo back the client's requested version when
+    # we're willing to speak it, otherwise fall back to our own latest -- see
+    # MCP_SUPPORTED_PROTOCOL_VERSIONS above for why this isn't just a hardcoded
+    # constant. `protocolVersion` is a plain string field on `params`; a missing
+    # or non-string value simply misses the `in` check below and falls through
+    # to the latest, same as an unrecognized version.
+    requested = params.get("protocolVersion")
+    negotiated = (
+        requested if requested in MCP_SUPPORTED_PROTOCOL_VERSIONS else MCP_LATEST_PROTOCOL_VERSION
+    )
     return {
         "jsonrpc": "2.0",
         "id": msg_id,
         "result": {
-            "protocolVersion": "2024-11-05",
+            "protocolVersion": negotiated,
             "capabilities": {"tools": {}},
             "serverInfo": {"name": SERVER_NAME, "version": SERVER_VERSION},
         },
@@ -10992,11 +11501,14 @@ def _handle_tools_call(msg_id: Any, params: Dict) -> Dict:
     try:
         result = handler(arguments)
     except Exception as e:
-        # MCP spec (2024-11-05): a TOOL execution failure (handler raised while
-        # doing its job — resolution failure, ValueError, network error, an
-        # internal KeyError unrelated to the arguments the client sent, etc.)
-        # is reported as a successful response with isError:true, not a
-        # JSON-RPC protocol error, so the model can see it and self-correct (#397).
+        # MCP spec: a TOOL execution failure (handler raised while doing its
+        # job — resolution failure, ValueError, network error, an internal
+        # KeyError unrelated to the arguments the client sent, etc.) is
+        # reported as a successful response with isError:true, not a
+        # JSON-RPC protocol error, so the model can see it and self-correct
+        # (#397). No structuredContent on this path — outputSchema describes
+        # the tool's SUCCESS shape only; an error result has nothing typed to
+        # offer, and the content[] text already carries the error message.
         return {
             "jsonrpc": "2.0",
             "id": msg_id,
@@ -11005,12 +11517,17 @@ def _handle_tools_call(msg_id: Any, params: Dict) -> Dict:
                 "isError": True,
             },
         }
+    call_result: Dict[str, Any] = {"content": [{"type": "text", "text": json.dumps(result)}]}
+    # structuredContent (#398): only for tools that declared an outputSchema,
+    # and only ever the EXACT SAME object serialized above into content[] —
+    # never a separately-built dict — so the two can never drift apart, and a
+    # tool without a declared outputSchema is never given one implicitly.
+    if tool_name in TOOLS_WITH_OUTPUT_SCHEMA and isinstance(result, dict):
+        call_result["structuredContent"] = result
     return {
         "jsonrpc": "2.0",
         "id": msg_id,
-        "result": {
-            "content": [{"type": "text", "text": json.dumps(result)}],
-        },
+        "result": call_result,
     }
 
 
@@ -11022,10 +11539,12 @@ def _dispatch_message(msg: Any) -> Optional[Dict]:
     """Dispatch one JSON-RPC message; return the response object, or None.
 
     None means "no response" (a notification). A non-dict message (string,
-    number, boolean, null, or an array — top-level arrays are batches and
-    are routed to _dispatch_batch by dispatch()/main() before reaching
-    here, so an array HERE is a nested one inside a batch) gets a -32600
-    Invalid Request response instead of crashing the server (#343).
+    number, boolean, null, or an array) gets a -32600 Invalid Request response
+    instead of crashing the server (#343). A top-level JSON-RPC batch (array)
+    falls into this same branch deliberately (#398): the target MCP protocol
+    revision removed batching support entirely, so there is no separate batch
+    dispatcher any more — an array is simply an invalid top-level message,
+    like any other non-object one.
     """
     if not isinstance(msg, dict):
         return {
@@ -11065,42 +11584,9 @@ def _dispatch_message(msg: Any) -> Optional[Dict]:
 
 
 def dispatch(msg: Any) -> None:
-    if isinstance(msg, list):
-        _dispatch_batch(msg)
-        return
     response = _dispatch_message(msg)
     if response is not None:
         _write_response(response)
-
-
-def _dispatch_batch(batch: List[Any]) -> None:
-    """Handle a JSON-RPC 2.0 batch request (a JSON array of messages)."""
-    if not batch:
-        # Per JSON-RPC 2.0, an empty batch gets a single error object, not an array.
-        _write_response({
-            "jsonrpc": "2.0",
-            "id": None,
-            "error": {"code": -32600, "message": "Invalid Request: empty batch"},
-        })
-        return
-    responses = []
-    for item in batch:
-        try:
-            response = _dispatch_message(item)
-        except Exception as e:
-            item_id = item.get("id") if isinstance(item, dict) else None
-            response = None
-            if item_id is not None:
-                response = {
-                    "jsonrpc": "2.0",
-                    "id": item_id,
-                    "error": {"code": -32603, "message": f"Internal error: {e}"},
-                }
-        if response is not None:
-            responses.append(response)
-    # An all-notifications batch gets no response at all, per spec.
-    if responses:
-        _write_response(responses)
 
 
 def main() -> None:
@@ -11118,7 +11604,7 @@ def main() -> None:
             })
             continue
         try:
-            dispatch(msg)  # routes top-level arrays to _dispatch_batch
+            dispatch(msg)
         except Exception as e:
             msg_id = msg.get("id") if isinstance(msg, dict) else None
             if msg_id is not None:
