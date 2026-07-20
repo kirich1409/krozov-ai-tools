@@ -49,7 +49,7 @@ python3 -m unittest discover -s plugins/maven-mcp/tests -p test_handlers.py
 - **Version catalog generate/validate** — `generate_catalog_entry` / `validate_catalog` / `handle_catalog_entry` (#288); reuses `_parse_toml_catalog`.
 - **Tool handlers** — `handle_*`, one per MCP tool, plus the stdio JSON-RPC dispatch loop.
 
-**Tools (18):** see `CLAUDE.md`'s Architecture section for the enumerated list — kept in sync with the `TOOLS` registration in `plugin/server/server.py`; that file is the single authoritative enumeration so the list is not hand-maintained twice.
+**Tools (20):** see `CLAUDE.md`'s Architecture section for the enumerated list — kept in sync with the `TOOLS` registration in `plugin/server/server.py`; that file is the single authoritative enumeration so the list is not hand-maintained twice.
 
 ## Version catalog generate/validate (`catalog_entry`, #288)
 

@@ -78,6 +78,8 @@ GITHUB_API_DEFAULT = "https://api.github.com"
 OSV_API_DEFAULT = "https://api.osv.dev/v1/querybatch"
 OSV_VULN_API_DEFAULT = "https://api.osv.dev/v1/vulns"
 DEPSDEV_API_DEFAULT = "https://api.deps.dev/v3"
+# endoflife.date v1 API (#415) — JDK/Kotlin/Gradle/Spring Boot EOL/support status.
+_ENDOFLIFE_API_DEFAULT = "https://endoflife.date/api/v1"
 # Back-compat aliases — tests and docs historically referenced these names.
 # Prefer the *_url() / *_base() resolvers at call sites so env overrides apply.
 GITHUB_API = GITHUB_API_DEFAULT
@@ -138,6 +140,11 @@ MAX_DEPSDEV_ERRORS_REPORTED = 20
 # graph + GetVersion per unique node for SPDX licenses. Caps bound fan-out.
 MAX_LICENSE_COMPLIANCE_ROOTS = 20
 MAX_LICENSE_COMPLIANCE_NODES = 500
+
+# End-of-life / support status via endoflife.date (#415). Support windows are
+# announced well in advance and change rarely — cache far longer than the
+# volatile version-list TTLs above.
+TTL_ENDOFLIFE = 7 * 86400  # 7 days
 
 # Gradle configuration names matched by shape (#346), not a closed allow-list:
 # variant/flavor prefixes (`debugImplementation`, `paidReleaseApi`, …),
@@ -961,10 +968,10 @@ def _offline_enabled() -> bool:
 # ---------------------------------------------------------------------------
 # External enrichment services — air-gapped degradation (#296)
 # ---------------------------------------------------------------------------
-# OSV / GitHub / deps.dev / developer.android.com are unreachable in closed
-# contours. Offline mode short-circuits them (unless an endpoint override points
-# at an internal mirror). Transport failures mark capabilityUnavailable=
-# "unreachable" with a short timeout so tools do not hang.
+# OSV / GitHub / deps.dev / developer.android.com / endoflife.date are
+# unreachable in closed contours. Offline mode short-circuits them (unless an
+# endpoint override points at an internal mirror). Transport failures mark
+# capabilityUnavailable="unreachable" with a short timeout so tools do not hang.
 
 _ANDROID_DOCS_DEFAULT = "https://developer.android.com"
 
@@ -1023,6 +1030,11 @@ def _android_docs_base() -> str:
     return _env_url_base("MAVEN_MCP_ANDROID_DOCS_BASE", _ANDROID_DOCS_DEFAULT)
 
 
+def _endoflife_api_base() -> str:
+    """endoflife.date v1 API root (``MAVEN_MCP_ENDOFLIFE_BASE``, #415)."""
+    return _env_url_base("MAVEN_MCP_ENDOFLIFE_BASE", _ENDOFLIFE_API_DEFAULT)
+
+
 def _external_override_active(service: str) -> bool:
     """True when an env override points away from the public default host."""
     if service == "osv":
@@ -1033,6 +1045,8 @@ def _external_override_active(service: str) -> bool:
         return _url_host(_depsdev_api_base()) != "api.deps.dev"
     if service == "android_docs":
         return _url_host(_android_docs_base()) != "developer.android.com"
+    if service == "endoflife":
+        return _url_host(_endoflife_api_base()) != "endoflife.date"
     return False
 
 
@@ -2696,6 +2710,190 @@ def get_transitive_graph(
                 node_errors.append({"index": i, "errors": n["errors"]})
         if node_errors:
             result["nodeErrors"] = node_errors[:MAX_DEPSDEV_ERRORS_REPORTED]
+    return result
+
+
+def _bfs_predecessors(edges: List[Dict[str, int]], root_index: int) -> Dict[int, int]:
+    """BFS predecessor map from ``root_index`` over directed ``from -> to`` edges.
+
+    Same traversal shape as ``_edge_depth_map`` (adjacency built the same way)
+    but returns predecessors for shortest-path reconstruction instead of
+    depths. Nodes unreachable from the root get no entry.
+    """
+    adj: Dict[int, List[int]] = {}
+    for e in edges:
+        adj.setdefault(e["from"], []).append(e["to"])
+    predecessor: Dict[int, int] = {}
+    visited = {root_index}
+    queue: List[int] = [root_index]
+    head = 0
+    while head < len(queue):
+        cur = queue[head]
+        head += 1
+        for nxt in adj.get(cur, []):
+            if nxt in visited:
+                continue
+            visited.add(nxt)
+            predecessor[nxt] = cur
+            queue.append(nxt)
+    return predecessor
+
+
+def _reconstruct_path(
+    predecessor: Dict[int, int], root_index: int, target_index: int,
+) -> Optional[List[int]]:
+    """Node-index path from root to target (inclusive, root-first).
+
+    Returns ``None`` when ``target_index`` is not the root and has no
+    predecessor (unreachable from root).
+    """
+    if target_index != root_index and target_index not in predecessor:
+        return None
+    path = [target_index]
+    while path[-1] != root_index:
+        path.append(predecessor[path[-1]])
+    path.reverse()
+    return path
+
+
+def get_vulnerability_paths(group_id: str, artifact_id: str, version: str) -> Dict[str, Any]:
+    """Dependency path from a project root GAV to each vulnerable transitive node (#413).
+
+    Fetches the deps.dev transitive graph ONCE via ``fetch_depsdev_dependencies``
+    — the same cached call ``get_transitive_graph`` wraps, called directly here
+    rather than through that wrapper because the wrapper's trimmed node shape
+    drops the ``relation`` field this needs to locate the root — dedupes nodes
+    by ``groupId:artifactId:version``, batches every unique GAV through
+    ``query_osv_batch`` ONCE, then BFS's from the root over the ``edges``
+    index-pairs to find the SHORTEST path to every node with >=1 known
+    vulnerability.
+
+    Root identification: the node whose ``relation`` is ``SELF``. deps.dev
+    sometimes leaves ``relation`` empty on an untagged first node (the same
+    quirk ``check_license_compliance`` documents and falls back on), so an
+    unmatched relation falls back to node 0.
+
+    Never raises for network/HTTP/parse failures — degrades like the
+    underlying graph/OSV calls (``partial`` / ``capabilityUnavailable``).
+    """
+    fetched = fetch_depsdev_dependencies(group_id, artifact_id, version)
+    result: Dict[str, Any] = {
+        "groupId": group_id,
+        "artifactId": artifact_id,
+        "version": version,
+        "vulnerabilityPaths": [],
+        "partial": fetched.get("partial", True),
+        "truncated": fetched.get("truncated", False),
+    }
+    if fetched.get("capabilityUnavailable"):
+        result["capabilityUnavailable"] = fetched["capabilityUnavailable"]
+    if fetched.get("graphError"):
+        result["graphError"] = fetched["graphError"]
+    if not fetched.get("ok"):
+        result["partial"] = True
+        result["error"] = fetched.get("error") or "deps.dev unavailable"
+        return result
+
+    nodes = fetched.get("nodes") or []
+    edges = fetched.get("edges") or []
+    if not nodes:
+        return result
+
+    root_index = 0
+    for i, n in enumerate(nodes):
+        if (n.get("relation") or "").upper() == "SELF":
+            root_index = i
+            break
+
+    # Dedupe nodes by GAV: one OSV query per unique coordinate, even if (as a
+    # defensive measure only — deps.dev's own graph model already represents a
+    # shared dependency as one node with multiple incoming edges, never as two
+    # nodes) the same GAV somehow appears at more than one node index.
+    key_to_indices: Dict[str, List[int]] = {}
+    unique_gavs: List[Dict[str, str]] = []
+    key_order: List[str] = []
+    for i, n in enumerate(nodes):
+        g = n.get("groupId") or ""
+        a = n.get("artifactId") or ""
+        v = n.get("version") or ""
+        if not g or not a or not v:
+            continue
+        key = f"{g}:{a}:{v}"
+        if key not in key_to_indices:
+            key_to_indices[key] = []
+            unique_gavs.append({"groupId": g, "artifactId": a, "version": v})
+            key_order.append(key)
+        key_to_indices[key].append(i)
+
+    if not unique_gavs:
+        return result
+
+    notes: List[str] = []
+    if len(unique_gavs) > MAX_VULN_DEPENDENCIES:
+        unique_gavs = unique_gavs[:MAX_VULN_DEPENDENCIES]
+        key_order = key_order[:MAX_VULN_DEPENDENCIES]
+        result["partial"] = True
+        notes.append(
+            f"Unique dependencies truncated to {MAX_VULN_DEPENDENCIES} "
+            f"(MAX_VULN_DEPENDENCIES) before querying OSV; results are partial."
+        )
+
+    key_to_gav = dict(zip(key_order, unique_gavs))
+    osv_results = query_osv_batch(unique_gavs)
+
+    vulns_by_key: Dict[str, List[Dict[str, Any]]] = {}
+    osv_capability: Optional[str] = None
+    for key, entry in zip(key_order, osv_results):
+        cap = entry.get("capabilityUnavailable")
+        if cap and osv_capability is None:
+            osv_capability = cap
+        vulns = entry.get("vulnerabilities") or []
+        if vulns:
+            vulns_by_key[key] = vulns
+
+    if osv_capability and not result.get("capabilityUnavailable"):
+        result["capabilityUnavailable"] = osv_capability
+
+    if notes:
+        result["notes"] = notes
+
+    if not vulns_by_key:
+        return result
+
+    predecessor = _bfs_predecessors(edges, root_index)
+
+    hits: List[Dict[str, Any]] = []
+    unreachable: List[Dict[str, Any]] = []
+    for key in key_order:
+        vulns = vulns_by_key.get(key)
+        if not vulns:
+            continue
+        gav = key_to_gav[key]
+        best_path: Optional[List[int]] = None
+        for idx in key_to_indices[key]:
+            path = _reconstruct_path(predecessor, root_index, idx)
+            if path is not None and (best_path is None or len(path) < len(best_path)):
+                best_path = path
+        if best_path is None:
+            unreachable.append({"vulnerableNode": gav, "vulnerabilities": vulns})
+            continue
+        hits.append({
+            "vulnerableNode": gav,
+            "path": [
+                {
+                    "groupId": nodes[p].get("groupId") or "",
+                    "artifactId": nodes[p].get("artifactId") or "",
+                    "version": nodes[p].get("version") or "",
+                }
+                for p in best_path
+            ],
+            "vulnerabilities": vulns,
+        })
+
+    result["vulnerabilityPaths"] = hits
+    if unreachable:
+        result["unreachableVulnerabilities"] = unreachable
+        result["partial"] = True
     return result
 
 
@@ -5281,6 +5479,185 @@ def _query_osv_batch_chunk_bare(
         return out, False
     except Exception:
         return [(d, []) for d in deps], True
+
+
+# ---------------------------------------------------------------------------
+# End-of-life / support status (endoflife.date) (#415)
+# ---------------------------------------------------------------------------
+# JDK/Kotlin/Gradle/Spring Boot support windows via the free, no-auth
+# endoflife.date v1 API. Verified live against endoflife.date: there is NO
+# generic "java" product (404s) — JDK end-of-life is vendor-specific
+# (eclipse-temurin, amazon-corretto, oracle-jdk, redhat-build-of-openjdk, and
+# others), so a JDK check always requires an explicit vendor slug alongside
+# the version. Confirmed response shape for kotlin/gradle/spring-boot/
+# eclipse-temurin: ``{schema_version, generated_at, last_modified, result:
+# {name, label, …, releases: [{name (the *cycle* id — granularity varies:
+# major-only for gradle/JDK vendors e.g. "9"/"21", major.minor for kotlin/
+# spring-boot e.g. "2.4"/"3.5"), codename, label, releaseDate, isLts, ltsFrom,
+# isEol, eolFrom, isMaintained, latest: {name, date, link}, custom}]}}``.
+# Some products add extra optional per-cycle fields (gradle: isEoas/eoasFrom;
+# spring-boot: isEoes/eoesFrom) — never assumed present.
+
+def _endoflife_product_url(product: str) -> str:
+    base = _endoflife_api_base()
+    return f"{base}/products/{urllib.parse.quote(product, safe='')}"
+
+
+def _fetch_endoflife_product(product: str) -> Dict[str, Any]:
+    """Fetch one endoflife.date product's release-cycle list (#415).
+
+    Returns ``{ok, status, cycles, error}``. Never raises for network/HTTP/
+    parse failures — callers degrade the corresponding result item instead of
+    crashing. A 404 means the product slug does not exist on endoflife.date
+    (e.g. "java" — there is no generic JDK product, see module note above)
+    and is surfaced as a distinct, clear error rather than a transport failure.
+    """
+    empty: Dict[str, Any] = {"ok": False, "status": None, "cycles": [], "error": None}
+    cap = _external_capability("endoflife")
+    if cap:
+        out = dict(empty)
+        out["error"] = "endoflife.date unavailable (offline/closed mode)"
+        out["capabilityUnavailable"] = cap
+        return out
+    url = _endoflife_product_url(product)
+    try:
+        status, body = http_get_cached(url, TTL_ENDOFLIFE, timeout=HTTP_TIMEOUT_EXTERNAL)
+    except Exception as e:
+        out = dict(empty)
+        out["error"] = f"{type(e).__name__}: endoflife.date unreachable"
+        out["capabilityUnavailable"] = "unreachable"
+        return out
+
+    out = dict(empty)
+    out["status"] = status
+    if status == 404:
+        out["error"] = f"unknown product on endoflife.date: {product!r}"
+        return out
+    if status != 200 or not body:
+        out["error"] = (
+            f"endoflife.date returned HTTP {status}" if status is not None
+            else "endoflife.date returned empty response"
+        )
+        return out
+
+    try:
+        payload = json.loads(body.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as e:
+        out["error"] = f"endoflife.date response not JSON: {type(e).__name__}"
+        return out
+
+    cycles = (payload.get("result") or {}).get("releases")
+    if not isinstance(cycles, list):
+        cycles = []
+    out.update({"ok": True, "cycles": cycles, "error": None})
+    return out
+
+
+def _match_eol_cycle(cycles: List[Dict[str, Any]], version: str) -> Optional[Dict[str, Any]]:
+    """Find the release-cycle entry a specific version belongs to.
+
+    endoflife.date's cycle granularity varies per product (major-only for
+    Gradle/JDK vendors, major.minor for Kotlin/Spring Boot — see module note
+    above), so cycles are matched as version PREFIXES rather than assuming a
+    fixed depth: ``version`` belongs to cycle ``c["name"]`` when it equals that
+    name exactly, or starts with ``f"{name}."`` (the trailing dot boundary is
+    what stops cycle "1" from falsely prefix-matching version "10.5"). Prefers
+    the longest (most specific) matching cycle name on the rare chance more
+    than one matches. Returns ``None`` when no cycle matches.
+    """
+    best: Optional[Dict[str, Any]] = None
+    for cycle in cycles:
+        name = str(cycle.get("name") or "")
+        if not name:
+            continue
+        if version == name or version.startswith(name + "."):
+            if best is None or len(name) > len(str(best.get("name") or "")):
+                best = cycle
+    return best
+
+
+def _eol_status_for_version(product: str, version: str) -> Dict[str, Any]:
+    """One ``{product, requestedVersion, …}`` result item for ``get_eol_status`` (#415)."""
+    item: Dict[str, Any] = {"product": product, "requestedVersion": version}
+    fetched = _fetch_endoflife_product(product)
+    if fetched.get("capabilityUnavailable"):
+        item["capabilityUnavailable"] = fetched["capabilityUnavailable"]
+        return item
+    if not fetched["ok"]:
+        item["error"] = fetched.get("error") or "endoflife.date unavailable"
+        return item
+
+    cycle = _match_eol_cycle(fetched["cycles"], version)
+    if cycle is None:
+        item["error"] = f"no matching release cycle found for version {version!r}"
+        return item
+
+    latest = cycle.get("latest") or {}
+    item.update({
+        "cycle": cycle.get("name"),
+        "isEol": bool(cycle.get("isEol")),
+        "eolDate": cycle.get("eolFrom"),
+        "isMaintained": bool(cycle.get("isMaintained")),
+        "isLts": bool(cycle.get("isLts")),
+        "latestInCycle": latest.get("name"),
+    })
+    return item
+
+
+def get_eol_status(
+    kotlin: Optional[str] = None,
+    gradle: Optional[str] = None,
+    spring_boot: Optional[str] = None,
+    jdk: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """EOL / support status for JDK, Kotlin, Gradle, and/or Spring Boot (#415).
+
+    Each of ``kotlin`` / ``gradle`` / ``spring_boot`` is a plain version string;
+    ``jdk`` is ``{vendor, version}`` since endoflife.date has no generic "java"
+    product (see module note above) — a JDK check always needs an explicit
+    vendor. At least one of the four must be provided.
+
+    Raises ``ValueError`` (surfaced by the dispatcher as ``isError: true``,
+    never a crash) for a caller mistake — nothing requested at all, or a
+    ``jdk`` object missing ``vendor``/``version``. Per-product network/HTTP/
+    parse failures instead degrade that result item (``error`` /
+    ``capabilityUnavailable``) — this mirrors the rest of the external-
+    enrichment surface, where a fetch failure is data, not an exception.
+    """
+    requested: List[Tuple[str, str]] = []
+    if kotlin:
+        requested.append(("kotlin", kotlin))
+    if gradle:
+        requested.append(("gradle", gradle))
+    if spring_boot:
+        requested.append(("spring-boot", spring_boot))
+    if jdk is not None:
+        vendor = str(jdk.get("vendor") or "").strip()
+        jdk_version = str(jdk.get("version") or "").strip()
+        if not vendor or not jdk_version:
+            raise ValueError(
+                "jdk requires both 'vendor' and 'version' — endoflife.date has no "
+                "generic \"java\" product; JDK end-of-life is vendor-specific "
+                "(e.g. eclipse-temurin, amazon-corretto, oracle-jdk, "
+                "redhat-build-of-openjdk)"
+            )
+        requested.append((vendor, jdk_version))
+
+    if not requested:
+        raise ValueError(
+            "at least one of kotlin, gradle, springBoot, jdk must be provided"
+        )
+
+    results = []
+    capability: Optional[str] = None
+    for product, version in requested:
+        item = _eol_status_for_version(product, version)
+        if item.get("capabilityUnavailable") and capability is None:
+            capability = item["capabilityUnavailable"]
+        results.append(item)
+
+    out: Dict[str, Any] = {"results": results}
+    return _with_capability(out, capability)
 
 
 # ---------------------------------------------------------------------------
@@ -8368,6 +8745,11 @@ def handle_get_transitive_graph(args: Dict) -> Any:
     return get_transitive_graph(args["groupId"], args["artifactId"], args["version"])
 
 
+def handle_get_vulnerability_paths(args: Dict) -> Any:
+    """MCP handler for ``get_vulnerability_paths`` (#413)."""
+    return get_vulnerability_paths(args["groupId"], args["artifactId"], args["version"])
+
+
 def handle_detect_dependency_conflicts(args: Dict) -> Any:
     """MCP handler for ``detect_dependency_conflicts`` (#287)."""
     project_path = args.get("projectPath") or os.getcwd()
@@ -9335,6 +9717,16 @@ def handle_check_version_compatibility(args: Dict) -> Any:
     )
 
 
+def handle_get_eol_status(args: Dict) -> Any:
+    """MCP handler for ``get_eol_status`` (#415)."""
+    return get_eol_status(
+        kotlin=args.get("kotlin"),
+        gradle=args.get("gradle"),
+        spring_boot=args.get("springBoot"),
+        jdk=args.get("jdk"),
+    )
+
+
 
 TOOLS = [
     {
@@ -9474,6 +9866,20 @@ TOOLS = [
                 "groupId": {"type": "string", "description": "Maven group ID"},
                 "artifactId": {"type": "string", "description": "Maven artifact ID"},
                 "version": {"type": "string", "description": "Maven version"},
+            },
+            "required": ["groupId", "artifactId", "version"],
+        },
+    },
+    {
+        "name": "get_vulnerability_paths",
+        "description": "Show the dependency path from a project root Maven GAV to each vulnerable transitive node. Fetches the deps.dev transitive graph, checks every unique node for known CVE/GHSA advisories via OSV.dev, and returns the shortest root-to-node path for each vulnerable dependency found — so a CVE deep in the tree can be traced back to which direct dependency pulls it in. An empty vulnerabilityPaths list means no known vulnerability was found in the graph; it is not a safety guarantee (same OSV coverage caveat as get_dependency_vulnerabilities). Partial results are flagged when deps.dev/OSV is unreachable, the graph is truncated by the node cap, or the unique-dependency count is truncated before querying OSV.",
+        "inputSchema": {
+            "type": "object",
+            "additionalProperties": False,
+            "properties": {
+                "groupId": {"type": "string", "description": "Maven group ID of the project root"},
+                "artifactId": {"type": "string", "description": "Maven artifact ID of the project root"},
+                "version": {"type": "string", "description": "Maven version of the project root"},
             },
             "required": ["groupId", "artifactId", "version"],
         },
@@ -9767,6 +10173,29 @@ TOOLS = [
             "required": ["dependencies"],
         },
     },
+    {
+        "name": "get_eol_status",
+        "description": "Check end-of-life / support status for JDK, Kotlin, Gradle, and/or Spring Boot via endoflife.date. Provide one or more of kotlin/gradle/springBoot (a version string) and/or jdk ({vendor, version}) — at least one is required. endoflife.date has no generic \"java\" product: JDK end-of-life is vendor-specific (e.g. eclipse-temurin, amazon-corretto, oracle-jdk, redhat-build-of-openjdk), so jdk always requires an explicit vendor. Each requested version is matched to its endoflife.date release cycle (cycle granularity varies by product — Gradle/JDK vendors cycle by major version, Kotlin/Spring Boot by major.minor) and reports isEol/eolDate/isMaintained/isLts/latestInCycle for that cycle. A version with no matching cycle, or a product/vendor unknown to endoflife.date, surfaces a clear per-item error rather than failing the whole call.",
+        "inputSchema": {
+            "type": "object",
+            "additionalProperties": False,
+            "properties": {
+                "kotlin": {"type": "string", "description": "Kotlin version to check, e.g. \"2.4.10\""},
+                "gradle": {"type": "string", "description": "Gradle version to check, e.g. \"8.14.5\""},
+                "springBoot": {"type": "string", "description": "Spring Boot version to check, e.g. \"3.5.16\""},
+                "jdk": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "description": "JDK version to check. endoflife.date has no generic \"java\" product — vendor is required.",
+                    "properties": {
+                        "vendor": {"type": "string", "description": "endoflife.date JDK product slug, e.g. \"eclipse-temurin\", \"amazon-corretto\", \"oracle-jdk\", \"redhat-build-of-openjdk\""},
+                        "version": {"type": "string", "description": "JDK version to check, e.g. \"21.0.11\""},
+                    },
+                    "required": ["vendor", "version"],
+                },
+            },
+        },
+    },
 ]
 
 TOOL_HANDLERS = {
@@ -9778,6 +10207,7 @@ TOOL_HANDLERS = {
     "scan_project_dependencies": handle_scan_project_dependencies,
     "expand_bom": handle_expand_bom,
     "get_transitive_graph": handle_get_transitive_graph,
+    "get_vulnerability_paths": handle_get_vulnerability_paths,
     "detect_dependency_conflicts": handle_detect_dependency_conflicts,
     "check_version_compatibility": handle_check_version_compatibility,
     "get_dependency_vulnerabilities": handle_get_dependency_vulnerabilities,
@@ -9788,6 +10218,7 @@ TOOL_HANDLERS = {
     "audit_project_dependencies": handle_audit_project_dependencies,
     "catalog_entry": handle_catalog_entry,
     "verify_coordinates": handle_verify_coordinates,
+    "get_eol_status": handle_get_eol_status,
 }
 
 # Name -> inputSchema, for the dispatcher's own required-argument pre-check
