@@ -1,6 +1,6 @@
 {
   "name": "maven-mcp",
-  "version": "0.25.0",
+  "version": "0.26.0",
   "description": "Maven dependency intelligence — dependency updates, vulnerability and license scanning, transitive dependency graphs, version compatibility checks, artifact search, and version-catalog management, exposed as Claude Code skills. Works in Claude cloud and local without any NPM setup.",
   "author": {
     "name": "kirich1409"
