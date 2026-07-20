@@ -5,6 +5,7 @@ and aggregation across a mocked GetDependencies graph.
 """
 
 import json
+import time
 import unittest
 import unittest.mock
 import urllib.error
@@ -315,6 +316,38 @@ class TestCheckLicenseCompliance(unittest.TestCase):
         # Root still present with review (never false ok for missing data).
         self.assertEqual(len(out["results"]), 1)
         self.assertEqual(out["results"][0]["verdict"], "review")
+
+    def test_deadline_marks_partial_without_hanging(self):
+        # #402: force the deadline path deterministically by making
+        # fetch_depsdev_dependencies artificially slow relative to a tiny
+        # TOOL_DEADLINE -- avoids any race on exact submit/check timing (the
+        # margin between the sleep and the deadline absorbs scheduling
+        # jitter). Two roots so the #400 parallel root-fetch phase actually
+        # has more than one item to bound. The call must return promptly
+        # (not block for the full artificial delay) with partial: true and
+        # an explanatory note.
+        def _slow_graph(group_id, artifact_id, version):
+            time.sleep(0.2)
+            return {"ok": True, "nodes": [], "edges": []}
+
+        with unittest.mock.patch.object(server, "TOOL_DEADLINE", 0.02), \
+                unittest.mock.patch.object(
+                    server, "fetch_depsdev_dependencies", side_effect=_slow_graph,
+                ):
+            start = time.monotonic()
+            out = server.check_license_compliance(
+                [
+                    {"groupId": "com.example", "artifactId": "root1", "version": "1.0"},
+                    {"groupId": "com.example", "artifactId": "root2", "version": "1.0"},
+                ],
+                project_license="MIT",
+            )
+            elapsed = time.monotonic() - start
+        self.assertTrue(out["partial"])
+        self.assertTrue(any("deadline" in n.lower() for n in out["notes"]))
+        # Returned well before the 0.2s the slow mock would need per root --
+        # proves the call did not block waiting for the cut-off fetches.
+        self.assertLess(elapsed, 0.2)
 
     def test_handler_wires_args(self):
         graph = _graph(

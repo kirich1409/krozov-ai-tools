@@ -16,6 +16,8 @@ Two extra requirements live here:
 
 import datetime
 import json
+import threading
+import time
 import unittest
 import unittest.mock
 
@@ -131,20 +133,31 @@ class TestCheckMultipleDependencies(unittest.TestCase):
 
     def test_failed_fetch_records_error(self):
         # First dep resolves, second 404s -> fetch_metadata raises -> error entry.
-        responses = [
-            (200, _meta(["1.0.0", "1.1.0"])),
-            http_error("https://repo.example/x", 404, "Not Found"),
-        ]
-        with _patch_urlopen(responses):
+        # #400: the per-dependency fan-out now runs on a ThreadPoolExecutor, so
+        # urlopen calls are no longer guaranteed to happen in input order --
+        # route by URL (which embeds the artifactId) instead of a
+        # position-based queue.
+        def _route(req, *args, **kwargs):
+            url = req.full_url if hasattr(req, "full_url") else str(req)
+            if "good" in url:
+                return mock_urlopen([(200, _meta(["1.0.0", "1.1.0"]))])(req, *args, **kwargs)
+            return mock_urlopen([http_error(url, 404, "Not Found")])(req, *args, **kwargs)
+
+        with unittest.mock.patch("urllib.request.urlopen", side_effect=_route):
             out = server.handle_check_multiple_dependencies({
                 "dependencies": [
                     {"groupId": "com.example", "artifactId": "good"},
                     {"groupId": "com.example", "artifactId": "bad"},
                 ],
             })
-        self.assertEqual(out["results"][0]["latestVersion"], "1.1.0")
-        self.assertEqual(out["results"][1]["latestVersion"], "")
-        self.assertIn("error", out["results"][1])
+        by_artifact = {r["artifactId"]: r for r in out["results"]}
+        self.assertEqual(by_artifact["good"]["latestVersion"], "1.1.0")
+        self.assertEqual(by_artifact["bad"]["latestVersion"], "")
+        self.assertIn("error", by_artifact["bad"])
+        # RESULT ORDERING is preserved regardless of which thread completed
+        # first (#400: _map_parallel is index-mapped, not completion-order).
+        self.assertEqual(out["results"][0]["artifactId"], "good")
+        self.assertEqual(out["results"][1]["artifactId"], "bad")
 
 
 # --- handle_compare_dependency_versions (+ #263 regression) -----------------
@@ -163,11 +176,17 @@ class TestCompareDependencyVersions(unittest.TestCase):
         # Asserting the EXACT error string + upgradeAvailable/latestVersion makes
         # this fail if the guard is removed: without it, get_upgrade_type(current,
         # None) raises a TypeError whose message would replace the error text.
-        responses = [
-            (200, _meta(["2.0.0-SNAPSHOT"])),  # dep[0] only less-stable, current absent
-            (200, _meta(["1.0.0", "1.1.0"])),  # dep[1] sibling metadata
-        ]
-        with _patch_urlopen(responses):
+        # #400: the per-dependency fan-out now runs on a ThreadPoolExecutor, so
+        # urlopen calls are no longer guaranteed to happen in input order --
+        # route by URL (which embeds the artifactId) instead of a
+        # position-based queue.
+        def _route(req, *args, **kwargs):
+            url = req.full_url if hasattr(req, "full_url") else str(req)
+            if "nomatch" in url:
+                return mock_urlopen([(200, _meta(["2.0.0-SNAPSHOT"]))])(req, *args, **kwargs)
+            return mock_urlopen([(200, _meta(["1.0.0", "1.1.0"]))])(req, *args, **kwargs)
+
+        with unittest.mock.patch("urllib.request.urlopen", side_effect=_route):
             out = server.handle_compare_dependency_versions({
                 "dependencies": [
                     {"groupId": "com.example", "artifactId": "nomatch",
@@ -176,7 +195,8 @@ class TestCompareDependencyVersions(unittest.TestCase):
                      "currentVersion": "1.0.0"},
                 ],
             })
-        no_match, sibling = out["results"]
+        by_artifact = {r["artifactId"]: r for r in out["results"]}
+        no_match, sibling = by_artifact["nomatch"], by_artifact["sibling"]
 
         # Exact observables of the guard:
         self.assertEqual(no_match["error"], "No matching version found")
@@ -187,6 +207,11 @@ class TestCompareDependencyVersions(unittest.TestCase):
         self.assertEqual(sibling["latestVersion"], "1.1.0")
         self.assertIs(sibling["upgradeAvailable"], True)
         self.assertEqual(sibling["upgradeType"], "minor")
+
+        # RESULT ORDERING is preserved regardless of which thread completed
+        # first (#400: _map_parallel is index-mapped, not completion-order).
+        self.assertEqual(out["results"][0]["artifactId"], "nomatch")
+        self.assertEqual(out["results"][1]["artifactId"], "sibling")
 
     def test_up_to_date_reports_no_upgrade_without_error(self):
         # #312 correction: an already-up-to-date dependency (current == latest
@@ -821,6 +846,173 @@ class TestAuditProjectDependencies(unittest.TestCase):
         )
         self.assertTrue(entry["vulnerabilities"])
         self.assertEqual(entry["vulnerabilities"][0]["fixedVersion"], "1.2.4")
+
+    def test_metadata_cache_dedups_across_duplicate_ga_under_concurrency(self):
+        # #400 thread-safety audit: two scanned rows share the SAME
+        # groupId:artifactId at DIFFERENT versions (e.g. two Gradle modules
+        # pinned to different versions of the same library -- verified
+        # empirically that scan_project keeps these as two separate rows, not
+        # merged). Deliberately widen the race window (artificial delay) so
+        # BOTH worker threads race past the "not yet cached" check before
+        # either finishes its own fetch. metadata_cache_lock's guarantee is
+        # NOT "never double-fetch" -- a check-then-fetch race can still cause
+        # a benign redundant fetch (perf, not correctness, per the audit) --
+        # it is that the dict is never corrupted and every entry sharing the
+        # GA ends up referencing the SAME (first-installed-via-setdefault)
+        # metadata object, so both audit rows compute IDENTICAL, valid
+        # results regardless of which thread's fetch "won".
+        resolved = [
+            {
+                "groupId": "com.example", "artifactId": "shared-lib", "version": "1.0.0",
+                "resolvedBy": "gradle",
+                "usages": [{"module": "app", "configuration": "releaseRuntimeClasspath"}],
+            },
+            {
+                "groupId": "com.example", "artifactId": "shared-lib", "version": "2.0.0",
+                "resolvedBy": "gradle",
+                "usages": [{"module": "lib2", "configuration": "releaseRuntimeClasspath"}],
+            },
+        ]
+        call_count = {"n": 0}
+        lock = threading.Lock()
+
+        def _counting_fetch_metadata(group_id, artifact_id, ctx):
+            with lock:
+                call_count["n"] += 1
+            time.sleep(0.02)  # widen the race window so both threads overlap
+            return {"versions": ["1.0.0", "1.5.0", "2.0.0"], "resolvedFrom": None}
+
+        with temp_project({
+            "settings.gradle.kts": 'rootProject.name = "app"\n',
+            "build.gradle.kts": "dependencies { }\n",
+        }) as root:
+            write_fake_gradlew(root)
+            with mock_gradle_resolve(resolved, production_count=2):
+                with unittest.mock.patch.object(
+                    server, "fetch_metadata", side_effect=_counting_fetch_metadata,
+                ):
+                    out = server.handle_audit_project_dependencies({
+                        "projectPath": root, "includeVulnerabilities": False,
+                    })
+        # Bounded (never unbounded/runaway -- at most one call per entry
+        # sharing this GA) and at least one call actually happened.
+        self.assertGreaterEqual(call_count["n"], 1)
+        self.assertLessEqual(call_count["n"], 2)
+        by_version = {d["currentVersion"]: d for d in out["dependencies"]}
+        self.assertEqual(set(by_version), {"1.0.0", "2.0.0"})
+        # Both rows see a CONSISTENT metadata view (same version list) no
+        # matter which thread's fetch ended up cached -- proof the dict
+        # itself was never corrupted or left half-written under the race.
+        self.assertEqual(by_version["1.0.0"]["latestVersion"], "2.0.0")
+        self.assertEqual(by_version["2.0.0"]["upgradeType"], "none")
+
+    def test_deadline_marks_partial_and_flags_skipped_entries(self):
+        # #402: force the deadline path deterministically by making
+        # fetch_metadata artificially slow relative to a tiny TOOL_DEADLINE
+        # -- avoids any race on exact submit/check timing (the 10x margin
+        # between the sleep and the deadline absorbs scheduling jitter).
+        # Both deps must still appear in `dependencies` (never silently
+        # dropped), each flagged with a deadline-skip error, and the
+        # top-level partial/notes contract must fire.
+        pom = (
+            "<project><dependencies>"
+            "<dependency><groupId>com.example</groupId><artifactId>one</artifactId>"
+            "<version>1.0.0</version></dependency>"
+            "<dependency><groupId>com.example</groupId><artifactId>two</artifactId>"
+            "<version>1.0.0</version></dependency>"
+            "</dependencies></project>"
+        )
+
+        def _slow_fetch_metadata(group_id, artifact_id, ctx):
+            time.sleep(0.2)
+            return {"versions": ["1.0.0"], "resolvedFrom": None}
+
+        with temp_project({"pom.xml": pom}) as root:
+            with unittest.mock.patch.object(server, "TOOL_DEADLINE", 0.02), \
+                    unittest.mock.patch.object(
+                        server, "fetch_metadata", side_effect=_slow_fetch_metadata,
+                    ):
+                out = server.handle_audit_project_dependencies({
+                    "projectPath": root, "includeVulnerabilities": False,
+                })
+        self.assertTrue(out.get("partial"))
+        self.assertTrue(any("deadline" in n.lower() for n in out["notes"]))
+        self.assertEqual(len(out["dependencies"]), 2)
+        for dep in out["dependencies"]:
+            self.assertIn("error", dep)
+            self.assertIn("deadline", dep["error"])
+
+    def test_only_issues_filters_to_dependencies_with_signals(self):
+        # #405: onlyIssues narrows `dependencies` to entries carrying a signal
+        # (here: an available upgrade) while `summary` still covers the FULL
+        # scanned set.
+        pom = (
+            "<project><dependencies>"
+            "<dependency><groupId>com.example</groupId><artifactId>outdated</artifactId>"
+            "<version>1.0.0</version></dependency>"
+            "<dependency><groupId>com.example</groupId><artifactId>current</artifactId>"
+            "<version>2.0.0</version></dependency>"
+            "</dependencies></project>"
+        )
+
+        def _route(req, *args, **kwargs):
+            url = req.full_url if hasattr(req, "full_url") else str(req)
+            if "outdated" in url:
+                return mock_urlopen([(200, _meta(["1.0.0", "1.1.0"]))])(req, *args, **kwargs)
+            return mock_urlopen([(200, _meta(["2.0.0"]))])(req, *args, **kwargs)
+
+        with temp_project({"pom.xml": pom}) as root:
+            with unittest.mock.patch("urllib.request.urlopen", side_effect=_route):
+                out = server.handle_audit_project_dependencies({
+                    "projectPath": root,
+                    "includeVulnerabilities": False,
+                    "onlyIssues": True,
+                })
+        self.assertTrue(out["onlyIssues"])
+        self.assertEqual(out["summary"]["total"], 2)
+        self.assertEqual(out["summary"]["withIssues"], 1)
+        self.assertEqual(out["summary"]["clean"], 1)
+        self.assertEqual([d["artifactId"] for d in out["dependencies"]], ["outdated"])
+
+    def test_only_issues_default_false_leaves_output_unchanged(self):
+        # Omitted (default false) -> every scanned dep present, no
+        # onlyIssues/withIssues/clean keys added (byte-for-byte unchanged
+        # shape from before #405).
+        pom = (
+            "<project><dependencies><dependency>"
+            "<groupId>com.example</groupId><artifactId>lib</artifactId><version>2.0.0</version>"
+            "</dependency></dependencies></project>"
+        )
+        with temp_project({"pom.xml": pom}) as root:
+            with _patch_urlopen([(200, _meta(["2.0.0"]))]):
+                out = server.handle_audit_project_dependencies({
+                    "projectPath": root, "includeVulnerabilities": False,
+                })
+        self.assertNotIn("onlyIssues", out)
+        self.assertNotIn("withIssues", out["summary"])
+        self.assertEqual(len(out["dependencies"]), 1)
+
+    def test_resolved_from_dedup_hoists_shared_default(self):
+        # #405: 3 deps all resolve from the SAME (public-fallback) repo ->
+        # resolvedFrom is hoisted to a top-level defaultResolvedFrom and
+        # stripped from every matching entry; no provenance is lost since a
+        # reader falls back to the top-level field.
+        pom = (
+            "<project><dependencies>"
+            "<dependency><groupId>com.example</groupId><artifactId>a</artifactId><version>1.0.0</version></dependency>"
+            "<dependency><groupId>com.example</groupId><artifactId>b</artifactId><version>1.0.0</version></dependency>"
+            "<dependency><groupId>com.example</groupId><artifactId>c</artifactId><version>1.0.0</version></dependency>"
+            "</dependencies></project>"
+        )
+        with temp_project({"pom.xml": pom}) as root:
+            with _patch_urlopen([(200, _meta(["1.0.0"]))] * 3):
+                out = server.handle_audit_project_dependencies({
+                    "projectPath": root, "includeVulnerabilities": False,
+                })
+        self.assertIn("defaultResolvedFrom", out)
+        self.assertEqual(out["defaultResolvedFrom"]["url"], server.MAVEN_CENTRAL_URL)
+        for dep in out["dependencies"]:
+            self.assertNotIn("resolvedFrom", dep)
 
 
 # --- dependency-health stat/date helpers (P3 boundaries, direct) ------------

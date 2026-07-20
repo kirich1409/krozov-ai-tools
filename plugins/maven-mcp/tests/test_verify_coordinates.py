@@ -12,6 +12,7 @@ candidate ``versionCount`` and the similarity-driving strings precisely.
 
 import contextlib
 import json
+import threading
 import time
 import unittest
 import unittest.mock
@@ -575,6 +576,10 @@ class IsolationAndCapsTest(unittest.TestCase):
     def test_per_item_isolation_unexpected_error(self):
         # The first item triggers an UNEXPECTED (non-urlopen) failure deep in the
         # handler; it degrades to an error item while the sibling still resolves.
+        # #400: the per-coordinate fan-out now runs on a ThreadPoolExecutor, so
+        # urlopen calls are no longer guaranteed to happen in input order --
+        # route by URL (which embeds the artifactId) instead of a
+        # position-based queue.
         original_classify = server.classify_version
 
         def boom(version):
@@ -582,9 +587,15 @@ class IsolationAndCapsTest(unittest.TestCase):
                 raise RuntimeError("downstream boom")
             return original_classify(version)
 
+        def _route(req, *args, **kwargs):
+            url = req.full_url if hasattr(req, "full_url") else str(req)
+            if "boom" in url:
+                return mock_urlopen([_meta(["9.9.9"])])(req, *args, **kwargs)
+            return mock_urlopen([_meta(["1.0"])])(req, *args, **kwargs)
+
         with temp_project({}) as root, _no_gated_solr_calls(), \
                 unittest.mock.patch.object(server, "classify_version", side_effect=boom), \
-                _patch_urlopen([_meta(["9.9.9"]), _meta(["1.0"])]):
+                unittest.mock.patch("urllib.request.urlopen", side_effect=_route):
             out = server.handle_verify_coordinates({
                 "dependencies": [
                     {"groupId": "com.bad", "artifactId": "boom"},
@@ -592,10 +603,15 @@ class IsolationAndCapsTest(unittest.TestCase):
                 ],
                 "projectPath": root,
             })
-        bad, good = out["results"]
+        by_artifact = {r["artifactId"]: r for r in out["results"]}
+        bad, good = by_artifact["boom"], by_artifact["lib"]
         self.assertIn("error", bad)
         self.assertEqual(good["existenceStatus"], "exists")
         self.assertTrue(good["gaExists"])
+        # RESULT ORDERING is preserved regardless of which thread completed
+        # first (#400: _map_parallel is index-mapped, not completion-order).
+        self.assertEqual(out["results"][0]["artifactId"], "boom")
+        self.assertEqual(out["results"][1]["artifactId"], "lib")
 
     def test_caps_truncate_dependencies_over_100(self):
         # 101 deps -> the HANDLER truncates to 100 before any I/O. _repos_for is
@@ -625,6 +641,50 @@ class IsolationAndCapsTest(unittest.TestCase):
                 "projectPath": root,
             })
         self.assertEqual(len(out["results"][0]["suggestions"]), 10)
+
+    def test_gated_calls_lock_holds_under_real_concurrency(self):
+        # #400: the per-coordinate fan-out now runs on a ThreadPoolExecutor.
+        # Feed more low-version-count (gate-opening) coordinates than
+        # MAX_GATED_SOLR_CALLS_PER_BATCH allows, run them concurrently with
+        # artificially slowed gated calls (widens the race window), and
+        # assert the TOTAL actually issued never exceeds the cap -- this
+        # proves _reserve_gated_call's lock (not just its single-threaded
+        # logic, already covered elsewhere) holds under real thread
+        # contention.
+        n_deps = 12
+        cap = 5
+        deps = [{"groupId": "com.x", "artifactId": f"lib{i}"} for i in range(n_deps)]
+        call_lock = threading.Lock()
+        gated_call_count = {"n": 0}
+
+        def _counting_search(*args, **kwargs):
+            with call_lock:
+                gated_call_count["n"] += 1
+            time.sleep(0.005)
+            return []
+
+        def _counting_timestamp(*args, **kwargs):
+            with call_lock:
+                gated_call_count["n"] += 1
+            time.sleep(0.005)
+            return None
+
+        with temp_project({}) as root, \
+                unittest.mock.patch.object(server, "MAX_GATED_SOLR_CALLS_PER_BATCH", cap), \
+                unittest.mock.patch.object(server, "search_maven_central", side_effect=_counting_search), \
+                unittest.mock.patch.object(server, "_fetch_gav_timestamp", side_effect=_counting_timestamp), \
+                _patch_urlopen([_meta(["1.0.0"])] * n_deps):
+            out = server.handle_verify_coordinates({
+                "dependencies": deps,
+                "projectPath": root,
+            })
+        self.assertEqual(len(out["results"]), n_deps)
+        for item in out["results"]:
+            # versionCount=1 <= LOW_VERSION_COUNT_THRESHOLD on every coordinate
+            # -> the gate opens for all of them regardless of which ones
+            # actually got a reserved call slot.
+            self.assertIn("low_version_count", item["typosquatRisk"]["reasons"])
+        self.assertLessEqual(gated_call_count["n"], cap)
 
 
 if __name__ == "__main__":

@@ -380,14 +380,19 @@ class TestDetectDependencyConflicts(unittest.TestCase):
 
     def test_maven_nearest_wins(self):
         files = self._two_root_project()
+        # #400: detect_dependency_conflicts now fetches each root's deps.dev
+        # graph in parallel via a ThreadPoolExecutor, so urlopen calls are no
+        # longer guaranteed to happen in input (left, then right) order --
+        # route by URL (which embeds the artifactId, percent-encoded) instead
+        # of a position-based queue.
+        def _route(req, *args, **kwargs):
+            url = req.full_url if hasattr(req, "full_url") else str(req)
+            if "left" in url:
+                return mock_urlopen([(200, self._left_graph())])(req, *args, **kwargs)
+            return mock_urlopen([(200, self._right_graph())])(req, *args, **kwargs)
+
         with temp_project(files) as root:
-            with unittest.mock.patch(
-                "urllib.request.urlopen",
-                side_effect=mock_urlopen([
-                    (200, self._left_graph()),
-                    (200, self._right_graph()),
-                ]),
-            ):
+            with unittest.mock.patch("urllib.request.urlopen", side_effect=_route):
                 out = server.handle_detect_dependency_conflicts({
                     "projectPath": root,
                     "buildSystem": "maven",
