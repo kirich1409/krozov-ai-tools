@@ -439,6 +439,108 @@ class TestGetDependencyVulnerabilities(unittest.TestCase):
         self.assertEqual(m.call_count, 1)  # only the OSV POST, no POM fetch attempted
         self.assertEqual(result["vulnerabilityCount"], 0)
 
+    def test_safe_upgrade_synthesized_from_single_fixed_version(self):
+        # #412: exactly one known CVE with a fixed version -> that version IS
+        # the minimum clearing every known vulnerability.
+        batch = _osv_batch_bare([["GHSA-xxxx"]])
+        full = {
+            "id": "GHSA-xxxx",
+            "summary": "bad bug",
+            "severity": [{"type": "CVSS_V3", "score": "9.8"}],
+            "affected": [{"ranges": [{"type": "ECOSYSTEM", "events": [
+                {"introduced": "0"}, {"fixed": "1.2.3"},
+            ]}]}],
+            "references": [{"type": "ADVISORY", "url": "https://advisory/x"}],
+        }
+        with _patch_urlopen([(200, batch), (200, _osv_vuln_get(full))]):
+            out = server.handle_get_dependency_vulnerabilities({
+                "dependencies": [
+                    {"groupId": "com.example", "artifactId": "lib", "version": "1.0.0"},
+                ],
+            })
+        result = out["results"][0]
+        self.assertEqual(
+            result["safeUpgrade"], {"version": "1.2.3", "fixesAllKnown": True}
+        )
+
+    def test_safe_upgrade_takes_highest_fixed_across_multiple_cves(self):
+        # #412: two CVEs on the same coordinate, fixed at different versions ->
+        # the safe target is the HIGHEST of the two (clears both at once).
+        batch = _osv_batch_bare([["GHSA-aaaa", "GHSA-bbbb"]])
+        low_fix = {
+            "id": "GHSA-aaaa", "summary": "bug A",
+            "severity": [{"type": "CVSS_V3", "score": "7.5"}],
+            "affected": [{"ranges": [{"type": "ECOSYSTEM", "events": [
+                {"introduced": "0"}, {"fixed": "1.2.3"},
+            ]}]}],
+            "references": [],
+        }
+        high_fix = {
+            "id": "GHSA-bbbb", "summary": "bug B",
+            "severity": [{"type": "CVSS_V3", "score": "9.8"}],
+            "affected": [{"ranges": [{"type": "ECOSYSTEM", "events": [
+                {"introduced": "0"}, {"fixed": "1.5.0"},
+            ]}]}],
+            "references": [],
+        }
+        with _patch_urlopen([
+            (200, batch),
+            (200, _osv_vuln_get(low_fix)),
+            (200, _osv_vuln_get(high_fix)),
+        ]):
+            out = server.handle_get_dependency_vulnerabilities({
+                "dependencies": [
+                    {"groupId": "com.example", "artifactId": "lib", "version": "1.0.0"},
+                ],
+            })
+        result = out["results"][0]
+        self.assertEqual(
+            result["safeUpgrade"], {"version": "1.5.0", "fixesAllKnown": True}
+        )
+
+    def test_safe_upgrade_cannot_synthesize_when_a_cve_has_no_fixed_version(self):
+        # #412: one CVE has a known fix, the other has none -> no single
+        # version can be certified to clear BOTH, so no version is surfaced.
+        batch = _osv_batch_bare([["GHSA-aaaa", "GHSA-cccc"]])
+        has_fix = {
+            "id": "GHSA-aaaa", "summary": "bug A",
+            "affected": [{"ranges": [{"type": "ECOSYSTEM", "events": [
+                {"introduced": "0"}, {"fixed": "1.2.3"},
+            ]}]}],
+            "references": [],
+        }
+        no_fix = {
+            "id": "GHSA-cccc", "summary": "bug C, unfixed",
+            "affected": [{"ranges": [{"type": "ECOSYSTEM", "events": [
+                {"introduced": "0"},
+            ]}]}],
+            "references": [],
+        }
+        with _patch_urlopen([
+            (200, batch),
+            (200, _osv_vuln_get(has_fix)),
+            (200, _osv_vuln_get(no_fix)),
+        ]):
+            out = server.handle_get_dependency_vulnerabilities({
+                "dependencies": [
+                    {"groupId": "com.example", "artifactId": "lib", "version": "1.0.0"},
+                ],
+            })
+        result = out["results"][0]
+        self.assertFalse(result["safeUpgrade"]["fixesAllKnown"])
+        self.assertNotIn("version", result["safeUpgrade"])
+        self.assertIn("GHSA-cccc", result["safeUpgrade"]["reason"])
+
+    def test_no_safe_upgrade_key_when_zero_vulnerabilities(self):
+        # #412: nothing to synthesize when the coordinate has no known CVEs.
+        with _patch_urlopen([(500, b"")]):
+            out = server.handle_get_dependency_vulnerabilities({
+                "dependencies": [
+                    {"groupId": "com.example", "artifactId": "lib", "version": "1.0.0"},
+                ],
+            })
+        self.assertNotIn("safeUpgrade", out["results"][0])
+
     def test_caps_truncate_dependencies_over_100(self):
         # 101 deps -> the HANDLER truncates to 100 before any I/O (same pattern
         # as verify_coordinates). Mock query_osv_batch to assert it only sees 100.
@@ -463,8 +565,8 @@ class TestGetDependencyHealth(unittest.TestCase):
 
     def test_full_github_signals(self):
         # Call sequence (all must be 200 + valid JSON or the chain short-circuits):
-        # metadata(1) + pom(1) + gh_fetch_repo(1) + gh_fetch_releases(1)
-        # + gh_fetch_issue_stats(3) + gh_fetch_user(1) = 8.
+        # metadata(1) + pom(1) + depsdev-scorecard(1, #411) + gh_fetch_repo(1)
+        # + gh_fetch_releases(1) + gh_fetch_issue_stats(3) + gh_fetch_user(1) = 9.
         pom = (
             "<project><scm><url>https://github.com/acme/widget</url></scm>"
             "<licenses><license><name>Apache-2.0</name></license></licenses>"
@@ -478,9 +580,29 @@ class TestGetDependencyHealth(unittest.TestCase):
             "license": {"spdx_id": "Apache-2.0"},
             "created_at": "2020-01-01T00:00:00Z",
         }
+        scorecard_project = {
+            "projectKey": {"id": "github.com/acme/widget"},
+            "scorecard": {
+                "date": "2026-07-06T00:00:00Z",
+                "repository": {"name": "github.com/acme/widget", "commit": "abc123"},
+                "scorecard": {"version": "v5.5.1", "commit": "def456"},
+                "overallScore": 8.5,
+                "checks": [
+                    {
+                        "name": "Maintained",
+                        "documentation": {"shortDescription": "x", "url": "https://x"},
+                        "score": 10,
+                        "reason": "19 commit(s) in the last 90 days",
+                        "details": [],
+                    },
+                ],
+                "metadata": [],
+            },
+        }
         responses = [
             (200, _meta(["1.0.0"])),
             (200, pom.encode("utf-8")),
+            (200, _json(scorecard_project)),         # deps.dev GetProject (#411)
             (200, _json(repo)),
             (200, _json([])),                       # releases
             (200, _json({"total_count": 5})),       # issues open
@@ -497,6 +619,49 @@ class TestGetDependencyHealth(unittest.TestCase):
         self.assertIsNotNone(result["github"])
         self.assertEqual(result["github"]["stars"], 100)
         self.assertEqual(result["github"]["license"], "Apache-2.0")
+        # #411: OpenSSF Scorecard surfaced, trimmed to name/score/reason per check.
+        self.assertEqual(result["scorecard"]["overallScore"], 8.5)
+        self.assertEqual(result["scorecard"]["generatedBy"], "OpenSSF")
+        self.assertEqual(
+            result["scorecard"]["checks"][0],
+            {"name": "Maintained", "score": 10, "reason": "19 commit(s) in the last 90 days"},
+        )
+
+    def test_scorecard_absent_degrades_without_breaking_github_signals(self):
+        # #411: deps.dev 404 "project not found" (empirically the common case
+        # for a repo it has not indexed) must not affect the surrounding
+        # GitHub metrics — the scorecard field is simply omitted.
+        pom = (
+            "<project><scm><url>https://github.com/acme/widget</url></scm>"
+            "<licenses><license><name>Apache-2.0</name></license></licenses>"
+            "</project>"
+        )
+        repo = {
+            "stargazers_count": 100, "forks_count": 10, "open_issues_count": 5,
+            "archived": False,
+            "owner": {"login": "acme", "type": "Organization"},
+            "pushed_at": "2024-06-01T00:00:00Z",
+            "license": {"spdx_id": "Apache-2.0"},
+            "created_at": "2020-01-01T00:00:00Z",
+        }
+        responses = [
+            (200, _meta(["1.0.0"])),
+            (200, pom.encode("utf-8")),
+            (404, b"project not found"),             # deps.dev GetProject (#411)
+            (200, _json(repo)),
+            (200, _json([])),                       # releases
+            (200, _json({"total_count": 5})),       # issues open
+            (200, _json({"total_count": 20})),      # issues closed
+            (200, _json({"items": []})),            # median items
+            (200, _json({"public_repos": 50, "created_at": "2015-01-01T00:00:00Z"})),
+        ]
+        with _patch_urlopen(responses):
+            out = server.handle_get_dependency_health({
+                "dependencies": [{"groupId": "com.example", "artifactId": "widget"}],
+            })
+        result = out["results"][0]
+        self.assertNotIn("scorecard", result)
+        self.assertEqual(result["github"]["stars"], 100)
 
     def test_no_github_repo_health_error(self):
         # metadata(1) + pom 404 -> None(1); guess fails for com.example -> no repo.

@@ -28,8 +28,8 @@ test scopes). Use the per-dependency `vulnerabilities` from the result.
    entries (and `projectPath` so Gradle plugin markers resolve to implementation GAVs).
 
 Use the tool output fields as-is: `id`, `summary`, `severity`, `fixedVersion`, `malicious`,
-and `resolvedImplementation` when present. Do **not** re-derive severity/summary from a raw
-OSV querybatch response while the MCP tool works.
+`safeUpgrade`, and `resolvedImplementation` when present. Do **not** re-derive
+severity/summary from a raw OSV querybatch response while the MCP tool works.
 
 ## Step 2 — Build the report
 
@@ -68,8 +68,11 @@ When at least one finding exists, ask the user — one question, four options:
    already returned, or fetch `https://api.osv.dev/v1/vulns/{id}` only if more detail is needed.
 4. **Report only** — make no changes.
 
-**Recommended fixed version per package:** `max(fixedVersion)` across findings for that GA.
-If every finding lacks `fixedVersion`, list under "Manual upgrade required".
+**Recommended fixed version per package:** use `safeUpgrade.version` from
+`get_dependency_vulnerabilities` when `safeUpgrade.fixesAllKnown` is `true` (the tool
+already computes `max(fixedVersion)` across findings for that GA server-side — do not
+re-derive it by hand). When `safeUpgrade` is absent or `fixesAllKnown` is `false`, list
+under "Manual upgrade required".
 
 ## Step 4 — Apply updates
 
