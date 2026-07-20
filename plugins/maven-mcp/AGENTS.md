@@ -49,6 +49,8 @@ python3 -m unittest discover -s plugins/maven-mcp/tests -p test_handlers.py
 - **Version catalog generate/validate** — `generate_catalog_entry` / `validate_catalog` / `handle_catalog_entry` (#288); reuses `_parse_toml_catalog`.
 - **Tool handlers** — `handle_*`, one per MCP tool, plus the stdio JSON-RPC dispatch loop.
 
+**MCP protocol surface (#398):** protocol version negotiation (`_handle_initialize` echoes back any client-requested version in `MCP_SUPPORTED_PROTOCOL_VERSIONS`, else falls back to `MCP_LATEST_PROTOCOL_VERSION`, currently `2025-11-25`), read-only tool `annotations` on all 20 tools, `outputSchema`/`structuredContent` on 14 of them, and JSON-RPC batching removed to match the target spec revision — see `CLAUDE.md`'s *MCP protocol surface* section for the full rationale; not duplicated here.
+
 **Tools (20):** see `CLAUDE.md`'s Architecture section for the enumerated list — kept in sync with the `TOOLS` registration in `plugin/server/server.py`; that file is the single authoritative enumeration so the list is not hand-maintained twice.
 
 ## Version catalog generate/validate (`catalog_entry`, #288)

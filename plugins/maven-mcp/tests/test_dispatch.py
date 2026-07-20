@@ -1,9 +1,13 @@
 """Dispatcher robustness tests (#343).
 
 The server must survive any successfully-parsed JSON line that is not an
-object (bare scalar, ``null``, boolean) with a -32600 Invalid Request
-response, and must handle JSON-RPC 2.0 batch requests (arrays) instead of
-crashing the process.
+object (bare scalar, ``null``, boolean, or a JSON-RPC 2.0 batch array) with a
+-32600 Invalid Request response, never crashing the process.
+
+Batch (array) requests are a deliberate case of this, not a separate feature
+(#398): the target MCP protocol revision removed JSON-RPC batching from the
+spec, so a top-level array is simply rejected the same way any other
+non-object message is -- see BatchRequestTest.
 """
 
 import contextlib
@@ -58,57 +62,53 @@ class NonObjectMessageTest(unittest.TestCase):
 
 
 class BatchRequestTest(unittest.TestCase):
-    """JSON-RPC 2.0 batch (array) handling."""
+    """JSON-RPC 2.0 batch (array) requests are rejected, not processed (#398).
 
-    def test_batch_of_requests_returns_array_in_order(self):
+    The target MCP protocol revision removed batching from the spec entirely
+    (see server.py's MCP_SUPPORTED_PROTOCOL_VERSIONS comment); there is no
+    revision left to negotiate batch support down to, so a top-level array is
+    just an invalid top-level message -- the same -32600 a bare scalar/null/
+    boolean line already got before this change (NonObjectMessageTest above).
+    """
+
+    def test_batch_of_requests_gets_invalid_request_not_processed(self):
         out = _run_main([json.dumps([_ping(1), _ping(2)])])
         self.assertEqual(len(out), 1)
-        self.assertEqual(
-            out[0],
-            [
-                {"jsonrpc": "2.0", "id": 1, "result": {}},
-                {"jsonrpc": "2.0", "id": 2, "result": {}},
-            ],
-        )
+        self.assertIsInstance(out[0], dict, "a batch must not be processed into an array of responses")
+        self.assertEqual(out[0]["error"]["code"], -32600)
+        self.assertIsNone(out[0]["id"])
 
-    def test_batch_with_notification_omits_it_from_response(self):
+    def test_batch_with_notification_gets_invalid_request(self):
         notification = {"jsonrpc": "2.0", "method": "notifications/initialized"}
         out = _run_main([json.dumps([notification, _ping(5)])])
-        self.assertEqual(out, [[{"jsonrpc": "2.0", "id": 5, "result": {}}]])
+        self.assertEqual(len(out), 1)
+        self.assertEqual(out[0]["error"]["code"], -32600)
 
-    def test_all_notifications_batch_produces_no_output(self):
+    def test_all_notifications_batch_still_gets_invalid_request(self):
+        # Unlike the pre-#398 behavior (an all-notifications batch produced no
+        # output at all), the array itself is now rejected outright -- there
+        # is no batch-aware peek into its elements any more.
         notification = {"jsonrpc": "2.0", "method": "notifications/initialized"}
         out = _run_main([json.dumps([notification, notification])])
-        self.assertEqual(out, [])
+        self.assertEqual(len(out), 1)
+        self.assertEqual(out[0]["error"]["code"], -32600)
 
-    def test_empty_batch_gets_single_error_object(self):
+    def test_empty_batch_gets_invalid_request(self):
         out = _run_main(["[]"])
         self.assertEqual(len(out), 1)
         self.assertIsInstance(out[0], dict)
         self.assertEqual(out[0]["error"]["code"], -32600)
 
-    def test_non_dict_batch_element_gets_error_entry_others_answered(self):
+    def test_batch_with_non_dict_element_gets_invalid_request(self):
         out = _run_main([json.dumps([42, _ping(7)])])
         self.assertEqual(len(out), 1)
-        self.assertEqual(out[0][0]["error"]["code"], -32600)
-        self.assertEqual(out[0][1], {"jsonrpc": "2.0", "id": 7, "result": {}})
-
-    def test_batch_element_exception_isolated(self):
-        # A handler blowing up on one element must not abort the rest.
-        request = {"jsonrpc": "2.0", "id": 3, "method": "ping"}
-        with unittest.mock.patch.object(
-            server, "_handle_ping", side_effect=[RuntimeError("boom"), {"jsonrpc": "2.0", "id": 4, "result": {}}]
-        ):
-            out = _run_main([json.dumps([request, _ping(4)])])
-        self.assertEqual(len(out), 1)
-        self.assertEqual(out[0][0]["error"]["code"], -32603)
-        self.assertEqual(out[0][0]["id"], 3)
-        self.assertEqual(out[0][1]["id"], 4)
+        self.assertIsInstance(out[0], dict)
+        self.assertEqual(out[0]["error"]["code"], -32600)
 
     def test_server_survives_batch_then_answers_next_line(self):
         out = _run_main([json.dumps([_ping(1)]), json.dumps(_ping(2))])
         self.assertEqual(len(out), 2)
-        self.assertEqual(out[0], [{"jsonrpc": "2.0", "id": 1, "result": {}}])
+        self.assertEqual(out[0]["error"]["code"], -32600)
         self.assertEqual(out[1], {"jsonrpc": "2.0", "id": 2, "result": {}})
 
 
@@ -135,20 +135,17 @@ class DispatchBackCompatTest(unittest.TestCase):
         resp = json.loads(stdout.getvalue())
         self.assertEqual(resp["error"]["code"], -32600)
 
-    def test_dispatch_list_delegates_to_batch(self):
-        # Batch support must not be entrypoint-dependent: dispatch() routes
-        # top-level arrays through _dispatch_batch, same as main().
+    def test_dispatch_list_gets_invalid_request(self):
+        # Batch rejection must not be entrypoint-dependent: dispatch() rejects
+        # a top-level array the same way main() does (#398), via the same
+        # non-dict branch in _dispatch_message -- there is no separate batch
+        # dispatcher any more.
         stdout = io.StringIO()
         with contextlib.redirect_stdout(stdout):
             server.dispatch([_ping(1), _ping(2)])
         resp = json.loads(stdout.getvalue())
-        self.assertEqual(
-            resp,
-            [
-                {"jsonrpc": "2.0", "id": 1, "result": {}},
-                {"jsonrpc": "2.0", "id": 2, "result": {}},
-            ],
-        )
+        self.assertEqual(resp["error"]["code"], -32600)
+        self.assertIsNone(resp["id"])
 
 
 class InvalidParamsTest(unittest.TestCase):
@@ -202,6 +199,67 @@ class McpProtocolTest(unittest.TestCase):
         self.assertEqual(result["serverInfo"]["version"], server.SERVER_VERSION)
         self.assertIn("tools", result["capabilities"])
 
+    def test_initialize_echoes_current_latest_protocol_version(self):
+        # #398: a client requesting the server's own latest gets it back
+        # unchanged -- the common case for an up-to-date client.
+        out = _run_main(
+            [
+                json.dumps(
+                    {
+                        "jsonrpc": "2.0",
+                        "id": 1,
+                        "method": "initialize",
+                        "params": {"protocolVersion": server.MCP_LATEST_PROTOCOL_VERSION},
+                    }
+                )
+            ]
+        )
+        self.assertEqual(out[0]["result"]["protocolVersion"], server.MCP_LATEST_PROTOCOL_VERSION)
+
+    def test_initialize_negotiates_down_for_older_supported_client(self):
+        # A client pinned to an older revision this server still lists in
+        # MCP_SUPPORTED_PROTOCOL_VERSIONS must get that EXACT version back,
+        # per spec ("if the server supports the requested protocol version,
+        # it MUST respond with the same version") -- never silently upgraded
+        # to our own latest, which the client might not recognize and then
+        # disconnect over.
+        for version in server.MCP_SUPPORTED_PROTOCOL_VERSIONS:
+            with self.subTest(version=version):
+                out = _run_main(
+                    [
+                        json.dumps(
+                            {
+                                "jsonrpc": "2.0",
+                                "id": 1,
+                                "method": "initialize",
+                                "params": {"protocolVersion": version},
+                            }
+                        )
+                    ]
+                )
+                self.assertEqual(out[0]["result"]["protocolVersion"], version)
+
+    def test_initialize_falls_back_to_latest_for_unrecognized_version(self):
+        out = _run_main(
+            [
+                json.dumps(
+                    {
+                        "jsonrpc": "2.0",
+                        "id": 1,
+                        "method": "initialize",
+                        "params": {"protocolVersion": "1999-01-01"},
+                    }
+                )
+            ]
+        )
+        self.assertEqual(out[0]["result"]["protocolVersion"], server.MCP_LATEST_PROTOCOL_VERSION)
+
+    def test_initialize_falls_back_to_latest_when_version_omitted(self):
+        out = _run_main(
+            [json.dumps({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}})]
+        )
+        self.assertEqual(out[0]["result"]["protocolVersion"], server.MCP_LATEST_PROTOCOL_VERSION)
+
     def test_tools_list_returns_shipped_tools(self):
         out = _run_main(
             [json.dumps({"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}})]
@@ -243,6 +301,62 @@ class McpProtocolTest(unittest.TestCase):
             json.loads(content[0]["text"]),
             {"ok": True, "echo": {"projectPath": "/tmp/proj"}},
         )
+
+    def test_tools_call_attaches_structured_content_for_schema_tool(self):
+        # #398: get_latest_version declared an outputSchema, so a successful
+        # call must carry structuredContent -- the EXACT SAME object as the
+        # content[0].text JSON, never a separately-built dict.
+        fixture = {
+            "groupId": "com.squareup.okhttp3",
+            "artifactId": "okhttp",
+            "latestVersion": "4.12.0",
+            "stability": "STABLE",
+            "allVersionsCount": 42,
+        }
+
+        def _fake_handler(_arguments):
+            return dict(fixture)
+
+        with unittest.mock.patch.dict(server.TOOL_HANDLERS, {"get_latest_version": _fake_handler}):
+            out = _run_main(
+                [
+                    json.dumps(
+                        {
+                            "jsonrpc": "2.0",
+                            "id": 9,
+                            "method": "tools/call",
+                            "params": {
+                                "name": "get_latest_version",
+                                "arguments": {"groupId": "com.squareup.okhttp3", "artifactId": "okhttp"},
+                            },
+                        }
+                    )
+                ]
+            )
+        result = out[0]["result"]
+        self.assertEqual(result["structuredContent"], fixture)
+        self.assertEqual(json.loads(result["content"][0]["text"]), fixture)
+
+    def test_tools_call_omits_structured_content_for_no_schema_tool(self):
+        # search_artifacts deliberately shipped with no outputSchema (#398) --
+        # its result must stay content-only, never gain structuredContent.
+        def _fake_handler(_arguments):
+            return {"results": [{"groupId": "g", "artifactId": "a"}]}
+
+        with unittest.mock.patch.dict(server.TOOL_HANDLERS, {"search_artifacts": _fake_handler}):
+            out = _run_main(
+                [
+                    json.dumps(
+                        {
+                            "jsonrpc": "2.0",
+                            "id": 10,
+                            "method": "tools/call",
+                            "params": {"name": "search_artifacts", "arguments": {"query": "okhttp"}},
+                        }
+                    )
+                ]
+            )
+        self.assertNotIn("structuredContent", out[0]["result"])
 
     def test_tools_call_unknown_tool_is_method_not_found(self):
         out = _run_main(
