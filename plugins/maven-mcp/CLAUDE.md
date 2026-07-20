@@ -32,6 +32,20 @@ Run a single test module:
 python3 -m unittest discover -s plugins/maven-mcp/tests -p test_handlers.py
 ```
 
+**Lint / type-check / coverage (#408).** Dev-only tools, not runtime dependencies —
+install ephemerally (`pip install ruff==0.15.22 mypy==1.20.2 coverage==7.15.2`, or a
+venv). Config lives in `plugins/maven-mcp/pyproject.toml` (`[tool.ruff]`,
+`[tool.mypy]`, `[tool.coverage.*]`); see its comments for what is/isn't enabled and
+why (pragmatic ruleset, per-file-ignores for pre-existing findings, mypy targets the
+3.9 floor independent of the interpreter running it).
+
+```bash
+ruff check plugins/maven-mcp/plugin/server plugins/maven-mcp/tests
+mypy --config-file plugins/maven-mcp/pyproject.toml
+coverage run --rcfile=plugins/maven-mcp/pyproject.toml -m unittest discover -s plugins/maven-mcp/tests
+coverage report --rcfile=plugins/maven-mcp/pyproject.toml   # fail_under=75, ~90% measured
+```
+
 ## Architecture
 
 `server.py` is one file organised into logical sections (no package tree):
@@ -49,7 +63,7 @@ python3 -m unittest discover -s plugins/maven-mcp/tests -p test_handlers.py
 - **Version catalog generate/validate** — `generate_catalog_entry` / `validate_catalog` / `handle_catalog_entry` (#288); reuses `_parse_toml_catalog`.
 - **Tool handlers** — `handle_*`, one per MCP tool, plus the stdio JSON-RPC dispatch loop.
 
-**Tools (18):** `get_latest_version`, `check_version_exists`, `check_multiple_dependencies`, `compare_dependency_versions`, `get_dependency_changes`, `scan_project_dependencies`, `expand_bom`, `get_transitive_graph`, `detect_dependency_conflicts`, `check_version_compatibility`, `get_dependency_vulnerabilities`, `get_dependency_health`, `get_dependency_license`, `check_license_compliance`, `search_artifacts`, `audit_project_dependencies`, `catalog_entry` (see *Version catalog generate/validate* below), `verify_coordinates` (see *`verify_coordinates`* below). Authoritative enumeration, verified against the `TOOLS` registration list in `plugin/server/server.py` — `AGENTS.md` references this list instead of duplicating it.
+**Tools (20):** `get_latest_version`, `check_version_exists`, `check_multiple_dependencies`, `compare_dependency_versions`, `get_dependency_changes`, `scan_project_dependencies`, `expand_bom`, `get_transitive_graph`, `get_vulnerability_paths`, `detect_dependency_conflicts`, `check_version_compatibility`, `get_dependency_vulnerabilities`, `get_dependency_health`, `get_dependency_license`, `check_license_compliance`, `search_artifacts`, `audit_project_dependencies`, `catalog_entry` (see *Version catalog generate/validate* below), `verify_coordinates` (see *`verify_coordinates`* below), `get_eol_status` (see *End-of-life / support status* below). Authoritative enumeration, verified against the `TOOLS` registration list in `plugin/server/server.py` — `AGENTS.md` references this list instead of duplicating it.
 
 ## Version catalog generate/validate (`catalog_entry`, #288)
 
@@ -174,6 +188,8 @@ Uses the free, no-auth deps.dev `/v3` `GetDependencies` API (`api.deps.dev`) —
 
 **`get_transitive_graph({groupId, artifactId, version})`.** Fetches one resolved Maven graph and returns `{nodes: [{groupId, artifactId, version}], edges: [{from, to}], partial, truncated, …}`. Edge indices refer to `nodes`. On HTTP/transport/parse failure returns empty nodes/edges with `partial: true` and `error` (never raises). Graph-level or per-node deps.dev errors also set `partial`.
 
+**`get_vulnerability_paths({groupId, artifactId, version})`, #413.** Traces each transitively vulnerable dependency back to the project root. Calls `fetch_depsdev_dependencies` directly (NOT `get_transitive_graph` — that wrapper's trimmed node shape drops the `relation` field this needs to locate the root; same graph fetch, same `TTL_DEPSDEV` cache, called exactly once), dedupes nodes by `groupId:artifactId:version`, batches every unique GAV through `query_osv_batch` exactly once, then runs a BFS (`_bfs_predecessors` / `_reconstruct_path`) from the root — the node whose `relation` is `SELF`, falling back to node 0 when relation is left empty (the same deps.dev quirk `check_license_compliance` already documents and falls back on) — over the `edges` index-pairs to find the SHORTEST path to every vulnerable node. Returns `{groupId, artifactId, version, vulnerabilityPaths: [{vulnerableNode, path, vulnerabilities}], partial, truncated, …}`; `path` runs root-first, inclusive of both ends. A vulnerable node the BFS cannot reach from root (rare — a truncation/parse anomaly upstream) is flagged in `unreachableVulnerabilities` rather than silently dropped, and forces `partial: true`. Reuses `MAX_TRANSITIVE_GRAPH_NODES` (graph fetch) and `MAX_VULN_DEPENDENCIES` (OSV fan-out, applied to the deduped unique-GAV list — a `notes[]` entry explains a truncation when it happens). Empty graph / no vulnerabilities found → empty `vulnerabilityPaths`, never an error. Degrades like the underlying calls: deps.dev/OSV offline or unreachable sets `capabilityUnavailable` (first-seen wins across the two calls) rather than crashing.
+
 **`detect_dependency_conflicts({projectPath?, buildSystem?})`.** For Gradle projects (`resolvedBy: "gradle"`), compares versions of the same `groupId:artifactId` across Gradle-resolved scan usages (highest-wins). For Maven scans, fetches a deps.dev graph per versioned direct dependency (platforms skipped; roots capped/deduped), unions every `g:a → {versions…}` seen, and emits a conflict when a GA appears at ≥2 versions. Each conflict carries `versions`, `resolvedTo`, `strategy` (`nearest-wins` for Maven / `highest-wins` for Gradle), `risk` (`high`/`medium`/`low`), and `sources`. `buildSystem` overrides auto-detect from `_detect_build_system`.
 
 **Mediation.** Maven nearest-wins uses BFS depth from each direct root (shallower wins; same-depth ties → highest version — declaration-order tie-break is not available). Gradle highest-wins uses `compare_versions`. Unknown build systems default to highest-wins.
@@ -216,6 +232,18 @@ Gradle plugin-marker coordinates (`{pluginId}:{pluginId}.gradle.plugin`) are not
 Once `handle_get_dependency_health` has a known GitHub repo (`owner`/`repo`, from POM SCM or the groupId guess-and-verify fallback — same discovery already used for GitHub metrics), it separately calls `fetch_depsdev_scorecard(owner, repo)`, which queries deps.dev v3 GetProject: `GET {DEPSDEV_API}/projects/{url-encoded "github.com/owner/repo"}` (the whole `projectKey` is percent-encoded as ONE path segment). Verified live against `api.deps.dev`: a 200 response's `scorecard` object is `{overallScore, date, checks: [{name, score, reason, documentation, details}], scorecard: {version, commit}, repository: {name, commit}}`; deps.dev does not index every GitHub repository, and a repo it has not indexed 404s with a plain-text `"project not found"` body (not JSON) — this is the common case for small/personal repos, not a transport failure. `fetch_depsdev_scorecard` trims each check to `{name, score, reason}` (dropping the verbose `documentation`/`details` sub-objects) and surfaces `result["scorecard"] = {overallScore, date, checks, generatedBy: "OpenSSF"}` on the health result.
 
 **Capability + degradation (#296 pattern).** deps.dev is its OWN capability, independent of the `github` one already gating GitHub API metrics on this same handler — this call runs regardless of `github_cap`, so an offline/rate-limited GitHub API does not also silently skip the Scorecard, and vice versa. Uses the existing `_external_capability("depsdev")` / offline short-circuit / `MAVEN_MCP_DEPSDEV_BASE` override, and the existing `TTL_DEPSDEV` (1 h) cache via `http_get_cached`. Three distinct "no data" outcomes are handled without raising: (1) deps.dev capability unavailable (offline, no override) → `result["scorecard"] = {"capabilityUnavailable": cap}`; (2) deps.dev reachable but the repo is unindexed / has no scorecard on file → `scorecard` key is **omitted entirely** (a normal, common outcome — not every dependency has one, and this is not a failure to flag); (3) transport failure → same `capabilityUnavailable: "unreachable"` shape as (1). No GitHub repo discovered at all → the Scorecard fetch is never attempted (nothing to build a `projectKey` from).
+
+## End-of-life / support status (`get_eol_status`, #415)
+
+Reports JDK/Kotlin/Gradle/Spring Boot end-of-life and support status via the free, no-auth endoflife.date v1 API (`GET {base}/products/{slug}`, default base `https://endoflife.date/api/v1`, overridable via `MAVEN_MCP_ENDOFLIFE_BASE`). Verified live against endoflife.date: there is **no generic `java` product** (404s) — JDK end-of-life is vendor-specific (`eclipse-temurin`, `amazon-corretto`, `oracle-jdk`, `redhat-build-of-openjdk`, and others), so `get_eol_status({kotlin?, gradle?, springBoot?, jdk?: {vendor, version}})` requires an explicit `vendor` alongside `version` for the `jdk` check — at least one of the four top-level fields is required. A `jdk` object missing either field, or a call with none of the four fields set, raises (surfaced by the dispatcher as `isError: true`) rather than silently doing nothing.
+
+**Response shape (confirmed live).** `{schema_version, generated_at, last_modified, result: {name, label, …, releases: [{name (the *cycle* id), codename, label, releaseDate, isLts, ltsFrom, isEol, eolFrom, isMaintained, latest: {name, date, link}, custom}]}}`. Some products add extra optional per-cycle fields (`gradle`: `isEoas`/`eoasFrom`; `spring-boot`: `isEoes`/`eoesFrom`) — never assumed present.
+
+**Cycle matching (`_match_eol_cycle`).** Cycle granularity varies by product — confirmed live: major-only for `gradle` (`"9"`, `"8"`) and JDK vendors (`"21"`, `"17"`), major.minor for `kotlin` (`"2.4"`) and `spring-boot` (`"3.5"`). A requested version is matched to the cycle whose `name` it equals, or whose `name + "."` it starts with (the trailing-dot boundary is what stops cycle `"1"` from falsely prefix-matching version `"10.5"`); the longest matching cycle name wins on the rare chance more than one matches. No matching cycle → a clear per-item `error`, never a crash.
+
+**Per-item output.** `{product, requestedVersion, cycle, isEol, eolDate, isMaintained, isLts, latestInCycle}` on a match (`eolDate` is deps.dev's `eolFrom`, renamed for clarity); `{product, requestedVersion, error}` on an unknown product/vendor (404) or a version with no matching cycle; `{product, requestedVersion, capabilityUnavailable}` when endoflife.date itself is offline/unreachable. Top-level `capabilityUnavailable` mirrors the first-seen per-item one.
+
+**Caching + degradation (#296 pattern).** New `"endoflife"` service in `_external_capability` / `_external_override_active`, same offline short-circuit + `HTTP_TIMEOUT_EXTERNAL` + `MAVEN_MCP_ENDOFLIFE_BASE` override convention as OSV/GitHub/deps.dev/android docs. Cached via `http_get_cached` at `TTL_ENDOFLIFE` (7 days, not the 1-hour TTLs used elsewhere) — support windows are announced well in advance and change rarely.
 
 ## `verify_coordinates`
 

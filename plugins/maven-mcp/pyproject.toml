@@ -1,0 +1,137 @@
+[tool.coverage.run]
+# Repo-root-relative: CI invokes `coverage run --rcfile=plugins/maven-mcp/pyproject.toml`
+# from the repo root (verified empirically -- coverage.py does not walk up from an
+# --rcfile to reinterpret paths relative to it; they are CWD-relative, same as mypy).
+source = ["plugins/maven-mcp/plugin/server"]
+
+[tool.coverage.report]
+show_missing = true
+# 90% measured on current code (2026-07-20, 962 tests). Set well below that
+# deliberately -- this is coverage's first CI run, not a tuned ratchet; the goal is
+# catching a real regression (e.g. a deleted test file), not enforcing today's exact
+# number. Revisit upward once the number has a track record over multiple PRs.
+fail_under = 75
+
+[tool.mypy]
+python_version = "3.9"
+# NOTE: unlike ruff's [tool.ruff.lint.per-file-ignores] below (resolved relative to
+# THIS file's directory, verified empirically), mypy resolves `files`/`mypy_path`
+# relative to the invocation CWD. CI runs mypy from the repo root (matching every
+# other command in this repo's CLAUDE.md), so these are repo-root-relative.
+files = ["plugins/maven-mcp/plugin/server", "plugins/maven-mcp/tests"]
+mypy_path = ["plugins/maven-mcp/plugin/server"]
+warn_unused_configs = true
+warn_redundant_casts = true
+
+[[tool.mypy.overrides]]
+module = "server"
+disable_error_code = ["arg-type", "assignment", "misc", "no-redef", "attr-defined"]
+
+[[tool.mypy.overrides]]
+module = "_helpers"
+disable_error_code = ["exit-return", "arg-type"]
+
+[[tool.mypy.overrides]]
+# Bare filename module (no package/__init__.py) -- mypy overrides require exact or
+# dotted-glob names, "test_*" is invalid (verified empirically), so this is listed
+# explicitly. `server._now = lambda _i=i: ...` inside a loop (default-arg capture,
+# the correct fix for B023) is a monkeypatch mypy cannot infer a type for; test-only.
+module = "test_file_cache"
+disable_error_code = ["misc"]
+
+[tool.ruff]
+target-version = "py39"
+# Inert while E501 is ignored below; kept so a future re-enable of line-length
+# starts from a deliberate number instead of ruff's 88-char default.
+line-length = 100
+
+[tool.ruff.lint]
+# Pragmatic subset, chosen empirically against this codebase (issue #408): real
+# bugs (F, most of B), basic style (E/W minus line length), comprehension quality
+# (C4), simplification hints (SIM), ruff-native checks (RUF), and stdlib-override
+# naming (N -- e.g. BaseHTTPRequestHandler's do_GET/do_POST, already annotated with
+# `# noqa: N802` in tests/test_http.py before this config existed).
+#
+# Deliberately NOT enabled (surveyed via `--select ALL`; candidates for a dedicated
+# follow-up, not bundled into a CI-tooling-only change):
+#   D        docstrings -- no docstring convention established yet.
+#   ANN      return-type-annotation presence -- mypy already owns type *correctness*;
+#            ANN only checks presence, which would double up for little value.
+#   PT       flake8-pytest-style -- this suite is unittest-based by design.
+#   FBT      boolean-trap -- API-shape opinion, not a bug.
+#   PTH      os.path -> pathlib -- a real, invasive modernization (~250 hits across
+#            server.py); out of scope here (concurrent PR is editing server.py).
+#   COM/Q/ISC  formatter-territory (trailing commas, quote style); this change adds
+#            a linter, not `ruff format` -- enabling these now would just fight a
+#            formatter this repo hasn't adopted.
+#   TRY/EM   exception-message style opinions.
+#   ERA001   commented-out-code -- false-positive-prone on prose comments.
+#   INP001   implicit-namespace-package -- this project is intentionally not a
+#            package (single-file server + `unittest discover`-style tests).
+#   S        flake8-bandit -- security triage deserves its own deliberate pass with
+#            a human decision per finding, not a silent blanket-ignore bundled into
+#            a tooling PR. ~36 hits surveyed; see follow-up list in the PR/issue.
+#   PLR09*/C901  cyclomatic/arg-count complexity metrics -- would require refactoring
+#            server.py handlers, out of scope here.
+#   I        isort -- conflicts with this project's deliberate qualified-import
+#            convention for `unittest.mock` (see CodeQL gotchas in project memory);
+#            enabling it would fight that convention, not complement it.
+#   UP/FA    pyupgrade / future-annotations -- would rewrite server.py's
+#            typing.Dict/List/Tuple usage wholesale; real modernization, out of
+#            scope for a CI-only change.
+select = ["E", "F", "W", "B", "C4", "SIM", "RUF", "N"]
+ignore = [
+    "E501",  # line-too-long -- no formatter enforced; even line-length=140 still
+             # leaves ~60 pre-existing long lines (long URLs/regexes), see PR notes.
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Resolved relative to THIS file's directory (verified empirically -- differs from
+# mypy's CWD-relative `files` above). server.py: legacy file getting first-time lint
+# coverage; a concurrent PR is also editing it, so pre-existing findings are
+# grandfathered here rather than fixed, and listed as follow-ups in the #408 PR.
+"plugin/server/server.py" = [
+    "B023",    # function-uses-loop-variable (13x) -- inspected: a nested `def`
+               # builds/returns a dict entry consumed within the same loop
+               # iteration, not deferred; not a real late-binding bug.
+    "B904",    # raise-without-from-inside-except (1x) -- deliberate exception
+               # re-typing per an adjacent comment; `from e` would still be a
+               # nice-to-have for traceback chains.
+    "C401",    # unnecessary-generator-set (1x)
+    "F401",    # unused-import (2x, e.g. `datetime`) -- real dead code, listed as
+               # a follow-up.
+    "F541",    # f-string-missing-placeholders (1x) -- redundant `f` prefix, no
+               # behavior difference.
+    "RUF005",  # collection-literal-concatenation (4x)
+    "SIM102",  # collapsible-if (3x)
+    "SIM103",  # needless-bool (1x)
+    "SIM105",  # suppressible-exception (2x) -- try/except/pass vs contextlib.suppress
+    "SIM108",  # if-else-block-instead-of-if-exp (1x)
+    "SIM110",  # reimplemented-builtin (2x)
+    "SIM114",  # if-with-same-arms (1x)
+]
+# tests/: unittest-style suite predating this linter.
+"tests/*.py" = [
+    "B904",    # raise-without-from-inside-except (1x)
+    "E731",    # lambda-assignment (1x)
+    "N802",    # invalid-function-name (3x) -- test method names embedding a literal
+               # domain term (`test_no_regression_mavenCentral_declared_resolves`,
+               # `..._isError_...`): `mavenCentral()` is the actual Gradle DSL method
+               # name and `isError` the actual MCP field name being tested; snake_
+               # casing them would disconnect the test name from the literal term.
+    "RUF002",  # ambiguous-unicode-character-docstring (1x)
+    "RUF022",  # unsorted-dunder-all (1x)
+    "RUF059",  # unused-unpacked-variable (3x) -- e.g. `status, body = ...` where
+               # body is unused; harmless in test call sites.
+    "RUF100",  # unused-noqa (3x) -- pre-existing `# noqa: N802` on `do_GET`
+               # overrides of http.server.BaseHTTPRequestHandler in test_http.py;
+               # ruff's own override-detection already exempts stdlib-mandated
+               # method names from N802 (confirmed empirically -- do_GET does NOT
+               # fire even with N802 enabled), so the comments are functionally
+               # redundant, but left in place rather than editing the test file.
+    "SIM105",  # suppressible-exception (8x)
+    "SIM108",  # if-else-block-instead-of-if-exp (1x)
+    "SIM117",  # multiple-with-statements (84x) -- nested `with temp_project(...):` /
+               # `with mock.patch(...):` is the established readability pattern for
+               # stacking fixtures in this suite.
+]

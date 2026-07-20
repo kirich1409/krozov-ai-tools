@@ -20,6 +20,7 @@ The server registers tools that Claude can call during a conversation. It querie
 | `scan_project_dependencies` | Scan Gradle/Maven build files and Gradle version catalogs (`gradle/libs.versions.toml`) for dependencies |
 | `expand_bom` | Expand a Maven BOM into managed dependency versions |
 | `get_transitive_graph` | Resolved transitive dependency graph for a GAV via deps.dev |
+| `get_vulnerability_paths` | Shortest dependency path from a project root GAV to each transitively vulnerable node (deps.dev graph + OSV.dev) |
 | `detect_dependency_conflicts` | Flag GAs resolved at multiple versions (Gradle: from resolved scan usages; Maven: deps.dev per-root graphs with nearest-wins) |
 | `check_version_compatibility` | Check Spring Boot / AGP / Kotlin / javax→jakarta compatibility |
 | `get_dependency_vulnerabilities` | Check for known CVEs via OSV.dev |
@@ -30,6 +31,7 @@ The server registers tools that Claude can call during a conversation. It querie
 | `audit_project_dependencies` | Full audit: scan + version compare + vulnerability check |
 | `catalog_entry` | Generate/validate Gradle version-catalog entries (`libs.versions.toml`) with rule-correct aliases and minimal diffs |
 | `verify_coordinates` | Tri-state existence check + did-you-mean for hallucinated coordinates |
+| `get_eol_status` | End-of-life / support status for JDK (vendor-specific), Kotlin, Gradle, and Spring Boot via endoflife.date |
 
 ### Skills
 
@@ -43,6 +45,7 @@ The server registers tools that Claude can call during a conversation. It querie
 | `/scan-project-dependencies` | Raw inventory of a project's declared dependencies (no freshness/CVE check) |
 | `/expand-bom` | Expand a Maven BOM/platform into its managed dependency versions |
 | `/transitive-graph` | Resolved transitive dependency graph for a single GAV |
+| `/vulnerability-paths` | Trace each transitively vulnerable dependency back to the project root |
 | `/dependency-conflicts` | Flag GAs resolved at multiple versions across a project |
 | `/check-version-compatibility` | Validate AGP/Gradle/JDK/Kotlin and Spring Boot BOM/javax→jakarta compatibility |
 | `/check-deps-vulnerabilities` | Scan project dependencies for known CVEs/GHSA via OSV (includes Gradle/Maven submodules) |
@@ -54,6 +57,7 @@ The server registers tools that Claude can call during a conversation. It querie
 | `/search-artifacts` | Search Maven Central (or Nexus/Artifactory in closed mode) by keyword |
 | `/audit-project-dependencies` | One combined report: updates + vulnerabilities + optional license posture |
 | `/catalog-entry` | Generate or validate a Gradle version-catalog (`libs.versions.toml`) entry |
+| `/eol-status` | Check end-of-life / support status for JDK, Kotlin, Gradle, or Spring Boot |
 
 ### Supported build systems
 
@@ -75,7 +79,7 @@ Repositories are selected by static group-prefix routing (Gradle Plugin Portal f
 - **MAVEN_MCP_PUBLIC_FALLBACK** — optional toggle (default OFF). When ON, public well-known repos are appended even for projects that declare their own repositories. Affects the coordinate existence check in the PreToolUse guard hook.
 - **Closed / offline mode & mirrors** (`MAVEN_MCP_OFFLINE`, `MAVEN_MCP_REPOSITORY_BASE`, `MAVEN_MCP_SETTINGS`) — for closed-perimeter / air-gapped builds. `MAVEN_MCP_OFFLINE=1` disables contact with public Maven Central / Google Maven / Gradle Plugin Portal. `MAVEN_MCP_REPOSITORY_BASE` replaces those well-known URLs with an internal Nexus/Artifactory base. Maven `settings.xml` `<mirror><mirrorOf>` (from `MAVEN_MCP_SETTINGS`, else `~/.m2/settings.xml`, else `$M2_HOME/conf/settings.xml`) rewrites matched repo URLs; `mirrorOf` supports `*`, `external:*`, id lists, and `!exclusions`. When no settings mirrors exist, a single-URL Gradle init-script redirect is honored as a catch-all. Public-repo behavior is unchanged when none of these are set.
 - **Repo-manager search** (`search_artifacts` + optional `repositoryType` / `MAVEN_MCP_REPOSITORY_TYPE`) — in closed mode, keyword/coordinate search uses Nexus 3 `GET /service/rest/v1/search` or Artifactory GAVC/AQL against the repository base (auto-detected from URL/headers, overridable with `nexus` / `artifactory` / `central`). Unsupported managers return empty results with `searchBackendUnavailable` (non-fatal). Public Solr is unchanged outside closed mode.
-- **External enrichment air-gap degradation** (`MAVEN_MCP_OFFLINE` + optional `MAVEN_MCP_OSV_BASE` / `MAVEN_MCP_GITHUB_BASE` / `MAVEN_MCP_DEPSDEV_BASE` / `MAVEN_MCP_ANDROID_DOCS_BASE`) — vulnerability, health, changelog, transitive-graph, and license-compliance tools short-circuit public OSV / GitHub / deps.dev / developer.android.com calls in offline mode and return `capabilityUnavailable: "offline"` (or `"unreachable"` on transport failure with a short timeout) so empty results are not misread as clean. Point the `*_BASE` vars at internal mirrors / GitHub Enterprise to keep those capabilities online inside a closed contour.
+- **External enrichment air-gap degradation** (`MAVEN_MCP_OFFLINE` + optional `MAVEN_MCP_OSV_BASE` / `MAVEN_MCP_GITHUB_BASE` / `MAVEN_MCP_DEPSDEV_BASE` / `MAVEN_MCP_ANDROID_DOCS_BASE` / `MAVEN_MCP_ENDOFLIFE_BASE`) — vulnerability, vulnerability-path, health, changelog, transitive-graph, license-compliance, and EOL-status tools short-circuit public OSV / GitHub / deps.dev / developer.android.com / endoflife.date calls in offline mode and return `capabilityUnavailable: "offline"` (or `"unreachable"` on transport failure with a short timeout) so empty results are not misread as clean. Point the `*_BASE` vars at internal mirrors / GitHub Enterprise to keep those capabilities online inside a closed contour.
 - **TLS + HTTP(S) proxy** (`MAVEN_MCP_CA_CERT`, `HTTP(S)_PROXY` / `NO_PROXY`, optional `MAVEN_MCP_INSECURE_TLS`) — trust an internal CA bundle and route through an enterprise proxy. TLS verification stays on by default; `MAVEN_MCP_INSECURE_TLS=1` is an explicit, warned escape hatch. `SSL_CERT_FILE` / `NODE_EXTRA_CA_CERTS` are also accepted as CA sources.
 - **Private Maven repository credentials** (`MAVEN_REPO_<ID>_…`) — optional. When a project declares a private/corporate repo (Artifactory, Nexus, GitHub Packages, …), the server attaches Basic or Bearer auth on HTTP queries. Credentials are never read from build files. Resolution order (first match wins), evaluated per identifier candidate — the repo's Maven `<id>` / Gradle `name` (if declared), then its hostname:
   1. Environment: `MAVEN_REPO_<ID>_USER` + `MAVEN_REPO_<ID>_PASSWORD` (Basic), or `MAVEN_REPO_<ID>_TOKEN` alone (Bearer), or `USER` + `TOKEN` (Basic with the token as the password — GitHub Packages / Artifactory PAT style).
