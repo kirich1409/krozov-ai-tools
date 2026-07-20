@@ -803,11 +803,16 @@ class TestUserinfoRedaction(unittest.TestCase):
         self.assertNotIn("repopass", json.dumps(out))
 
     def test_verify_coordinates_repository_field_redacted(self):
+        # versionCount must be > LOW_VERSION_COUNT_THRESHOLD (#322 Layer 2):
+        # a single-version response would gate in the group_mismatch /
+        # recent_first_publish Solr calls, which this test's single queued
+        # response does not account for (this test only exercises the
+        # existence-probe redaction path, not #322 heuristics).
         files = {"settings.gradle.kts": _settings('maven { url = uri("%s") }' % CREDENTIALED_URL)}
         with temp_project(files) as root:
             with unittest.mock.patch(
                 "urllib.request.urlopen",
-                side_effect=mock_urlopen([(200, _meta(["1.0.0"]))]),
+                side_effect=mock_urlopen([(200, _meta(["1.0.0", "1.1.0", "1.2.0"]))]),
             ):
                 out = server.handle_verify_coordinates({
                     "dependencies": [{"groupId": "com.acme", "artifactId": "lib"}],

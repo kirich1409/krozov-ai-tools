@@ -28,6 +28,13 @@ Search for Maven artifacts by keyword or partial coordinate when the exact
    `searchBackendUnavailable` is present instead of results, say which backend was tried
    and that the search could not be served (not "no results found").
 
+4. If `capabilityUnavailable` is present alongside empty `results`, the Central search
+   backend itself failed — say so explicitly instead of "no results found", and
+   distinguish the reason: `rate_limited` (Sonatype is throttling — a temporary
+   condition, worth retrying shortly), `blocked` (a bulk-load lockout — do not retry
+   aggressively), or `unreachable` (the backend could not be reached — a transient
+   outage or transport failure).
+
 ## Constraints and non-goals
 
 - Not for confirming a coordinate you already believe is correct isn't hallucinated —
