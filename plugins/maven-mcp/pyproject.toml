@@ -24,8 +24,14 @@ warn_unused_configs = true
 warn_redundant_casts = true
 
 [[tool.mypy.overrides]]
+# `arg-type` / `assignment` were on this list from #408 pending a follow-up
+# investigation; #409 re-derived and fixed all of those findings (real
+# None-safety gaps + one dict-literal typing imprecision), so both codes are
+# now removed and enforced. The three remaining codes are a separate, still
+# open class (mostly untyped third-party-shaped dict/JSON handling) -- not
+# addressed here.
 module = "server"
-disable_error_code = ["arg-type", "assignment", "misc", "no-redef", "attr-defined"]
+disable_error_code = ["misc", "no-redef", "attr-defined"]
 
 [[tool.mypy.overrides]]
 module = "_helpers"
@@ -88,20 +94,15 @@ ignore = [
 [tool.ruff.lint.per-file-ignores]
 # Resolved relative to THIS file's directory (verified empirically -- differs from
 # mypy's CWD-relative `files` above). server.py: legacy file getting first-time lint
-# coverage; a concurrent PR is also editing it, so pre-existing findings are
-# grandfathered here rather than fixed, and listed as follow-ups in the #408 PR.
+# coverage; pre-existing findings are grandfathered here rather than fixed inline.
+# #409 already followed up on the #408 punch list's B904/F401/F541 (real bug-shaped
+# findings, now fixed -- codes removed from this list); what remains below is
+# consciously not being fixed, with rationale per entry.
 "plugin/server/server.py" = [
     "B023",    # function-uses-loop-variable (13x) -- inspected: a nested `def`
                # builds/returns a dict entry consumed within the same loop
                # iteration, not deferred; not a real late-binding bug.
-    "B904",    # raise-without-from-inside-except (1x) -- deliberate exception
-               # re-typing per an adjacent comment; `from e` would still be a
-               # nice-to-have for traceback chains.
     "C401",    # unnecessary-generator-set (1x)
-    "F401",    # unused-import (2x, e.g. `datetime`) -- real dead code, listed as
-               # a follow-up.
-    "F541",    # f-string-missing-placeholders (1x) -- redundant `f` prefix, no
-               # behavior difference.
     "RUF005",  # collection-literal-concatenation (4x)
     "SIM102",  # collapsible-if (3x)
     "SIM103",  # needless-bool (1x)
