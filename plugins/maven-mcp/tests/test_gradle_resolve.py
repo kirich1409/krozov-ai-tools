@@ -165,6 +165,46 @@ class TestGradleConfigurationSelection(unittest.TestCase):
         self.assertNotIn("testRuntimeClasspath", selected)
 
 
+class TestGradleResolveTimeoutOverride(unittest.TestCase):
+    """MAVEN_MCP_GRADLE_TIMEOUT override for the single-invocation timeout scope
+    change (#401 code review follow-up): the timeout now bounds ONE invocation
+    resolving every project/configuration, not one subprocess call per config,
+    so it must be overridable for very large multi-module projects."""
+
+    def test_default_when_unset(self):
+        with unittest.mock.patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("MAVEN_MCP_GRADLE_TIMEOUT", None)
+            self.assertEqual(server._gradle_resolve_timeout_seconds(), server.GRADLE_RESOLVE_TIMEOUT)
+
+    def test_valid_override_used(self):
+        with unittest.mock.patch.dict(os.environ, {"MAVEN_MCP_GRADLE_TIMEOUT": "600"}):
+            self.assertEqual(server._gradle_resolve_timeout_seconds(), 600)
+
+    def test_non_integer_falls_back_to_default(self):
+        with unittest.mock.patch.dict(os.environ, {"MAVEN_MCP_GRADLE_TIMEOUT": "not-a-number"}):
+            self.assertEqual(server._gradle_resolve_timeout_seconds(), server.GRADLE_RESOLVE_TIMEOUT)
+
+    def test_non_positive_falls_back_to_default(self):
+        with unittest.mock.patch.dict(os.environ, {"MAVEN_MCP_GRADLE_TIMEOUT": "0"}):
+            self.assertEqual(server._gradle_resolve_timeout_seconds(), server.GRADLE_RESOLVE_TIMEOUT)
+        with unittest.mock.patch.dict(os.environ, {"MAVEN_MCP_GRADLE_TIMEOUT": "-5"}):
+            self.assertEqual(server._gradle_resolve_timeout_seconds(), server.GRADLE_RESOLVE_TIMEOUT)
+
+    def test_gradle_resolve_dependencies_passes_override_as_timeout(self):
+        captured = {}
+
+        def _fake_run(project_root, gradlew, args, timeout=server.GRADLE_RESOLVE_TIMEOUT):
+            captured["timeout"] = timeout
+            return 0, SINGLE_INVOCATION_FIXTURE, ""
+
+        with temp_project({}) as root:
+            write_fake_gradlew(root)
+            with unittest.mock.patch.dict(os.environ, {"MAVEN_MCP_GRADLE_TIMEOUT": "900"}):
+                with unittest.mock.patch.object(server, "_run_gradle_command", _fake_run):
+                    server._gradle_resolve_dependencies(root)
+        self.assertEqual(captured["timeout"], 900)
+
+
 class TestRunGradleCommand(unittest.TestCase):
     def test_timeout_expired_returns_124(self):
         def _raise_timeout(*_args, **_kwargs):

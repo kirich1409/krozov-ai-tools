@@ -123,7 +123,14 @@ _CACHE_DENYLIST = frozenset({"api.github.com", "api.osv.dev"})
 
 GRADLE_BUILD_FILES = ["build.gradle.kts", "build.gradle"]
 GRADLE_SETTINGS_FILES = ["settings.gradle.kts", "settings.gradle"]
-GRADLE_RESOLVE_TIMEOUT = 120
+# #401 collapsed dependency resolution from `1 + P*(1+C)` separate `gradlew`
+# subprocess calls (each individually budgeted at the old 120s) into ONE
+# `--init-script` invocation that must resolve every project's configurations
+# in the SAME window — the timeout's scope changed from "one config on one
+# module" to "the whole project graph", so the budget is raised accordingly.
+# Still overridable per-project via MAVEN_MCP_GRADLE_TIMEOUT (see
+# `_gradle_resolve_timeout_seconds`) for very large multi-module builds.
+GRADLE_RESOLVE_TIMEOUT = 300
 MAX_MODULE_DEPTH = 5
 # Cap recursive BOM import / parent-property fetches (#286).
 MAX_BOM_DEPTH = 5
@@ -1039,6 +1046,23 @@ _PUBLIC_REPO_MIRROR_IDS = {
 def _env_flag(name: str) -> bool:
     """True when env ``name`` is a truthy toggle (1/true/on/yes)."""
     return os.environ.get(name, "").strip().lower() in ("1", "true", "on", "yes")
+
+
+def _gradle_resolve_timeout_seconds() -> int:
+    """``MAVEN_MCP_GRADLE_TIMEOUT`` — override for the single-invocation Gradle
+    resolve timeout (#401; see the ``GRADLE_RESOLVE_TIMEOUT`` comment above for
+    why the default was raised). Read fresh on every call (not memoized) so
+    tests can override via ``unittest.mock.patch.dict``. Missing, non-integer,
+    or non-positive values fall back to ``GRADLE_RESOLVE_TIMEOUT`` rather than
+    raising — a malformed override must degrade, not break resolution."""
+    raw = (os.environ.get("MAVEN_MCP_GRADLE_TIMEOUT") or "").strip()
+    if not raw:
+        return GRADLE_RESOLVE_TIMEOUT
+    try:
+        value = int(raw)
+    except ValueError:
+        return GRADLE_RESOLVE_TIMEOUT
+    return value if value > 0 else GRADLE_RESOLVE_TIMEOUT
 
 
 def _offline_enabled() -> bool:
@@ -8187,7 +8211,10 @@ def _gradle_resolve_dependencies(project_root: str) -> Dict:
         with open(init_path, "w", encoding="utf-8") as fh:
             fh.write(_generate_gradle_resolve_init_script())
         code, _stdout, stderr = _run_gradle_command(
-            project_root, gradlew, ["--init-script", init_path, "-q", "help"]
+            project_root,
+            gradlew,
+            ["--init-script", init_path, "-q", "help"],
+            timeout=_gradle_resolve_timeout_seconds(),
         )
         stdout = _stdout
 
