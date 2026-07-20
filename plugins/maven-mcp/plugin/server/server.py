@@ -406,7 +406,7 @@ def _inflate_gzip_capped(data: bytes, cap: int) -> bytes:
         # Malformed/corrupt gzip body — treat like any other transport-level
         # problem so it flows through the existing retry contract instead of
         # escaping as a novel exception type callers don't expect.
-        raise urllib.error.URLError(f"invalid gzip response body: {e}")
+        raise urllib.error.URLError(f"invalid gzip response body: {e}") from e
     if len(out) > cap:
         raise ResponseTooLargeError(
             f"HTTP response too large: decompressed gzip body exceeds {cap} bytes"
@@ -931,6 +931,20 @@ def _resolve_creds_from_env(identifier: str) -> Optional[Dict[str, str]]:
     )
 
 
+def _extract_tag(xml: str, tag: str) -> Optional[str]:
+    r"""First ``<tag>content</tag>`` leaf value, or None if absent.
+
+    Shared implementation for the ``re.search(r"<tag>([^<]+)</tag>", xml)``
+    idiom repeated throughout this module's regex-only XML parsing: first
+    match, non-empty non-``<`` content, group(1) or None. NOT a fit for a
+    call site needing block-level capture (``[\s\S]*?``), whitespace-trimmed
+    or lazy-dot capture, a dynamic tag name, or empty-tag support (``[^<]*``)
+    — those have different semantics and keep their own inline ``re.search``.
+    """
+    m = re.search(rf"<{re.escape(tag)}>([^<]+)</{re.escape(tag)}>", xml)
+    return m.group(1) if m else None
+
+
 def _parse_settings_xml_servers(xml: str) -> Dict[str, Dict[str, str]]:
     """Parse Maven ``settings.xml`` ``<servers><server>`` entries into
     ``{id: {username?, password?}}``. Regex-only (no XML parser dependency).
@@ -941,10 +955,10 @@ def _parse_settings_xml_servers(xml: str) -> Dict[str, Dict[str, str]]:
     xml = re.sub(r"<!--.*?-->", "", xml, flags=re.DOTALL)
     for sm in re.finditer(r"<server>([\s\S]*?)</server>", xml):
         block = sm.group(1)
-        idm = re.search(r"<id>([^<]+)</id>", block)
+        idm = _extract_tag(block, "id")
         if not idm:
             continue
-        sid = idm.group(1).strip()
+        sid = idm.strip()
         if not sid:
             continue
         user_m = re.search(r"<username>([^<]*)</username>", block)
@@ -1617,16 +1631,16 @@ def _parse_settings_xml_mirrors(xml: str) -> List[Dict[str, str]]:
     xml = re.sub(r"<!--.*?-->", "", xml, flags=re.DOTALL)
     for mm in re.finditer(r"<mirror>([\s\S]*?)</mirror>", xml):
         block = mm.group(1)
-        idm = re.search(r"<id>([^<]+)</id>", block)
-        urlm = re.search(r"<url>([^<]+)</url>", block)
-        ofm = re.search(r"<mirrorOf>([^<]+)</mirrorOf>", block)
+        idm = _extract_tag(block, "id")
+        urlm = _extract_tag(block, "url")
+        ofm = _extract_tag(block, "mirrorOf")
         if not urlm or not ofm:
             continue
-        url = urlm.group(1).strip()
-        mirror_of = ofm.group(1).strip()
+        url = urlm.strip()
+        mirror_of = ofm.strip()
         if not url or not mirror_of:
             continue
-        mid = idm.group(1).strip() if idm else url
+        mid = idm.strip() if idm else url
         mirrors.append({"id": mid or url, "url": url.rstrip("/"), "mirrorOf": mirror_of})
     return mirrors
 
@@ -2029,9 +2043,9 @@ def _repos_for(
 
 def _parse_metadata_xml(xml: str, group_id: str, artifact_id: str) -> Dict[str, Any]:
     versions = re.findall(r"<version>([^<]+)</version>", xml)
-    latest = (re.search(r"<latest>([^<]+)</latest>", xml) or [None, None])[1]
-    release = (re.search(r"<release>([^<]+)</release>", xml) or [None, None])[1]
-    last_updated = (re.search(r"<lastUpdated>([^<]+)</lastUpdated>", xml) or [None, None])[1]
+    latest = _extract_tag(xml, "latest")
+    release = _extract_tag(xml, "release")
+    last_updated = _extract_tag(xml, "lastUpdated")
     return {
         "groupId": group_id,
         "artifactId": artifact_id,
@@ -2296,20 +2310,22 @@ def _collect_bom_properties(
     by GAV via `fetch_pom` — remote BOMs have no local relativePath."""
     props: Dict[str, str] = {}
     parent = _parse_maven_parent(pom_xml)
+    parent_group_id = parent.get("groupId") if parent else None
+    parent_artifact_id = parent.get("artifactId") if parent else None
+    parent_version = parent.get("version") if parent else None
     if (
-        parent
-        and parent.get("groupId")
-        and parent.get("artifactId")
-        and parent.get("version")
+        parent_group_id
+        and parent_artifact_id
+        and parent_version
         and depth < MAX_BOM_DEPTH
     ):
         parent_pom = fetch_pom(
-            parent["groupId"], parent["artifactId"], parent["version"], ctx
+            parent_group_id, parent_artifact_id, parent_version, ctx
         )
         if parent_pom:
             props.update(
                 _collect_bom_properties(
-                    parent_pom, parent["version"], ctx, depth + 1
+                    parent_pom, parent_version, ctx, depth + 1
                 )
             )
     props.update(_pom_project_property_defaults(pom_xml, bom_version))
@@ -2342,26 +2358,26 @@ def parse_dependency_management(
     results: List[Dict] = []
     for m in re.finditer(r"<dependency>([\s\S]*?)</dependency>", block):
         dep_block = m.group(1)
-        gid_m = re.search(r"<groupId>([^<]+)</groupId>", dep_block)
-        aid_m = re.search(r"<artifactId>([^<]+)</artifactId>", dep_block)
+        gid_m = _extract_tag(dep_block, "groupId")
+        aid_m = _extract_tag(dep_block, "artifactId")
         if not gid_m or not aid_m:
             continue
-        group_id = _interpolate_pom_props(gid_m.group(1).strip(), props)
-        artifact_id = _interpolate_pom_props(aid_m.group(1).strip(), props)
+        group_id = _interpolate_pom_props(gid_m.strip(), props)
+        artifact_id = _interpolate_pom_props(aid_m.strip(), props)
         if not group_id or not artifact_id:
             continue
         if "${" in group_id or "${" in artifact_id:
             continue
-        ver_m = re.search(r"<version>([^<]+)</version>", dep_block)
+        ver_m = _extract_tag(dep_block, "version")
         version = (
-            _interpolate_pom_props(ver_m.group(1).strip(), props) if ver_m else None
+            _interpolate_pom_props(ver_m.strip(), props) if ver_m else None
         )
         if version is not None and "${" in version:
             version = None
-        scope_m = re.search(r"<scope>([^<]+)</scope>", dep_block)
-        scope = scope_m.group(1).strip() if scope_m else "compile"
-        type_m = re.search(r"<type>([^<]+)</type>", dep_block)
-        dep_type = type_m.group(1).strip() if type_m else "jar"
+        scope_m = _extract_tag(dep_block, "scope")
+        scope = scope_m.strip() if scope_m else "compile"
+        type_m = _extract_tag(dep_block, "type")
+        dep_type = type_m.strip() if type_m else "jar"
         results.append({
             "groupId": group_id,
             "artifactId": artifact_id,
@@ -3391,7 +3407,7 @@ def detect_dependency_conflicts(
     if truncated_roots:
         notes.append(
             f"Direct roots truncated to {MAX_CONFLICT_SCAN_ROOTS} "
-            + f"(MAX_CONFLICT_SCAN_ROOTS); results are partial."
+            + "(MAX_CONFLICT_SCAN_ROOTS); results are partial."
         )
 
     out = {
@@ -4729,7 +4745,7 @@ def check_license_compliance(
         if nodes_fetched >= MAX_LICENSE_COMPLIANCE_NODES:
             truncated_nodes = True
             partial = True
-            entry = {
+            entry: Dict[str, Any] = {
                 "ok": False,
                 "licenses": [],
                 "error": (
@@ -4994,13 +5010,13 @@ def extract_relocation_from_pom(
     if not reloc_m:
         return None
     block = reloc_m.group(1)
-    gid_m = re.search(r"<groupId>([^<]+)</groupId>", block)
-    aid_m = re.search(r"<artifactId>([^<]+)</artifactId>", block)
-    ver_m = re.search(r"<version>([^<]+)</version>", block)
+    gid_m = _extract_tag(block, "groupId")
+    aid_m = _extract_tag(block, "artifactId")
+    ver_m = _extract_tag(block, "version")
     return {
-        "groupId": gid_m.group(1).strip() if gid_m else group_id,
-        "artifactId": aid_m.group(1).strip() if aid_m else artifact_id,
-        "version": ver_m.group(1).strip() if ver_m else version,
+        "groupId": gid_m.strip() if gid_m else group_id,
+        "artifactId": aid_m.strip() if aid_m else artifact_id,
+        "version": ver_m.strip() if ver_m else version,
     }
 
 
@@ -5050,14 +5066,14 @@ def resolve_plugin_marker_implementation(
     if not dep_m:
         return None
     block = dep_m.group(1)
-    gid_m = re.search(r"<groupId>([^<]+)</groupId>", block)
-    aid_m = re.search(r"<artifactId>([^<]+)</artifactId>", block)
-    ver_m = re.search(r"<version>([^<]+)</version>", block)
+    gid_m = _extract_tag(block, "groupId")
+    aid_m = _extract_tag(block, "artifactId")
+    ver_m = _extract_tag(block, "version")
     if not gid_m or not aid_m or not ver_m:
         return None
-    impl_group_id = gid_m.group(1).strip()
-    impl_artifact_id = aid_m.group(1).strip()
-    impl_version = ver_m.group(1).strip()
+    impl_group_id = gid_m.strip()
+    impl_artifact_id = aid_m.strip()
+    impl_version = ver_m.strip()
     if not impl_group_id or not impl_artifact_id or not impl_version:
         return None
     if impl_version.startswith("${"):
@@ -5153,7 +5169,6 @@ def gh_fetch_issue_stats(owner: str, repo: str) -> Optional[Dict]:
             ca = item.get("created_at")
             cl = item.get("closed_at")
             if ca and cl:
-                import datetime
                 try:
                     t_created = _parse_iso(ca)
                     t_closed = _parse_iso(cl)
@@ -5220,7 +5235,6 @@ def _months_since(iso: Optional[str]) -> Optional[int]:
 
 
 def _summarize_releases(releases: List[Dict]) -> Dict:
-    import datetime
     times = []
     for r in releases:
         if r.get("draft") or r.get("prerelease"):
@@ -5507,7 +5521,7 @@ def _resolve_changelog(
 
 
 def _get_dependency_changes_impl(group_id: str, artifact_id: str, from_version: str, to_version: str, ctx: "ResolutionContext") -> Dict:
-    base = {
+    base: Dict[str, Any] = {
         "groupId": group_id,
         "artifactId": artifact_id,
         "fromVersion": from_version,
@@ -5586,7 +5600,7 @@ def _extract_severity(vuln: Dict) -> Optional[str]:
             try:
                 return _cvss_to_severity(float(sev["score"]))
             except (ValueError, TypeError, KeyError):
-                pass
+                pass  # Malformed/missing CVSS score on this entry — try the next one
     return None
 
 
@@ -6616,21 +6630,6 @@ def search_artifacts_with_backend(
 # Dependency scanning (local file system)
 # ---------------------------------------------------------------------------
 
-def _is_excluded_path(path: str) -> bool:
-    excluded = (".gradle" + os.sep, "build" + os.sep, ".idea" + os.sep)
-    # Normalize to use os.sep
-    np = path.replace("/", os.sep)
-    for ex in excluded:
-        if ex in np:
-            return True
-    # Also check directory components directly
-    parts = path.replace("\\", "/").split("/")
-    for part in parts:
-        if part in (".gradle", "build", ".idea"):
-            return True
-    return False
-
-
 def _is_test_configuration(config: str) -> bool:
     if config.startswith("test"):
         return True
@@ -6827,20 +6826,6 @@ def _sanitize_catalog_alias(alias: str, existing: Optional[set] = None) -> str:
     return candidate
 
 
-def _suggest_library_alias(group_id: str, artifact_id: str, existing: Optional[set] = None) -> str:
-    raw = _to_kebab_catalog_alias(artifact_id) or _to_kebab_catalog_alias(group_id.split(".")[-1])
-    return _sanitize_catalog_alias(raw, existing)
-
-
-def _suggest_plugin_alias(plugin_id: str, existing: Optional[set] = None) -> str:
-    parts = [p for p in plugin_id.split(".") if p]
-    if len(parts) >= 2:
-        raw = _to_kebab_catalog_alias("-".join(parts[-2:]))
-    else:
-        raw = _to_kebab_catalog_alias(plugin_id)
-    return _sanitize_catalog_alias(raw, existing)
-
-
 def _library_accessor(alias: str, catalog_name: str = "libs") -> str:
     return f"{catalog_name}.{_catalog_normalize_accessor_key(alias)}"
 
@@ -7019,7 +7004,7 @@ def generate_catalog_entry(
         bump_lines = []
         # Prefer bumping version.ref target when present in raw TOML.
         section = "plugins" if kind == "plugin" else "libraries"
-        raw_refs = [r for r in _extract_version_refs(catalog_toml) if r["alias"] == chosen and r["section"] == section]
+        raw_refs = [r for r in _extract_version_refs(catalog_toml or "") if r["alias"] == chosen and r["section"] == section]
         if raw_refs:
             vref = raw_refs[0]["versionRef"]
             bump_lines.append(f'# Update existing [versions] key only\n{vref} = "{version}"')
@@ -7029,7 +7014,7 @@ def generate_catalog_entry(
         else:
             # Inline version in the table/shorthand — replace just the version literal on that alias line.
             bump_lines.append(f"# Update version on existing [{section}] alias {chosen!r}")
-            bump_lines.append(entry["tomlLine"])
+            bump_lines.append(lib_line)
             suggested = "\n".join(bump_lines) + "\n"
             entry["updateKind"] = "inline_or_line_replace"
         entry["tomlSnippet"] = suggested
@@ -7045,7 +7030,7 @@ def generate_catalog_entry(
             "rule": "alias_sanitized",
             "detail": f"requested alias {alias!r} was adjusted to valid alias {chosen!r}",
         })
-        alias_violations.extend(_validate_alias_name(alias, entry["section"]))
+        alias_violations.extend(_validate_alias_name(alias, entry["section"] or ""))
 
     return {
         "alias": chosen,
@@ -7431,18 +7416,18 @@ def _parse_maven_deps(content: str) -> List[Dict]:
     deps = []
     for m in re.finditer(r"<dependency>([\s\S]*?)</dependency>", xml):
         block = m.group(1)
-        gid_m = re.search(r"<groupId>([^<]+)</groupId>", block)
-        aid_m = re.search(r"<artifactId>([^<]+)</artifactId>", block)
+        gid_m = _extract_tag(block, "groupId")
+        aid_m = _extract_tag(block, "artifactId")
         if not gid_m or not aid_m:
             continue
-        group_id = gid_m.group(1).strip()
-        artifact_id = aid_m.group(1).strip()
-        ver_m = re.search(r"<version>([^<]+)</version>", block)
-        version = ver_m.group(1).strip() if ver_m else None
+        group_id = gid_m.strip()
+        artifact_id = aid_m.strip()
+        ver_m = _extract_tag(block, "version")
+        version = ver_m.strip() if ver_m else None
         if version and version.startswith("${"):
             version = None
-        scope_m = re.search(r"<scope>([^<]+)</scope>", block)
-        scope = scope_m.group(1).strip() if scope_m else "compile"
+        scope_m = _extract_tag(block, "scope")
+        scope = scope_m.strip() if scope_m else "compile"
         configuration = SCOPE_TO_CONFIG.get(scope, "implementation")
         deps.append({
             "groupId": group_id,
@@ -7653,7 +7638,7 @@ def _excise_spans(content: str, spans: List[Tuple[int, int]]) -> str:
     return "".join(out)
 
 
-def _dedup_repos(entries: List[Dict[str, str]]) -> List[Dict[str, str]]:
+def _dedup_repos(entries: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """Dedup RepoEntry dicts by URL, preserving first-seen (declaration) order."""
     seen = set()
     out = []
@@ -7772,12 +7757,12 @@ def _parse_maven_repos(pom_xml: str) -> Tuple[List[Dict[str, str]], List[Dict[st
         block = cm.group(1)
         for em in re.finditer(r"<" + entry + r">([\s\S]*?)</" + entry + r">", block):
             rb = em.group(1)
-            um = re.search(r"<url>([^<]+)</url>", rb)
+            um = _extract_tag(rb, "url")
             if not um:
                 continue
-            url = um.group(1).strip()
-            idm = re.search(r"<id>([^<]+)</id>", rb)
-            name = idm.group(1).strip() if idm else url
+            url = um.strip()
+            idm = _extract_tag(rb, "id")
+            name = idm.strip() if idm else url
             out.append({"name": name, "url": url})
         return out
 
@@ -7814,11 +7799,11 @@ def _parse_maven_parent(pom_xml: str) -> Optional[Dict[str, Optional[str]]]:
     if not m:
         return None
     block = m.group(1)
-    gid_m = re.search(r"<groupId>([^<]+)</groupId>", block)
-    aid_m = re.search(r"<artifactId>([^<]+)</artifactId>", block)
+    gid_m = _extract_tag(block, "groupId")
+    aid_m = _extract_tag(block, "artifactId")
     if not gid_m or not aid_m:
         return None
-    ver_m = re.search(r"<version>([^<]+)</version>", block)
+    ver_m = _extract_tag(block, "version")
     # Matches both the self-closing `<relativePath/>` form (no capture group
     # participates -> group(1) is None) and `<relativePath>...</relativePath>`
     # (possibly empty). Maven treats both an explicit empty value and a
@@ -7829,9 +7814,9 @@ def _parse_maven_parent(pom_xml: str) -> Optional[Dict[str, Optional[str]]]:
     else:
         relative_path = (rel_m.group(1) or "").strip() or None
     return {
-        "groupId": gid_m.group(1).strip(),
-        "artifactId": aid_m.group(1).strip(),
-        "version": ver_m.group(1).strip() if ver_m else None,
+        "groupId": gid_m.strip(),
+        "artifactId": aid_m.strip(),
+        "version": ver_m.strip() if ver_m else None,
         "relativePath": relative_path,
     }
 
@@ -7847,13 +7832,13 @@ def _parse_maven_project_coords(pom_xml: str) -> Dict[str, Optional[str]]:
     xml = _strip_xml_comments(pom_xml)
     for tag in ("parent", "dependencies", "dependencyManagement", "build", "profiles"):
         xml = re.sub(r"<" + tag + r">[\s\S]*?</" + tag + r">", "", xml)
-    gid_m = re.search(r"<groupId>([^<]+)</groupId>", xml)
-    aid_m = re.search(r"<artifactId>([^<]+)</artifactId>", xml)
-    ver_m = re.search(r"<version>([^<]+)</version>", xml)
+    gid_m = _extract_tag(xml, "groupId")
+    aid_m = _extract_tag(xml, "artifactId")
+    ver_m = _extract_tag(xml, "version")
     return {
-        "groupId": gid_m.group(1).strip() if gid_m else None,
-        "artifactId": aid_m.group(1).strip() if aid_m else None,
-        "version": ver_m.group(1).strip() if ver_m else None,
+        "groupId": gid_m.strip() if gid_m else None,
+        "artifactId": aid_m.strip() if aid_m else None,
+        "version": ver_m.strip() if ver_m else None,
     }
 
 
@@ -8692,7 +8677,7 @@ def _collect_gradle_provenance(project_root: str) -> Dict:
                     entry["usages"].append({"module": module, "configuration": "plugin-dsl"})
             elif decl["pluginId"] and decl["pluginId"] != "(unresolved)":
                 settings_block = True if decl.get("settingsBlock") else None
-                source = {"kind": "plugins-dsl", "file": file_name, "module": module}
+                source: Dict[str, Any] = {"kind": "plugins-dsl", "file": file_name, "module": module}
                 if settings_block:
                     source["settingsBlock"] = True
                 dependencies.append({
@@ -9742,7 +9727,11 @@ def handle_audit_project_dependencies(args: Dict) -> Any:
     metadata_cache_lock = threading.Lock()
 
     def _fetch_one_audit_dep(dep: Dict) -> Dict[str, Any]:
-        current_version = _effective_version(dep)
+        # Only ever called on deps_with_version (line ~9691, already filtered to a
+        # truthy _effective_version) -- the `or ""` never actually fires; it exists
+        # so mypy sees `str` here instead of Optional[str] without re-deriving the
+        # caller's guarantee.
+        current_version = _effective_version(dep) or ""
         ga_key = f"{dep['groupId']}:{dep['artifactId']}"
         # resolved_from is captured as soon as fetch_metadata succeeds, so an
         # unexpected downstream failure still carries provenance — mirrors the
