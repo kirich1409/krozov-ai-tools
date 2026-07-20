@@ -5235,6 +5235,32 @@ def _query_osv_batch_chunk_bare(
 # Maven Central search
 # ---------------------------------------------------------------------------
 
+def _search_capability_for_status(status: int) -> str:
+    """Map a definitive non-200 Maven Central search response to a PRECISE
+    capability reason (#416 polish). By the time a caller sees this status,
+    ``_request_with_retry`` has already exhausted ``HTTP_MAX_ATTEMPTS`` on a
+    retryable 429/5xx, so this is a DEFINITIVE final answer, never a
+    mid-retry state.
+
+    - ``429`` -> ``"rate_limited"``: Sonatype's actual, transient throttle.
+    - ``403`` -> ``"blocked"``: search.maven.org's documented bulk-load
+      LOCKOUT (see the #322 typosquatRisk gating rationale elsewhere in this
+      file) — a definitive block, not a transient throttle. 403 is also NOT a
+      retried status (`_is_retryable_status`), so it must not be silently
+      dropped. Labeling it "rate_limited" would mislead a caller into an
+      aggressive retry loop, which is exactly the wrong response to a lockout.
+    - anything else (5xx, or any other non-200) -> ``"unreachable"``: a
+      generic "could not use the search backend" signal — the same value
+      already used elsewhere in this file for OSV/GitHub/deps.dev transport
+      failures.
+    """
+    if status == 429:
+        return "rate_limited"
+    if status == 403:
+        return "blocked"
+    return "unreachable"
+
+
 def _search_maven_central_with_capability(
     query: str, limit: int = 10, use_cache: bool = True
 ) -> Tuple[List[Dict], Optional[str]]:
@@ -5242,26 +5268,31 @@ def _search_maven_central_with_capability(
     so a blocked/rate-limited search is never silently indistinguishable from a
     genuine zero-result search.
 
-    Returns ``(results, capability)``. ``capability`` is ``"rate_limited"`` on
-    ANY non-200 response or a transport exception: by the time a response
-    reaches here, ``_request_with_retry`` has already exhausted
-    ``HTTP_MAX_ATTEMPTS`` on a retryable 429/5xx, so a non-200 here is a
-    DEFINITIVE final answer, never a mid-retry state. This deliberately also
-    covers a bare HTTP 403 — search.maven.org has a documented history of
-    403-locking out clients under bulk load (see the #322 typosquatRisk
-    gating rationale elsewhere in this file) and 403 is NOT a retried status
-    (`_is_retryable_status`), so it would be wrong to silently exclude it from
-    this same "the shared public search backend is blocking us" signal.
-    ``None`` on success, including a legitimate empty result set. Never raises.
+    Returns ``(results, capability)``. ``capability`` is precise (see
+    ``_search_capability_for_status``): ``"rate_limited"`` for a persistent
+    429, ``"blocked"`` for a definitive 403 lockout, ``"unreachable"`` for any
+    other non-200 (5xx) or a transport exception (`urllib.error.URLError` /
+    `socket.timeout`) after every retry attempt. ``None`` on success,
+    including a legitimate empty result set — and ALSO on a 200 whose body
+    fails to parse: a malformed-but-200 response is a PARSE bug, never a
+    rate-limit/block signal, and must degrade to the same empty-results,
+    no-capability outcome this had before #416 (logged via ``_logger``, never
+    raised, never folded into the capability path). Never raises.
     """
     try:
         url = f"{SEARCH_API}?q={urllib.parse.quote(query)}&rows={limit}&wt=json"
         status, body = http_get_cached(url, TTL_SEARCH) if use_cache else http_get(url)
-        if status != 200:
-            return [], "rate_limited"
+    except (urllib.error.URLError, socket.timeout) as e:
+        # Transport failure after every retry attempt -- the search backend
+        # could not be reached at all.
+        _logger.warning("search_maven_central: request failed: %s", e)
+        return [], "unreachable"
+    if status != 200:
+        return [], _search_capability_for_status(status)
+    try:
         data = json.loads(body)
         docs = data.get("response", {}).get("docs", [])
-        return [
+        results = [
             {
                 "groupId": d.get("g", ""),
                 "artifactId": d.get("a", ""),
@@ -5269,11 +5300,14 @@ def _search_maven_central_with_capability(
                 "versionCount": d.get("versionCount", 0),
             }
             for d in docs
-        ], None
-    except Exception:
-        # Transport failure after every retry attempt — the same "could not
-        # search" condition as the persistent non-200 case above.
-        return [], "rate_limited"
+        ]
+    except Exception as e:
+        # A 200 with a malformed/unexpected-shape body is a PARSE bug, not a
+        # rate-limit/block signal -- log it and degrade to the pre-#416
+        # empty-results, no-capability outcome. Never crash the search.
+        _logger.warning("search_maven_central: malformed response body: %s", e)
+        return [], None
+    return results, None
 
 
 def search_maven_central(query: str, limit: int = 10, use_cache: bool = True) -> List[Dict]:

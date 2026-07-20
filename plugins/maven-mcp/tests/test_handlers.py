@@ -528,7 +528,12 @@ class TestSearchArtifacts(unittest.TestCase):
         self.assertEqual(out["results"][0]["latestVersion"], "1.0.0")
 
     def test_non_200_yields_empty(self):
-        with _patch_urlopen([(503, b"")]):
+        # 503 is retryable (_is_retryable_status), so _request_with_retry
+        # exhausts HTTP_MAX_ATTEMPTS before returning the definitive (503, b"")
+        # this test exercises -- queue one response per attempt and patch
+        # _sleep so the retry backoff does not slow the test.
+        with unittest.mock.patch.object(server, "_sleep"), \
+                _patch_urlopen([(503, b"")] * server.HTTP_MAX_ATTEMPTS):
             out = server.handle_search_artifacts({"query": "lib"})
         self.assertEqual(out["results"], [])
 
@@ -541,9 +546,11 @@ class TestSearchArtifacts(unittest.TestCase):
         self.assertIn(f"rows={server.SEARCH_LIMIT_MAX}", url)
 
     def test_clamps_limit_below_one_and_rejects_non_int(self):
-        # 0 / negative -> 1; non-int -> SEARCH_LIMIT_DEFAULT.
+        # 0 / negative -> 1; non-int -> SEARCH_LIMIT_DEFAULT. Three separate
+        # handle_search_artifacts calls -> three separate network calls ->
+        # one queued 200 response each.
         body = {"response": {"docs": []}}
-        with _patch_urlopen([(200, _json(body))]) as m:
+        with _patch_urlopen([(200, _json(body))] * 3) as m:
             server.handle_search_artifacts({"query": "lib", "limit": 0})
             server.handle_search_artifacts({"query": "lib", "limit": -5})
             server.handle_search_artifacts({"query": "lib", "limit": "nope"})

@@ -496,18 +496,29 @@ class TestSearchMavenCentral(unittest.TestCase):
 
     def test_returns_empty_on_http_error(self):
         # Mirrors maven-search.test.ts "returns empty array on error" (500).
-        with unittest.mock.patch(
-            "urllib.request.urlopen",
-            side_effect=mock_urlopen([http_error("u", 500, "boom")]),
-        ):
+        # 500 is retryable (_is_retryable_status), so _request_with_retry
+        # exhausts HTTP_MAX_ATTEMPTS before returning the definitive (500, b"")
+        # this test exercises -- queue one response per attempt and patch
+        # _sleep so the retry backoff does not slow (or flake) the test.
+        url = "https://search.maven.org/solrsearch/select"
+        errs = [http_error(url, 500, "boom") for _ in range(server.HTTP_MAX_ATTEMPTS)]
+        with unittest.mock.patch.object(server, "_sleep"), \
+                unittest.mock.patch(
+                    "urllib.request.urlopen", side_effect=mock_urlopen(errs),
+                ):
             self.assertEqual(server.search_maven_central("fail"), [])
 
     def test_returns_empty_when_request_raises(self):
         # Mirrors maven-search.test.ts "returns empty array when fetch rejects".
-        with unittest.mock.patch(
-            "urllib.request.urlopen",
-            side_effect=mock_urlopen([urllib.error.URLError("network error")]),
-        ):
+        # A transport error is retried up to HTTP_MAX_ATTEMPTS before
+        # _request_with_retry re-raises it -- queue one per attempt.
+        with unittest.mock.patch.object(server, "_sleep"), \
+                unittest.mock.patch(
+                    "urllib.request.urlopen",
+                    side_effect=mock_urlopen(
+                        [urllib.error.URLError("network error")] * server.HTTP_MAX_ATTEMPTS
+                    ),
+                ):
             self.assertEqual(server.search_maven_central("network-fail"), [])
 
 
@@ -516,7 +527,11 @@ class TestSearchMavenCentral(unittest.TestCase):
 # search_maven_central() alone swallows every failure into a bare [], making a
 # Sonatype rate-limit/block indistinguishable from "zero results". The
 # capability-reporting variant used by search_artifacts_with_backend must
-# surface which is which.
+# surface a PRECISE reason: "rate_limited" (429, transient throttle),
+# "blocked" (403, definitive lockout), or "unreachable" (5xx / transport
+# failure) — never one blanket value. A malformed-but-200 body is a separate
+# parse-bug case that must degrade to empty-results/no-capability, not be
+# folded into any of the three reasons above.
 # ---------------------------------------------------------------------------
 class TestSearchMavenCentralWithCapability(unittest.TestCase):
     def test_success_reports_no_capability(self):
@@ -556,7 +571,7 @@ class TestSearchMavenCentralWithCapability(unittest.TestCase):
         self.assertEqual(results, [])
         self.assertEqual(capability, "rate_limited")
 
-    def test_persistent_5xx_reports_rate_limited(self):
+    def test_persistent_5xx_reports_unreachable(self):
         url = "https://search.maven.org/solrsearch/select"
         errs = [http_error(url, 503) for _ in range(server.HTTP_MAX_ATTEMPTS)]
         with unittest.mock.patch.object(server, "_sleep"), \
@@ -565,22 +580,23 @@ class TestSearchMavenCentralWithCapability(unittest.TestCase):
                 ):
             results, capability = server._search_maven_central_with_capability("ktor")
         self.assertEqual(results, [])
-        self.assertEqual(capability, "rate_limited")
+        self.assertEqual(capability, "unreachable")
 
-    def test_403_lockout_reports_rate_limited(self):
+    def test_403_lockout_reports_blocked(self):
         # search.maven.org has a documented history of 403-locking out clients
         # under bulk load; 403 is not a retryable status (_is_retryable_status)
-        # so it is a definitive first-attempt response — must still surface
-        # the same "search backend is blocking us" signal, not a bare [].
+        # so it is a definitive first-attempt response. It is a DEFINITIVE
+        # block, not a transient throttle — must surface "blocked", never
+        # "rate_limited" (which would mislead a caller into retrying hard).
         with unittest.mock.patch(
             "urllib.request.urlopen",
             side_effect=mock_urlopen([http_error("u", 403, "Forbidden")]),
         ):
             results, capability = server._search_maven_central_with_capability("ktor")
         self.assertEqual(results, [])
-        self.assertEqual(capability, "rate_limited")
+        self.assertEqual(capability, "blocked")
 
-    def test_transport_error_reports_rate_limited(self):
+    def test_transport_error_reports_unreachable(self):
         with unittest.mock.patch.object(server, "_sleep"), \
                 unittest.mock.patch(
                     "urllib.request.urlopen",
@@ -590,7 +606,27 @@ class TestSearchMavenCentralWithCapability(unittest.TestCase):
                 ):
             results, capability = server._search_maven_central_with_capability("ktor")
         self.assertEqual(results, [])
-        self.assertEqual(capability, "rate_limited")
+        self.assertEqual(capability, "unreachable")
+
+    def test_malformed_200_body_reports_empty_no_capability_and_logs(self):
+        # A 200 whose body fails to parse (bad JSON, or valid JSON in an
+        # unexpected shape) is a PARSE bug, never a rate-limit/block signal —
+        # must degrade to the pre-#416 empty-results/no-capability outcome,
+        # log the failure (never silently swallowed), and never crash.
+        malformed_bodies = {
+            "invalid json": b"not json at all {",
+            "json scalar instead of an object": b'"just a string"',
+            "response key is not an object": json.dumps({"response": "oops"}).encode(),
+        }
+        for label, body in malformed_bodies.items():
+            with self.subTest(label=label):
+                with unittest.mock.patch(
+                    "urllib.request.urlopen", side_effect=mock_urlopen([(200, body)]),
+                ), unittest.mock.patch.object(server._logger, "warning") as warn:
+                    results, capability = server._search_maven_central_with_capability("ktor")
+                self.assertEqual(results, [])
+                self.assertIsNone(capability)
+                warn.assert_called_once()
 
     def test_search_maven_central_wrapper_unaffected_by_capability(self):
         # The legacy bare-list wrapper must still degrade to a plain [] on
