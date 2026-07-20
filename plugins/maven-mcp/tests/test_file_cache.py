@@ -595,11 +595,13 @@ class TestHttpGetCached(unittest.TestCase):
                 try:
                     server.fetch_metadata("com.missing", "artifact", ctx)
                 except ValueError:
+                    # 404 -> fetch_metadata raises ValueError (all repos absent); expected here, the test asserts network call_count / cache behavior, not the return value.
                     pass
                 server._now = lambda: t0 + server.TTL_NEGATIVE_404 + 1
                 try:
                     server.fetch_metadata("com.missing", "artifact", ctx)
                 except ValueError:
+                    # 404 -> fetch_metadata raises ValueError (all repos absent); expected here, the test asserts network call_count / cache behavior, not the return value.
                     pass
             self.assertEqual(m.call_count, 2,
                              "a 404 must re-hit the network once TTL_NEGATIVE_404 has elapsed")
@@ -623,6 +625,7 @@ class TestHttpGetCached(unittest.TestCase):
             try:
                 server.fetch_metadata("com.throttled", "artifact", ctx)
             except Exception:
+                # any exception from retry exhaustion is expected; only call_count and cache state matter
                 pass
         self.assertEqual(m.call_count, attempts * 2,
                          "429 must never be cached: each call must retry independently")
