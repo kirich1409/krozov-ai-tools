@@ -223,36 +223,30 @@ def write_fake_gradlew(root: str) -> str:
 
 
 def write_smart_gradlew(root: str) -> str:
-    """Create a ``gradlew`` stub that echoes fixture dependency-tree output.
+    """Create a ``gradlew`` stub that echoes single-invocation init-script
+    marker output (#401) for a two-module (root + ``:app``) project.
 
     Exercises the real subprocess → parse path in ``_gradle_resolve_dependencies``
-    without a JVM or Gradle installation.
+    without a JVM or Gradle installation. The stub does not actually read the
+    generated ``--init-script`` file (there is no JVM here to execute it) — it
+    just recognises the ``--init-script`` flag and prints the same marker
+    format the real init script would produce.
     """
     path = os.path.join(root, "gradlew")
     script = r"""#!/bin/sh
 joined="$*"
-if echo "$joined" | grep -q "projects"; then
-  printf '%s\n' "Root project 'demo'" "Project ':app'"
-  exit 0
-fi
-if echo "$joined" | grep -q "buildEnvironment"; then
-  printf '%s\n' "classpath" "+--- com.android.tools.build:gradle:8.0.0"
-  exit 0
-fi
-if echo "$joined" | grep -q ":app:dependencies" && echo "$joined" | grep -q "releaseRuntimeClasspath"; then
+if echo "$joined" | grep -q -- "--init-script"; then
   printf '%s\n' \
-    "releaseRuntimeClasspath - Runtime classpath of source set 'main'." \
-    "+--- io.ktor:ktor-client-core:3.1.1 -> 3.1.2"
-  exit 0
-fi
-if echo "$joined" | grep -q ":app:dependencies" && ! echo "$joined" | grep -q -- "--configuration"; then
-  printf '%s\n' \
-    "releaseRuntimeClasspath - Runtime classpath of source set 'main'." \
-    "compileClasspath - Compile classpath of source set 'main'."
-  exit 0
-fi
-if echo "$joined" | grep -q -- "-q dependencies" && echo "$joined" | grep -q "releaseRuntimeClasspath"; then
-  printf '%s\n' "releaseRuntimeClasspath - Runtime classpath of source set 'main'."
+    "===MAVEN_MCP_MODULE=== :" \
+    "===MAVEN_MCP_MODULE_END===" \
+    "===MAVEN_MCP_MODULE=== :app" \
+    "===MAVEN_MCP_CONFIG=== releaseRuntimeClasspath" \
+    "io.ktor:ktor-client-core:3.1.2" \
+    "===MAVEN_MCP_CONFIG_END===" \
+    "===MAVEN_MCP_MODULE_END===" \
+    "===MAVEN_MCP_BUILDENV===" \
+    "com.android.tools.build:gradle:8.0.0" \
+    "===MAVEN_MCP_BUILDENV_END==="
   exit 0
 fi
 exit 0

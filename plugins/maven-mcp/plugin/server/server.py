@@ -124,12 +124,6 @@ _CACHE_DENYLIST = frozenset({"api.github.com", "api.osv.dev"})
 GRADLE_BUILD_FILES = ["build.gradle.kts", "build.gradle"]
 GRADLE_SETTINGS_FILES = ["settings.gradle.kts", "settings.gradle"]
 GRADLE_RESOLVE_TIMEOUT = 120
-_GRADLE_RESOLVE_CONFIGURATIONS = (
-    "releaseRuntimeClasspath",
-    "runtimeClasspath",
-    "releaseCompileClasspath",
-    "compileClasspath",
-)
 MAX_MODULE_DEPTH = 5
 # Cap recursive BOM import / parent-property fetches (#286).
 MAX_BOM_DEPTH = 5
@@ -7944,93 +7938,6 @@ def _run_gradle_command(
     return result.returncode, result.stdout or "", result.stderr or ""
 
 
-def _parse_gav_from_dependency_line(token: str) -> Optional[Tuple[str, str, str]]:
-    token = token.strip()
-    token = re.sub(r"\s*\([cn*]\)\s*$", "", token).strip()
-    if not token or token.startswith("project "):
-        return None
-    if " -> " in token:
-        left, right = token.split(" -> ", 1)
-        right = re.sub(r"\s*\([cn*]\)\s*$", "", right).strip()
-        left_parts = left.strip().split(":")
-        if len(left_parts) < 2:
-            return None
-        group_id, artifact_id = left_parts[0], left_parts[1]
-        if ":" in right:
-            right_parts = right.split(":")
-            if len(right_parts) >= 3:
-                return right_parts[0], right_parts[1], ":".join(right_parts[2:])
-        if len(left_parts) >= 3:
-            return group_id, artifact_id, right
-        return None
-    parts = token.split(":")
-    if len(parts) >= 3:
-        return parts[0], parts[1], ":".join(parts[2:])
-    return None
-
-
-def _parse_gradle_dependencies_stdout(
-    stdout: str,
-    module_label: Optional[str],
-    configuration: str,
-) -> List[Dict]:
-    deps: List[Dict] = []
-    for line in stdout.splitlines():
-        m = re.match(r"^(?:\+---|\\---)\s+(.+)$", line)
-        if not m:
-            continue
-        token = m.group(1).strip()
-        if re.search(r"\(n\)\s*$", token):
-            continue
-        gav = _parse_gav_from_dependency_line(token)
-        if not gav:
-            continue
-        group_id, artifact_id, version = gav
-        deps.append({
-            "groupId": group_id,
-            "artifactId": artifact_id,
-            "version": version,
-            "configuration": configuration,
-            "module": module_label,
-            "resolvedBy": "gradle",
-            "usages": [{"module": module_label, "configuration": configuration}],
-        })
-    return deps
-
-
-def _parse_build_environment_classpath(stdout: str) -> List[Dict]:
-    deps: List[Dict] = []
-    in_classpath = False
-    for line in stdout.splitlines():
-        stripped = line.strip()
-        if stripped == "classpath" or stripped.startswith("classpath -"):
-            in_classpath = True
-            continue
-        if not in_classpath:
-            continue
-        if stripped == "" and deps:
-            break
-        m = re.match(r"^(?:\+---|\\---)\s+(.+)$", line)
-        if not m:
-            if deps and not line.startswith("|") and not stripped.startswith("+"):
-                break
-            continue
-        gav = _parse_gav_from_dependency_line(m.group(1))
-        if not gav:
-            continue
-        group_id, artifact_id, version = gav
-        deps.append({
-            "groupId": group_id,
-            "artifactId": artifact_id,
-            "version": version,
-            "configuration": "classpath",
-            "module": None,
-            "resolvedBy": "gradle",
-            "usages": [{"module": None, "configuration": "classpath"}],
-        })
-    return deps
-
-
 def _is_production_runtime_configuration(config: str) -> bool:
     """True for production runtime classpaths; excludes test/compile/classpath."""
     if not config:
@@ -8042,21 +7949,6 @@ def _is_production_runtime_configuration(config: str) -> bool:
     if config == "compileClasspath" or config.endswith("CompileClasspath"):
         return False
     return config.endswith("RuntimeClasspath")
-
-
-def _parse_gradle_configuration_headers(stdout: str) -> List[str]:
-    """Extract configuration names from ``gradlew … dependencies`` probe output."""
-    configs: List[str] = []
-    seen: set = set()
-    for line in stdout.splitlines():
-        m = re.match(r"^([A-Za-z][\w\d]*) - ", line)
-        if not m:
-            continue
-        name = m.group(1)
-        if name not in seen:
-            seen.add(name)
-            configs.append(name)
-    return configs
 
 
 def _select_configurations_to_resolve(available: List[str]) -> List[str]:
@@ -8081,26 +7973,6 @@ def _select_configurations_to_resolve(available: List[str]) -> List[str]:
     return selected
 
 
-def _probe_gradle_configurations(
-    project_root: str,
-    gradlew: str,
-    module: str,
-) -> Tuple[List[str], Optional[str]]:
-    if module == ":":
-        args = ["-q", "dependencies"]
-        task_label = ":dependencies"
-    else:
-        args = ["-q", f"{module}:dependencies"]
-        task_label = f"{module}:dependencies"
-    code, stdout, stderr = _run_gradle_command(project_root, gradlew, args)
-    if code != 0:
-        msg = f"{task_label} probe exited with code {code}"
-        if stderr.strip():
-            msg += f": {stderr.strip()}"
-        return [], msg
-    return _parse_gradle_configuration_headers(stdout), None
-
-
 def _count_production_runtime_deps(deps: List[Dict]) -> int:
     count = 0
     for dep in deps:
@@ -8109,36 +7981,6 @@ def _count_production_runtime_deps(deps: List[Dict]) -> int:
                 count += 1
                 break
     return count
-
-
-def _discover_gradle_modules(project_root: str, gradlew: Optional[str] = None) -> List[str]:
-    modules = [":"]
-    settings_content = None
-    for fname in GRADLE_SETTINGS_FILES:
-        path = os.path.join(project_root, fname)
-        if os.path.exists(path):
-            with open(path, "r", encoding="utf-8", errors="replace") as fh:
-                settings_content = fh.read()
-            break
-    if settings_content:
-        for module_path in _parse_settings_modules(settings_content):
-            if not module_path.startswith(":"):
-                module_path = ":" + module_path
-            if module_path not in modules:
-                modules.append(module_path)
-    if gradlew:
-        code, stdout, _stderr = _run_gradle_command(project_root, gradlew, ["-q", "projects"])
-        if code == 0:
-            for line in stdout.splitlines():
-                m = re.search(r"Project '([^']+)'", line)
-                if not m:
-                    continue
-                module_path = m.group(1)
-                if not module_path.startswith(":"):
-                    module_path = ":" + module_path
-                if module_path not in modules:
-                    modules.append(module_path)
-    return modules
 
 
 def _dedupe_gradle_resolved_deps(deps: List[Dict]) -> List[Dict]:
@@ -8165,6 +8007,168 @@ def _dedupe_gradle_resolved_deps(deps: List[Dict]) -> List[Dict]:
     return list(merged.values())
 
 
+_INIT_MODULE = "===MAVEN_MCP_MODULE==="
+_INIT_MODULE_END = "===MAVEN_MCP_MODULE_END==="
+_INIT_CONFIG = "===MAVEN_MCP_CONFIG==="
+_INIT_CONFIG_ERROR = "===MAVEN_MCP_CONFIG_ERROR==="
+_INIT_CONFIG_END = "===MAVEN_MCP_CONFIG_END==="
+_INIT_BUILDENV = "===MAVEN_MCP_BUILDENV==="
+_INIT_BUILDENV_ERROR = "===MAVEN_MCP_BUILDENV_ERROR==="
+_INIT_BUILDENV_END = "===MAVEN_MCP_BUILDENV_END==="
+
+
+def _generate_gradle_resolve_init_script() -> str:
+    """Groovy ``--init-script`` (#401) that dumps resolved first-level GAVs for
+    every resolvable configuration of every project, plus the root buildscript
+    classpath, in ONE Gradle invocation / configuration phase — replacing the
+    previous ``1 + P*(1+C)`` separate ``gradlew`` invocations (a probe run per
+    module, then one ``dependencies --configuration`` run per selected
+    configuration, plus one ``buildEnvironment`` run) with exactly one.
+
+    Only first-level (direct) dependencies are dumped, matching the old text
+    parser exactly: ``_parse_gradle_dependencies_stdout`` only ever matched
+    depth-0 tree lines (``^(?:\\+---|\\\\---)``, no leading ``|`` indent), so
+    transitive dependencies nested under a direct one were never captured
+    before either — this is existing behavior being preserved, not a new
+    limitation. Uses ``configuration.incoming.resolutionResult`` (never throws
+    ResolveException — unresolved dependencies simply surface as
+    ``UnresolvedDependencyResult`` nodes instead of failing the graph) rather
+    than the legacy ``resolvedConfiguration``/``lenientConfiguration`` API:
+    empirically, the legacy API triggers a Gradle-9 deprecation warning
+    ("incompatible with Gradle 10") on a real sample build, while
+    ``resolutionResult`` does not — so this is also a forward-compat win, not
+    only a perf one. It additionally distinguishes project (module-to-module)
+    dependencies from external module ones via
+    ``ProjectComponentIdentifier``/``ModuleComponentIdentifier`` — the old
+    parser explicitly skipped ``project :x`` tokens, and naively resolving via
+    the legacy API's ``firstLevelModuleDependencies`` reintroduces exactly
+    that as a synthetic ``{rootGroup}:{subprojectName}:unspecified`` GAV,
+    which is filtered out here to preserve the old output shape exactly. Each
+    configuration is wrapped in its own try/catch for per-module,
+    per-configuration failure isolation, the same isolation the old
+    per-invocation-per-config subprocess model gave. No untrusted data is
+    interpolated into this script (module/paths are read from the live
+    ``Project`` graph inside Groovy, not templated from Python), so it carries
+    no injection surface from the scanned project.
+    """
+    return r"""
+import org.gradle.api.artifacts.result.ResolvedDependencyResult
+import org.gradle.api.artifacts.component.ModuleComponentIdentifier
+
+gradle.projectsEvaluated {
+    gradle.rootProject.allprojects.each { p ->
+        println("===MAVEN_MCP_MODULE=== " + p.path)
+        p.configurations.each { cfg ->
+            if (!cfg.canBeResolved) {
+                return
+            }
+            println("===MAVEN_MCP_CONFIG=== " + cfg.name)
+            try {
+                def root = cfg.incoming.resolutionResult.root
+                root.dependencies.each { dep ->
+                    if (dep instanceof ResolvedDependencyResult) {
+                        def id = dep.selected.id
+                        if (id instanceof ModuleComponentIdentifier) {
+                            println(id.group + ":" + id.module + ":" + id.version)
+                        }
+                        // else: ProjectComponentIdentifier (module-to-module dependency) —
+                        // skipped, matching the old parser's "project :x" exclusion.
+                    }
+                    // else: UnresolvedDependencyResult — skipped, matching the old
+                    // parser's "(n)" unresolved-suffix exclusion.
+                }
+            } catch (Exception e) {
+                println("===MAVEN_MCP_CONFIG_ERROR=== " + e.class.name + ": " + e.message)
+            }
+            println("===MAVEN_MCP_CONFIG_END===")
+        }
+        println("===MAVEN_MCP_MODULE_END===")
+    }
+    println("===MAVEN_MCP_BUILDENV===")
+    try {
+        def bscfg = gradle.rootProject.buildscript.configurations.findByName("classpath")
+        if (bscfg != null && bscfg.canBeResolved) {
+            bscfg.incoming.resolutionResult.root.dependencies.each { dep ->
+                if (dep instanceof ResolvedDependencyResult) {
+                    def id = dep.selected.id
+                    if (id instanceof ModuleComponentIdentifier) {
+                        println(id.group + ":" + id.module + ":" + id.version)
+                    }
+                }
+            }
+        }
+    } catch (Exception e) {
+        println("===MAVEN_MCP_BUILDENV_ERROR=== " + e.class.name + ": " + e.message)
+    }
+    println("===MAVEN_MCP_BUILDENV_END===")
+}
+"""
+
+
+def _parse_gav_triplet(line: str) -> Optional[Tuple[str, str, str]]:
+    parts = line.strip().split(":")
+    if len(parts) < 3:
+        return None
+    return parts[0], parts[1], ":".join(parts[2:])
+
+
+def _parse_single_invocation_gradle_output(
+    stdout: str,
+) -> Tuple[Dict[str, Dict[str, List[Tuple[str, str, str]]]], List[str], List[Tuple[str, str, str]], Optional[str]]:
+    """Parse the init-script dump (#401) into
+    ``{module: {configuration: [(group, artifact, version), ...]}}``, a list of
+    per-configuration resolution-error strings, the buildEnvironment classpath
+    GAVs, and an optional buildEnvironment error string."""
+    modules: Dict[str, Dict[str, List[Tuple[str, str, str]]]] = {}
+    errors: List[str] = []
+    buildenv: List[Tuple[str, str, str]] = []
+    buildenv_error: Optional[str] = None
+
+    current_module: Optional[str] = None
+    current_config: Optional[str] = None
+    in_buildenv = False
+    for line in stdout.splitlines():
+        if line.startswith(_INIT_MODULE):
+            current_module = line[len(_INIT_MODULE):].strip()
+            modules.setdefault(current_module, {})
+            continue
+        if line.startswith(_INIT_MODULE_END):
+            current_module = None
+            continue
+        if line.startswith(_INIT_CONFIG) and current_module is not None:
+            current_config = line[len(_INIT_CONFIG):].strip()
+            modules[current_module].setdefault(current_config, [])
+            continue
+        if line.startswith(_INIT_CONFIG_ERROR):
+            if current_module is not None and current_config is not None:
+                msg = line[len(_INIT_CONFIG_ERROR):].strip()
+                errors.append(f"{current_module}:{current_config} resolution error: {msg}")
+            continue
+        if line.startswith(_INIT_CONFIG_END):
+            current_config = None
+            continue
+        if line.startswith(_INIT_BUILDENV_ERROR):
+            buildenv_error = line[len(_INIT_BUILDENV_ERROR):].strip()
+            continue
+        if line.startswith(_INIT_BUILDENV_END):
+            in_buildenv = False
+            continue
+        if line.startswith(_INIT_BUILDENV):
+            in_buildenv = True
+            continue
+        if in_buildenv:
+            gav = _parse_gav_triplet(line)
+            if gav:
+                buildenv.append(gav)
+            continue
+        if current_module is not None and current_config is not None:
+            gav = _parse_gav_triplet(line)
+            if gav:
+                modules[current_module][current_config].append(gav)
+
+    return modules, errors, buildenv, buildenv_error
+
+
 def _gradle_resolve_dependencies(project_root: str) -> Dict:
     gradlew = _find_gradle_wrapper(project_root)
     if not gradlew:
@@ -8177,59 +8181,64 @@ def _gradle_resolve_dependencies(project_root: str) -> Dict:
     collected: List[Dict] = []
     errors: List[str] = []
     notes: List[str] = []
-    attempts = 0
-    failures = 0
 
-    for module in _discover_gradle_modules(project_root, gradlew):
-        probed, probe_err = _probe_gradle_configurations(project_root, gradlew, module)
-        if probe_err:
-            errors.append(probe_err)
-        configurations = _select_configurations_to_resolve(probed)
-        if not configurations:
-            configurations = [
-                c for c in _GRADLE_RESOLVE_CONFIGURATIONS
-                if _is_production_runtime_configuration(c)
-            ]
+    with tempfile.TemporaryDirectory(prefix="maven-mcp-gradle-init-") as init_dir:
+        init_path = os.path.join(init_dir, "maven-mcp-resolve.init.gradle")
+        with open(init_path, "w", encoding="utf-8") as fh:
+            fh.write(_generate_gradle_resolve_init_script())
+        code, _stdout, stderr = _run_gradle_command(
+            project_root, gradlew, ["--init-script", init_path, "-q", "help"]
+        )
+        stdout = _stdout
 
+    modules, config_errors, buildenv_gavs, buildenv_error = _parse_single_invocation_gradle_output(stdout)
+    errors.extend(config_errors)
+
+    invocation_failed = code != 0 and not modules
+    if invocation_failed:
+        msg = f"Gradle init-script invocation exited with code {code}"
+        if stderr.strip():
+            msg += f": {stderr.strip()}"
+        errors.append(msg)
+
+    for module, config_map in modules.items():
+        available = list(config_map.keys())
+        selected = _select_configurations_to_resolve(available)
         skip_bare_runtime = False
         module_label = None if module == ":" else module
-        for configuration in configurations:
+        for configuration in selected:
             if configuration == "runtimeClasspath" and skip_bare_runtime:
                 continue
-            if module == ":":
-                args = ["-q", "dependencies", "--configuration", configuration]
-                task_label = f":{configuration}"
-            else:
-                args = ["-q", f"{module}:dependencies", "--configuration", configuration]
-                task_label = f"{module}:{configuration}"
-            attempts += 1
-            code, stdout, stderr = _run_gradle_command(project_root, gradlew, args)
-            if code != 0:
-                failures += 1
-                msg = f"{task_label} exited with code {code}"
-                if stderr.strip():
-                    msg += f": {stderr.strip()}"
-                errors.append(msg)
-                continue
-            parsed = _parse_gradle_dependencies_stdout(stdout, module_label, configuration)
-            collected.extend(parsed)
+            gavs = config_map.get(configuration, [])
+            for group_id, artifact_id, version in gavs:
+                collected.append({
+                    "groupId": group_id,
+                    "artifactId": artifact_id,
+                    "version": version,
+                    "configuration": configuration,
+                    "module": module_label,
+                    "resolvedBy": "gradle",
+                    "usages": [{"module": module_label, "configuration": configuration}],
+                })
             if (
-                parsed
+                gavs
                 and configuration.startswith("release")
                 and configuration.endswith("RuntimeClasspath")
             ):
                 skip_bare_runtime = True
 
-    attempts += 1
-    code, stdout, stderr = _run_gradle_command(project_root, gradlew, ["-q", "buildEnvironment"])
-    if code == 0:
-        collected.extend(_parse_build_environment_classpath(stdout))
-    else:
-        failures += 1
-        msg = "buildEnvironment exited with code {}".format(code)
-        if stderr.strip():
-            msg += f": {stderr.strip()}"
-        errors.append(msg)
+    if buildenv_error:
+        errors.append(f"buildEnvironment classpath resolution error: {buildenv_error}")
+    for group_id, artifact_id, version in buildenv_gavs:
+        collected.append({
+            "groupId": group_id,
+            "artifactId": artifact_id,
+            "version": version,
+            "configuration": "classpath",
+            "module": None,
+            "resolvedBy": "gradle",
+            "usages": [{"module": None, "configuration": "classpath"}],
+        })
 
     deduped = _dedupe_gradle_resolved_deps(collected)
     production_count = _count_production_runtime_deps(deduped)
@@ -8239,7 +8248,7 @@ def _gradle_resolve_dependencies(project_root: str) -> Dict:
                 "No production runtime dependencies resolved; only build classpath/"
                 + "plugin dependencies were found"
             )
-        elif failures == attempts and attempts > 0:
+        elif invocation_failed:
             notes.append("All Gradle dependency tasks failed.")
         elif not errors:
             notes.append("No production configurations resolved; project may lack applicable variants.")

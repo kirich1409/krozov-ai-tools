@@ -1,4 +1,13 @@
-"""Gradle-resolved dependency scanning (#392 / #393 / #394)."""
+"""Gradle-resolved dependency scanning (#392 / #393 / #394 / #401).
+
+#401 collapsed the previous "1 probe + P*(1+C) `gradlew` invocations" model
+into a single ``--init-script`` invocation whose Groovy script dumps resolved
+first-level GAVs for every project/configuration plus the buildscript
+classpath in one configuration phase. These tests exercise: the init-script
+generator, the single-invocation output parser, and the end-to-end
+``_gradle_resolve_dependencies``/``scan_project`` behavior against mocked
+``_run_gradle_command`` output shaped like a real init-script dump.
+"""
 
 import os
 import subprocess
@@ -14,147 +23,140 @@ from _helpers import (
 )
 
 
-RUNTIME_CLASSPATH_FIXTURE = """
-------------------------------------------------------------
-Project ':app'
-------------------------------------------------------------
+# A two-module (root ":" + ":app") single-invocation dump: ":app" resolves
+# io.ktor via releaseRuntimeClasspath (with conflict-resolution substitution
+# already applied, matching what `resolutionResult` reports — no "->" text to
+# parse), plus a root buildscript classpath entry.
+SINGLE_INVOCATION_FIXTURE = (
+    "===MAVEN_MCP_MODULE=== :\n"
+    "===MAVEN_MCP_MODULE_END===\n"
+    "===MAVEN_MCP_MODULE=== :app\n"
+    "===MAVEN_MCP_CONFIG=== releaseRuntimeClasspath\n"
+    "io.ktor:ktor-client-core:3.1.2\n"
+    "com.squareup.okhttp3:okhttp:4.12.0\n"
+    "===MAVEN_MCP_CONFIG_END===\n"
+    "===MAVEN_MCP_CONFIG=== compileClasspath\n"
+    "io.ktor:ktor-client-core:3.1.2\n"
+    "===MAVEN_MCP_CONFIG_END===\n"
+    "===MAVEN_MCP_MODULE_END===\n"
+    "===MAVEN_MCP_BUILDENV===\n"
+    "com.android.tools.build:gradle:8.0.0\n"
+    "org.jetbrains.kotlin:kotlin-gradle-plugin:2.0.0\n"
+    "===MAVEN_MCP_BUILDENV_END===\n"
+)
 
-releaseRuntimeClasspath - Runtime classpath of source set 'main'.
+CONFIG_ERROR_FIXTURE = (
+    "===MAVEN_MCP_MODULE=== :app\n"
+    "===MAVEN_MCP_CONFIG=== releaseRuntimeClasspath\n"
+    "io.ktor:ktor-client-core:3.1.2\n"
+    "===MAVEN_MCP_CONFIG_END===\n"
+    "===MAVEN_MCP_CONFIG=== debugRuntimeClasspath\n"
+    "===MAVEN_MCP_CONFIG_ERROR=== org.gradle.api.internal.artifacts.ivyservice.ResolveException: Could not resolve all dependencies\n"
+    "===MAVEN_MCP_CONFIG_END===\n"
+    "===MAVEN_MCP_MODULE_END===\n"
+    "===MAVEN_MCP_BUILDENV===\n"
+    "===MAVEN_MCP_BUILDENV_END===\n"
+)
 
-+--- io.ktor:ktor-client-core:3.1.1 -> 3.1.2
-\\--- com.squareup.okhttp3:okhttp:4.12.0
-"""
-
-BUILD_ENVIRONMENT_FIXTURE = """
-------------------------------------------------------------
-Root project 'demo'
-------------------------------------------------------------
-
-classpath
-+--- com.android.tools.build:gradle:8.0.0
-\\--- org.jetbrains.kotlin:kotlin-gradle-plugin:2.0.0
-"""
-
-KMP_PROBE_FIXTURE = """
-releaseRuntimeClasspath - Runtime classpath of source set 'main'.
-debugRuntimeClasspath - Runtime classpath of source set 'main'.
-releaseCompileClasspath - Compile classpath of source set 'main'.
-compileClasspath - Compile classpath of source set 'main'.
-runtimeClasspath - Runtime classpath of 'main'.
-testRuntimeClasspath - Runtime classpath of source set 'test'.
-"""
-
-PROJECTS_FIXTURE = """
-Root project 'demo'
-\\--- Project ':app'
-"""
-
-
-def _default_integration_mapping():
-    """Gradle command stdout mapping for probe-based resolve integration tests."""
-    return {
-        ("-q", "projects"): PROJECTS_FIXTURE,
-        ("-q", ":app:dependencies"): KMP_PROBE_FIXTURE,
-        ("-q", "dependencies"): "",
-        ("-q", ":app:dependencies", "--configuration", "releaseRuntimeClasspath"): RUNTIME_CLASSPATH_FIXTURE,
-        ("-q", ":app:dependencies", "--configuration", "debugRuntimeClasspath"): "",
-        ("-q", ":app:dependencies", "--configuration", "runtimeClasspath"): "",
-        ("-q", "dependencies", "--configuration", "releaseRuntimeClasspath"): "",
-        ("-q", "dependencies", "--configuration", "runtimeClasspath"): "",
-        ("-q", "buildEnvironment"): "",
-    }
+ONLY_BUILDENV_FIXTURE = (
+    "===MAVEN_MCP_MODULE=== :\n"
+    "===MAVEN_MCP_MODULE_END===\n"
+    "===MAVEN_MCP_BUILDENV===\n"
+    "com.android.tools.build:gradle:8.0.0\n"
+    "===MAVEN_MCP_BUILDENV_END===\n"
+)
 
 
-class TestParseGavFromDependencyLine(unittest.TestCase):
-    def test_plain_gav(self):
-        self.assertEqual(
-            server._parse_gav_from_dependency_line("io.ktor:ktor-client-core:3.1.1"),
-            ("io.ktor", "ktor-client-core", "3.1.1"),
+class TestGenerateGradleResolveInitScript(unittest.TestCase):
+    def test_script_contains_expected_markers_and_apis(self):
+        script = server._generate_gradle_resolve_init_script()
+        # Marker protocol the parser depends on.
+        for marker in (
+            "===MAVEN_MCP_MODULE===",
+            "===MAVEN_MCP_MODULE_END===",
+            "===MAVEN_MCP_CONFIG===",
+            "===MAVEN_MCP_CONFIG_ERROR===",
+            "===MAVEN_MCP_CONFIG_END===",
+            "===MAVEN_MCP_BUILDENV===",
+            "===MAVEN_MCP_BUILDENV_ERROR===",
+            "===MAVEN_MCP_BUILDENV_END===",
+        ):
+            self.assertIn(marker, script)
+        # Modern resolutionResult API (never throws ResolveException) and the
+        # project-vs-module distinction that excludes project(":x") deps.
+        self.assertIn("resolutionResult", script)
+        self.assertIn("ResolvedDependencyResult", script)
+        self.assertIn("ModuleComponentIdentifier", script)
+        self.assertIn("canBeResolved", script)
+        self.assertIn("projectsEvaluated", script)
+
+    def test_no_untrusted_interpolation(self):
+        # Static script string, not an f-string / .format() with project data.
+        script = server._generate_gradle_resolve_init_script()
+        self.assertNotIn("{project_root}", script)
+
+
+class TestParseSingleInvocationGradleOutput(unittest.TestCase):
+    def test_multi_module_parse(self):
+        modules, errors, buildenv, buildenv_error = server._parse_single_invocation_gradle_output(
+            SINGLE_INVOCATION_FIXTURE
         )
-
-    def test_version_substitution(self):
+        self.assertEqual(set(modules.keys()), {":", ":app"})
+        self.assertEqual(modules[":"], {})
         self.assertEqual(
-            server._parse_gav_from_dependency_line("io.ktor:ktor-client-core:3.1.1 -> 3.1.2"),
-            ("io.ktor", "ktor-client-core", "3.1.2"),
+            set(modules[":app"].keys()), {"releaseRuntimeClasspath", "compileClasspath"}
         )
-
-    def test_constraint_suffix(self):
         self.assertEqual(
-            server._parse_gav_from_dependency_line("org.jetbrains.kotlin:kotlin-stdlib:1.9.0 (c)"),
-            ("org.jetbrains.kotlin", "kotlin-stdlib", "1.9.0"),
+            modules[":app"]["releaseRuntimeClasspath"],
+            [("io.ktor", "ktor-client-core", "3.1.2"), ("com.squareup.okhttp3", "okhttp", "4.12.0")],
         )
-
-    def test_unresolved_suffix(self):
+        self.assertEqual(errors, [])
         self.assertEqual(
-            server._parse_gav_from_dependency_line("com.example:missing:1.0 (n)"),
-            ("com.example", "missing", "1.0"),
-        )
-
-    def test_repeated_subtree_suffix(self):
-        self.assertEqual(
-            server._parse_gav_from_dependency_line("com.example:lib:1.0 (*)"),
-            ("com.example", "lib", "1.0"),
-        )
-
-    def test_project_dependency_skipped(self):
-        self.assertIsNone(server._parse_gav_from_dependency_line("project :core"))
-
-
-class TestParseGradleDependenciesStdout(unittest.TestCase):
-    def test_direct_dependencies_only(self):
-        stdout = (
-            "releaseRuntimeClasspath\n"
-            "+--- io.ktor:ktor-client-core:3.1.1\n"
-            "|    \\--- org.jetbrains.kotlin:kotlin-stdlib:1.9.0\n"
-            "\\--- com.squareup.okhttp3:okhttp:4.12.0\n"
-        )
-        deps = server._parse_gradle_dependencies_stdout(stdout, ":app", "releaseRuntimeClasspath")
-        gas = {(d["groupId"], d["artifactId"], d["version"]) for d in deps}
-        self.assertEqual(
-            gas,
+            set(buildenv),
             {
-                ("io.ktor", "ktor-client-core", "3.1.1"),
-                ("com.squareup.okhttp3", "okhttp", "4.12.0"),
+                ("com.android.tools.build", "gradle", "8.0.0"),
+                ("org.jetbrains.kotlin", "kotlin-gradle-plugin", "2.0.0"),
             },
         )
-        self.assertTrue(all(d["resolvedBy"] == "gradle" for d in deps))
+        self.assertIsNone(buildenv_error)
 
-    def test_skips_unresolved_n_suffix(self):
-        stdout = (
-            "releaseRuntimeClasspath\n"
-            "+--- com.example:present:1.0\n"
-            "\\--- com.example:missing:2.0 (n)\n"
+    def test_per_config_error_isolated_from_sibling_config(self):
+        modules, errors, _buildenv, _buildenv_error = server._parse_single_invocation_gradle_output(
+            CONFIG_ERROR_FIXTURE
         )
-        deps = server._parse_gradle_dependencies_stdout(stdout, ":app", "releaseRuntimeClasspath")
-        gas = {(d["groupId"], d["artifactId"]) for d in deps}
-        self.assertEqual(gas, {("com.example", "present")})
-
-    def test_fixture_runtime_classpath(self):
-        deps = server._parse_gradle_dependencies_stdout(
-            RUNTIME_CLASSPATH_FIXTURE, ":app", "releaseRuntimeClasspath"
-        )
-        by_ga = {(d["groupId"], d["artifactId"]): d for d in deps}
-        self.assertEqual(by_ga[("io.ktor", "ktor-client-core")]["version"], "3.1.2")
-        self.assertEqual(by_ga[("com.squareup.okhttp3", "okhttp")]["version"], "4.12.0")
-
-    def test_build_environment_classpath(self):
-        deps = server._parse_build_environment_classpath(BUILD_ENVIRONMENT_FIXTURE)
-        gas = {(d["groupId"], d["artifactId"]) for d in deps}
+        # The failing debugRuntimeClasspath config must not blank out the
+        # sibling releaseRuntimeClasspath config resolved in the same module.
         self.assertEqual(
-            gas,
-            {
-                ("com.android.tools.build", "gradle"),
-                ("org.jetbrains.kotlin", "kotlin-gradle-plugin"),
-            },
+            modules[":app"]["releaseRuntimeClasspath"],
+            [("io.ktor", "ktor-client-core", "3.1.2")],
         )
-        self.assertTrue(all(d["usages"][0]["configuration"] == "classpath" for d in deps))
+        self.assertEqual(modules[":app"]["debugRuntimeClasspath"], [])
+        self.assertTrue(any(":app:debugRuntimeClasspath resolution error:" in e for e in errors))
+
+    def test_buildenv_error_marker(self):
+        stdout = (
+            "===MAVEN_MCP_MODULE=== :\n"
+            "===MAVEN_MCP_MODULE_END===\n"
+            "===MAVEN_MCP_BUILDENV===\n"
+            "===MAVEN_MCP_BUILDENV_ERROR=== java.lang.Exception: boom\n"
+            "===MAVEN_MCP_BUILDENV_END===\n"
+        )
+        _modules, _errors, buildenv, buildenv_error = server._parse_single_invocation_gradle_output(stdout)
+        self.assertEqual(buildenv, [])
+        self.assertIn("boom", buildenv_error)
 
 
 class TestGradleConfigurationSelection(unittest.TestCase):
-    def test_probe_based_config_selection_prefers_release_runtime(self):
-        selected = server._select_configurations_to_resolve(
-            server._parse_gradle_configuration_headers(KMP_PROBE_FIXTURE)
-        )
+    def test_selection_prefers_release_runtime(self):
+        available = [
+            "releaseRuntimeClasspath",
+            "debugRuntimeClasspath",
+            "releaseCompileClasspath",
+            "compileClasspath",
+            "runtimeClasspath",
+            "testRuntimeClasspath",
+        ]
+        selected = server._select_configurations_to_resolve(available)
         self.assertIn("releaseRuntimeClasspath", selected)
         self.assertIn("debugRuntimeClasspath", selected)
         self.assertNotIn("runtimeClasspath", selected)
@@ -169,7 +171,7 @@ class TestRunGradleCommand(unittest.TestCase):
             raise subprocess.TimeoutExpired(cmd="gradlew", timeout=1)
 
         with unittest.mock.patch.object(server, "_gradle_run", side_effect=_raise_timeout):
-            code, stdout, stderr = server._run_gradle_command("/tmp", "gradlew", ["-q", "projects"])
+            code, stdout, stderr = server._run_gradle_command("/tmp", "gradlew", ["--init-script", "x"])
         self.assertEqual(code, 124)
         self.assertEqual(stdout, "")
         self.assertIn("timed out", stderr)
@@ -178,8 +180,7 @@ class TestRunGradleCommand(unittest.TestCase):
         # GHSA-4778-r7hp-92v7: the scanned project's OWN Gradle build scripts
         # (buildSrc, convention plugins) run arbitrary code that can read
         # System.getenv() — credential-bearing vars must never be passed to
-        # that subprocess. Captures the exact `env=` kwarg _run_gradle_command
-        # hands to subprocess.run (via the injectable _gradle_run seam).
+        # that subprocess, including the now-single init-script invocation.
         captured = {}
 
         def _capture_env(cmd, cwd=None, capture_output=None, text=None, timeout=None, env=None):
@@ -197,7 +198,7 @@ class TestRunGradleCommand(unittest.TestCase):
             clear=False,
         ):
             with unittest.mock.patch.object(server, "_gradle_run", side_effect=_capture_env):
-                server._run_gradle_command("/tmp", "gradlew", ["-q", "projects"])
+                server._run_gradle_command("/tmp", "gradlew", ["--init-script", "x", "-q", "help"])
         env = captured["env"]
         self.assertIsNotNone(env)
         self.assertNotIn("MAVEN_REPO_TESTREPO_TOKEN", env)
@@ -231,7 +232,7 @@ class TestRunGradleCommand(unittest.TestCase):
             clear=False,
         ):
             with unittest.mock.patch.object(server, "_gradle_run", side_effect=_capture_env):
-                server._run_gradle_command("/tmp", "gradlew", ["-q", "projects"])
+                server._run_gradle_command("/tmp", "gradlew", ["--init-script", "x", "-q", "help"])
         env = captured["env"]
         self.assertEqual(env["HTTPS_PROXY"], "http://***@proxy.corp.example:8080")
         self.assertEqual(env["http_proxy"], "http://***@proxy2.corp.example:3128")
@@ -395,12 +396,11 @@ class TestGradleConflictDetection(unittest.TestCase):
 
 
 class TestGradleResolveIntegration(unittest.TestCase):
-    def _mock_run(self, mapping):
+    """scan_project against a mocked single-invocation `_run_gradle_command`."""
+
+    def _mock_run(self, stdout, code=0, stderr=""):
         def _fake_run(project_root, gradlew, args, timeout=server.GRADLE_RESOLVE_TIMEOUT):
-            key = tuple(args)
-            if key not in mapping:
-                return 1, "", "task failed"
-            return 0, mapping[key], ""
+            return code, stdout, stderr
 
         return unittest.mock.patch.object(server, "_run_gradle_command", _fake_run)
 
@@ -419,7 +419,7 @@ class TestGradleResolveIntegration(unittest.TestCase):
         }
         with temp_project(files) as root:
             write_fake_gradlew(root)
-            with self._mock_run(_default_integration_mapping()):
+            with self._mock_run(SINGLE_INVOCATION_FIXTURE):
                 result = server.scan_project(root)
         dep = next(
             d for d in result["dependencies"]
@@ -449,16 +449,9 @@ class TestGradleResolveIntegration(unittest.TestCase):
 
     def test_only_classpath_deps_raises(self):
         files = {"build.gradle.kts": 'plugins { id("java") }'}
-        mapping = {
-            ("-q", "projects"): "Root project 'demo'\n",
-            ("-q", "dependencies"): "",
-            ("-q", "dependencies", "--configuration", "releaseRuntimeClasspath"): "",
-            ("-q", "dependencies", "--configuration", "runtimeClasspath"): "",
-            ("-q", "buildEnvironment"): BUILD_ENVIRONMENT_FIXTURE,
-        }
         with temp_project(files) as root:
             write_fake_gradlew(root)
-            with self._mock_run(mapping):
+            with self._mock_run(ONLY_BUILDENV_FIXTURE):
                 with self.assertRaises(ValueError) as ctx:
                     server.scan_project(root)
         self.assertIn("No production runtime dependencies resolved", str(ctx.exception))
@@ -475,6 +468,10 @@ class TestGradleResolveIntegration(unittest.TestCase):
         self.assertIn("Gradle dependency resolution failed", str(ctx.exception))
 
     def test_partial_failure_surfaces_gradle_errors(self):
+        # Per-module, per-configuration failure isolation (#401): one
+        # configuration's resolution error must not blank out a sibling
+        # configuration's successfully-resolved dependencies in the same
+        # module, and must still surface in gradleErrors.
         files = {
             "settings.gradle.kts": 'include(":app")',
             "app/build.gradle.kts": (
@@ -483,24 +480,16 @@ class TestGradleResolveIntegration(unittest.TestCase):
                 "}"
             ),
         }
-        mapping = dict(_default_integration_mapping())
-        mapping[("-q", ":app:dependencies", "--configuration", "debugRuntimeClasspath")] = (
-            "Configuration debugRuntimeClasspath not found"
-        )
-
-        def _fake_run(project_root, gradlew, args, timeout=server.GRADLE_RESOLVE_TIMEOUT):
-            key = tuple(args)
-            if key == ("-q", ":app:dependencies", "--configuration", "debugRuntimeClasspath"):
-                return 1, "", "Configuration debugRuntimeClasspath not found"
-            if key not in mapping:
-                return 1, "", "task failed"
-            return 0, mapping[key], ""
-
         with temp_project(files) as root:
             write_fake_gradlew(root)
-            with unittest.mock.patch.object(server, "_run_gradle_command", _fake_run):
+            with self._mock_run(CONFIG_ERROR_FIXTURE):
                 result = server.scan_project(root)
         self.assertTrue(any("debugRuntimeClasspath" in e for e in result.get("gradleErrors", [])))
+        dep = next(
+            d for d in result["dependencies"]
+            if d["groupId"] == "io.ktor" and d["artifactId"] == "ktor-client-core"
+        )
+        self.assertEqual(dep["version"], "3.1.2")
         flat = server.flatten_scan_result(result)
         self.assertIn("gradleErrors", flat)
 
