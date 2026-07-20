@@ -14,6 +14,7 @@ error is re-raised only when EVERY attempt hit one.
 Retry is exercised with ``server._sleep`` patched out so the suite never sleeps.
 """
 
+import gzip
 import http.server
 import json
 import socket
@@ -22,6 +23,7 @@ import unittest
 import unittest.mock
 import urllib.error
 import urllib.request
+import zlib
 
 from _helpers import server, mock_urlopen, http_error
 
@@ -47,6 +49,16 @@ class MakeHeadersTest(unittest.TestCase):
         headers = server._make_headers({"Accept": "application/json"})
         self.assertEqual(headers["Accept"], "application/json")
         self.assertEqual(headers["User-Agent"], server.USER_AGENT)
+
+    def test_sets_default_accept_encoding_gzip(self):
+        # #403: gzip requested by default so servers that support it can
+        # compress Maven metadata/POM/search bodies on the wire.
+        headers = server._make_headers()
+        self.assertEqual(headers["Accept-Encoding"], "gzip")
+
+    def test_extra_header_can_override_accept_encoding(self):
+        headers = server._make_headers({"Accept-Encoding": "identity"})
+        self.assertEqual(headers["Accept-Encoding"], "identity")
 
 
 class GithubHeadersTest(unittest.TestCase):
@@ -99,6 +111,16 @@ class HttpGetTest(unittest.TestCase):
             server.http_get("https://example.test/x")
         req = urlopen.call_args.args[0]
         self.assertEqual(_headers_ci(req)["user-agent"], server.USER_AGENT)
+
+    def test_attaches_default_accept_encoding_gzip(self):
+        # #403: every outbound http_get request advertises gzip support.
+        with unittest.mock.patch(
+            "urllib.request.urlopen",
+            side_effect=mock_urlopen([(200, b"ok")]),
+        ) as urlopen:
+            server.http_get("https://example.test/x")
+        req = urlopen.call_args.args[0]
+        self.assertEqual(_headers_ci(req)["accept-encoding"], "gzip")
 
     def test_passes_through_caller_headers(self):
         with unittest.mock.patch(
@@ -456,6 +478,122 @@ class HttpResponseSizeCapTest(unittest.TestCase):
             status, got = server.http_get(self.URL)
         self.assertEqual(status, 200)
         self.assertEqual(got, body)
+
+
+class GzipDecompressionTest(unittest.TestCase):
+    """#403: transparent gzip response decompression plus the zip-bomb guard.
+
+    Maven metadata/POM/search bodies are 50-200KB and compress ~70-80%; a
+    ``Content-Encoding: gzip`` response is inflated in ``_read_response_body``.
+    The existing ``HTTP_MAX_RESPONSE_BYTES`` cap already bounds the RAW/wire
+    body (see ``HttpResponseSizeCapTest``); these tests cover the SECOND,
+    independent enforcement of that same cap against the DECOMPRESSED size.
+    """
+
+    URL = "https://example.test/x"
+
+    def test_gzip_response_transparently_decompressed(self):
+        original = b'{"groupId":"com.example","versions":["1.0.0","1.1.0"]}' * 20
+        compressed = gzip.compress(original)
+        with unittest.mock.patch(
+            "urllib.request.urlopen",
+            side_effect=mock_urlopen([
+                (200, compressed, {"Content-Encoding": "gzip"}),
+            ]),
+        ):
+            status, body = server.http_get(self.URL)
+        self.assertEqual(status, 200)
+        self.assertEqual(body, original)
+
+    def test_gzip_content_encoding_matched_case_insensitively(self):
+        original = b"hello world" * 10
+        compressed = gzip.compress(original)
+        with unittest.mock.patch(
+            "urllib.request.urlopen",
+            side_effect=mock_urlopen([
+                (200, compressed, {"Content-Encoding": "GZIP"}),
+            ]),
+        ):
+            status, body = server.http_get(self.URL)
+        self.assertEqual(status, 200)
+        self.assertEqual(body, original)
+
+    def test_plain_response_without_content_encoding_is_unchanged(self):
+        # Regression guard: a server that ignores Accept-Encoding (or a repo
+        # that never compresses) must be returned exactly as-is — no
+        # decompression is attempted absent a Content-Encoding: gzip header.
+        body = b"<metadata>plain, uncompressed</metadata>"
+        with unittest.mock.patch(
+            "urllib.request.urlopen",
+            side_effect=mock_urlopen([(200, body)]),
+        ):
+            status, got = server.http_get(self.URL)
+        self.assertEqual(status, 200)
+        self.assertEqual(got, body)
+
+    def test_post_json_gzip_response_transparently_decompressed(self):
+        # Same decompression path applies to http_post_json responses (OSV).
+        original = json.dumps({"results": [{"vulns": []}]}).encode()
+        compressed = gzip.compress(original)
+        with unittest.mock.patch(
+            "urllib.request.urlopen",
+            side_effect=mock_urlopen([
+                (200, compressed, {"Content-Encoding": "gzip"}),
+            ]),
+        ):
+            status, body = server.http_post_json(self.URL, {"queries": []})
+        self.assertEqual(status, 200)
+        self.assertEqual(body, original)
+
+    def test_zip_bomb_decompressed_size_over_cap_raises_without_retry(self):
+        # 100,000 zero bytes compress to ~132 bytes (empirically) — well under
+        # a 500-byte cap on the wire, but the INFLATED size blows way past it.
+        # Content-Length is deliberately absent so only the decompressed-size
+        # check (never Content-Length) can be what raises here.
+        cap = 500
+        original = b"\x00" * 100_000
+        compressed = gzip.compress(original, compresslevel=9)
+        self.assertLess(
+            len(compressed), cap,
+            "fixture must fit under the raw/wire cap so only the decompressed "
+            "check is exercised",
+        )
+        with unittest.mock.patch.object(server, "HTTP_MAX_RESPONSE_BYTES", cap), \
+                unittest.mock.patch.object(server, "_sleep") as sleep, \
+                unittest.mock.patch(
+                    "urllib.request.urlopen",
+                    side_effect=mock_urlopen([
+                        (200, compressed, {"Content-Encoding": "gzip"}),
+                    ]),
+                ) as urlopen:
+            with self.assertRaises(server.ResponseTooLargeError) as cm:
+                server.http_get(self.URL)
+        self.assertIn("decompressed", str(cm.exception.reason).lower())
+        self.assertIn("gzip", str(cm.exception.reason).lower())
+        # Not retried, same as the raw-size cap (ResponseTooLargeError is
+        # definitive, re-fetching an oversized body cannot help).
+        self.assertEqual(urlopen.call_count, 1)
+        sleep.assert_not_called()
+
+    def test_corrupt_gzip_body_raises_urlerror_not_zlib_error(self):
+        # Content-Encoding: gzip but the body is not a valid gzip stream --
+        # must surface through the EXISTING transport-error contract
+        # (urllib.error.URLError, retried up to HTTP_MAX_ATTEMPTS) rather than
+        # letting a raw zlib.error of a type callers don't expect escape.
+        garbage = b"not a gzip stream at all, just plain garbage bytes"
+        with unittest.mock.patch.object(server, "_sleep") as sleep, \
+                unittest.mock.patch(
+                    "urllib.request.urlopen",
+                    side_effect=mock_urlopen(
+                        [(200, garbage, {"Content-Encoding": "gzip"})]
+                        * server.HTTP_MAX_ATTEMPTS
+                    ),
+                ) as urlopen:
+            with self.assertRaises(urllib.error.URLError) as cm:
+                server.http_get(self.URL)
+        self.assertNotIsInstance(cm.exception, zlib.error)
+        self.assertEqual(urlopen.call_count, server.HTTP_MAX_ATTEMPTS)
+        self.assertEqual(sleep.call_count, server.HTTP_MAX_ATTEMPTS - 1)
 
 
 class SecureRedirectEndToEndTest(unittest.TestCase):

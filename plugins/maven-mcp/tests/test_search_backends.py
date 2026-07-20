@@ -9,7 +9,7 @@ import unittest
 import unittest.mock
 import urllib.error
 
-from _helpers import empty_ctx, mock_urlopen, server
+from _helpers import empty_ctx, http_error, mock_urlopen, server
 
 
 NEXUS_BASE = "https://nexus.example.com/repository/maven-public"
@@ -363,6 +363,66 @@ class SearchRoutingTest(unittest.TestCase):
         out = server.search_artifacts_with_backend("lib", 10, ctx, "central")
         self.assertEqual(out["results"], [])
         self.assertIn("offline", out["searchBackendUnavailable"])
+
+    # ---- #416: rate-limited/blocked/unreachable Central search must not
+    # read as [] — each status maps to its OWN precise capability reason.
+
+    def test_central_explicit_persistent_429_surfaces_rate_limited(self):
+        ctx = empty_ctx()
+        url = "https://search.maven.org/solrsearch/select"
+        errs = [http_error(url, 429) for _ in range(server.HTTP_MAX_ATTEMPTS)]
+        with unittest.mock.patch.object(server, "_sleep"), \
+                unittest.mock.patch(
+                    "urllib.request.urlopen", side_effect=mock_urlopen(errs),
+                ):
+            out = server.search_artifacts_with_backend("lib", 10, ctx, "central")
+        self.assertEqual(out["results"], [])
+        self.assertEqual(out["searchBackend"], "central")
+        self.assertEqual(out["capabilityUnavailable"], "rate_limited")
+
+    def test_central_explicit_403_surfaces_blocked(self):
+        # 403 is search.maven.org's documented bulk-load LOCKOUT — a
+        # definitive block, not a transient throttle — must surface
+        # "blocked", never "rate_limited" (which would mislead a caller into
+        # retrying aggressively against an endpoint that is refusing them).
+        ctx = empty_ctx()
+        with unittest.mock.patch(
+            "urllib.request.urlopen",
+            side_effect=mock_urlopen([http_error("u", 403, "Forbidden")]),
+        ):
+            out = server.search_artifacts_with_backend("lib", 10, ctx, "central")
+        self.assertEqual(out["results"], [])
+        self.assertEqual(out["searchBackend"], "central")
+        self.assertEqual(out["capabilityUnavailable"], "blocked")
+
+    def test_central_auto_persistent_5xx_surfaces_unreachable(self):
+        # Same "auto: public mode -> Solr" branch as test_public_mode_uses_solr,
+        # but the search backend is persistently failing rather than answering.
+        ctx = empty_ctx()
+        url = "https://search.maven.org/solrsearch/select"
+        errs = [http_error(url, 503) for _ in range(server.HTTP_MAX_ATTEMPTS)]
+        with unittest.mock.patch.object(server, "_sleep"), \
+                unittest.mock.patch(
+                    "urllib.request.urlopen", side_effect=mock_urlopen(errs),
+                ):
+            out = server.search_artifacts_with_backend("lib", 10, ctx, "auto")
+        self.assertEqual(out["results"], [])
+        self.assertEqual(out["searchBackend"], "central")
+        self.assertEqual(out["capabilityUnavailable"], "unreachable")
+
+    def test_central_genuine_zero_results_no_capability_flag(self):
+        # A clean 200 with zero docs is a real "nothing found" — must NOT
+        # carry capabilityUnavailable (never confused with a blocked search).
+        solr = {"response": {"docs": []}}
+        ctx = empty_ctx()
+        with unittest.mock.patch(
+            "urllib.request.urlopen",
+            side_effect=mock_urlopen([(200, _json(solr))]),
+        ):
+            out = server.search_artifacts_with_backend("nonexistent-lib", 10, ctx, "central")
+        self.assertEqual(out["results"], [])
+        self.assertEqual(out["searchBackend"], "central")
+        self.assertNotIn("capabilityUnavailable", out)
 
 
 class HandleSearchArtifactsBackendTest(unittest.TestCase):
