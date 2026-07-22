@@ -12,7 +12,7 @@ Rules that are not open for discussion. Violating these is an error, not a judgm
 
 MCP server for Maven dependency intelligence. Provides tools to query artifact versions from Maven repositories (Maven Central, Google Maven, Gradle Plugin Portal).
 
-**Implementation:** `plugin/server/server.py` — a single-file Python 3 server (stdlib only, zero pip dependencies). It speaks MCP over stdio (JSON-RPC 2.0 on stdin/stdout) and is registered via `plugin/.claude-plugin/plugin.json` as `command: python3`. Runs as a stdio MCP server in local and cloud agent environments without Node.js or npm.
+**Implementation:** `plugin/server/server.py` — a single-file Python 3 server (stdlib only, zero pip dependencies). It speaks MCP over stdio (JSON-RPC 2.0 on stdin/stdout) or, when `MAVEN_MCP_TRANSPORT=http`, over a stateless Streamable HTTP endpoint (`POST /mcp`, stdlib `http.server.ThreadingHTTPServer`, JSON responses, no SSE/sessions). The stdio mode is registered via `plugin/.claude-plugin/plugin.json` as `command: python3`. Runs as an MCP server in local and cloud agent environments without Node.js or npm, and standalone with any MCP-compatible client.
 
 **Stack:** Python 3.9+ standard library only (`urllib`, `json`, `re`, `typing`). No build step, no install step.
 
@@ -47,7 +47,7 @@ python3 -m unittest discover -s plugins/maven-mcp/tests -p test_handlers.py
 - **GitHub & changelog** — `gh_repo_exists` / `gh_fetch_repo` / `gh_fetch_releases` / `gh_fetch_user` / `gh_fetch_issue_stats`, `discover_github_repo` (POM SCM → groupId guess), and `_get_dependency_changes_impl` + `_filter_version_range` with provider selection (#308): AndroidX docs → AGP docs → GitHub releases. Minimal stdlib `html_to_text` powers the AGP/AndroidX HTML parsers. GitHub CHANGELOG.md markdown fallback is still not ported.
 - **Vulnerabilities** — OSV.dev batch query (`api.osv.dev/v1/querybatch`).
 - **Version catalog generate/validate** — `generate_catalog_entry` / `validate_catalog` / `handle_catalog_entry` (#288); reuses `_parse_toml_catalog`.
-- **Tool handlers** — `handle_*`, one per MCP tool, plus the stdio JSON-RPC dispatch loop.
+- **Tool handlers** — `handle_*`, one per MCP tool, plus the JSON-RPC dispatch (`_dispatch_message`, transport-agnostic) and the two transport entry points: the stdio loop and the HTTP server (`POST /mcp`). In HTTP mode `ThreadingHTTPServer` serves requests on handler threads, so the thread-safety invariants (per-call state, no module-level counters) apply to top-level requests too.
 
 **MCP protocol surface (#398):** protocol version negotiation (`_handle_initialize` echoes back any client-requested version in `MCP_SUPPORTED_PROTOCOL_VERSIONS`, else falls back to `MCP_LATEST_PROTOCOL_VERSION`, currently `2025-11-25`), read-only tool `annotations` on all 20 tools, `outputSchema`/`structuredContent` on 14 of them, and JSON-RPC batching removed to match the target spec revision — see `CLAUDE.md`'s *MCP protocol surface* section for the full rationale; not duplicated here.
 
@@ -286,6 +286,7 @@ Fires before `Edit`/`Write`/`MultiEdit` on build files; extracts coordinates fro
 
 ## Environment
 
+- `MAVEN_MCP_TRANSPORT` — `stdio` (default) | `http`. In `http` mode the server binds `MAVEN_MCP_HTTP_HOST` (default `127.0.0.1`) : `MAVEN_MCP_HTTP_PORT` (default `8765`) and serves a stateless `POST /mcp` endpoint (no auth — localhost/trusted networks only; a non-loopback bind logs a warning).
 - `GITHUB_TOKEN` — optional, enables higher GitHub API rate limits (5000 req/h vs 60) for `get_dependency_changes` and `get_dependency_health` (the health tool also uses the rate-limited Search API for issue stats).
 - `MAVEN_MCP_PUBLIC_FALLBACK` — optional toggle (default OFF; accepts `1`/`true`/`on`/`yes`). When ON, public well-known repos are appended even for a scope that declares its own repositories. Read once at the handler boundary into the `ResolutionContext`, never sniffed in leaf resolvers. See *Repository resolution*.
 - **Closed / offline mode & mirrors (#294)** — configuration-driven; no new tool. Read once into `ResolutionContext` at the handler boundary:
@@ -304,6 +305,6 @@ Fires before `Edit`/`Write`/`MultiEdit` on build files; extracts coordinates fro
 
 - No XML parser dependency — all XML parsing is regex-based.
 - Network seam is `urllib.request.urlopen`; tests mock it with `unittest.mock.patch("urllib.request.urlopen", ...)`.
-- Tests live dev-only at `plugins/maven-mcp/tests/` (outside `plugin/`, so they are not shipped). They import `server` via a `__file__`-resolved `sys.path` shim in `tests/_helpers.py`; filesystem-touching parsers are exercised against real files written into a `TemporaryDirectory`.
+- Tests live dev-only at `plugins/maven-mcp/tests/` (outside `plugin/`, so they are not shipped). They import `server` via a `__file__`-resolved `sys.path` shim in `tests/_helpers.py`; filesystem-touching parsers are exercised against real files written into a `TemporaryDirectory`. `tests/test_http_transport.py` covers the HTTP transport end-to-end over loopback (`("127.0.0.1", 0)` on a daemon thread).
 - Version constants (`SERVER_VERSION`, `USER_AGENT`) in `server.py` are part of the 3 version locations that must stay in sync on a release; `scripts/validate.sh --check-tag` enforces this.
 - `import server` is side-effect-free (the `if __name__ == "__main__": main()` guard at the tail).

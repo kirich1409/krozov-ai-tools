@@ -42,6 +42,9 @@ os.environ.pop("MAVEN_MCP_REPOSITORY_TYPE", None)
 # Hermetic TLS/proxy defaults (#298): do not inherit developer proxy/CA/insecure.
 os.environ.pop("MAVEN_MCP_CA_CERT", None)
 os.environ.pop("MAVEN_MCP_INSECURE_TLS", None)
+# Hermetic transport default: main() must take the stdio path in stdio-loop
+# tests regardless of the developer's MAVEN_MCP_TRANSPORT.
+os.environ.pop("MAVEN_MCP_TRANSPORT", None)
 for _proxy_key in (
     "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY",
     "http_proxy", "https_proxy", "all_proxy", "no_proxy",
