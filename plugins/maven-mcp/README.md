@@ -4,7 +4,7 @@ Claude Code plugin that provides Maven dependency intelligence via an MCP server
 
 ## How it works
 
-The plugin bundles a single-file Python 3 MCP server (`plugin/server/server.py`) that speaks MCP over stdio (JSON-RPC 2.0 on stdin/stdout). It uses the Python standard library only — zero pip dependencies. The plugin manifest registers it with `command: python3`, so it runs the same way in Claude cloud and local environments with no extra runtime setup.
+The plugin bundles a single-file Python 3 MCP server (`plugin/server/server.py`) that speaks MCP over stdio (JSON-RPC 2.0 on stdin/stdout) or over a stateless Streamable HTTP endpoint. It uses the Python standard library only — zero pip dependencies. The plugin manifest registers it with `command: python3`, so it runs the same way in Claude cloud and local environments with no extra runtime setup. The server can also be run standalone and connected to any MCP-compatible agent — see [Use with any MCP client](#use-with-any-mcp-client).
 
 The server registers tools that Claude can call during a conversation. It queries Maven Central, Google Maven, Gradle Plugin Portal, and routes each artifact to the appropriate repository by group-prefix.
 
@@ -99,6 +99,71 @@ claude plugin add /path/to/maven-mcp/plugin
 ```
 
 The plugin manifest registers the bundled server automatically; no separate install or build step is required.
+
+## Use with any MCP client
+
+The bundled server is a plain stdio MCP process, so any MCP-compatible agent can run it directly — no Claude Code required. The only requirement is Python 3.9+.
+
+```bash
+python3 /path/to/krozov-ai-tools/plugins/maven-mcp/plugin/server/server.py
+```
+
+Point your agent's MCP config at that command (use the absolute path to `server.py`):
+
+- **Kimi Code** — `~/.kimi-code/mcp.json` (user-level) or `.kimi-code/mcp.json` (project-level):
+
+  ```json
+  {
+    "mcpServers": {
+      "maven-mcp": {
+        "command": "python3",
+        "args": ["/path/to/krozov-ai-tools/plugins/maven-mcp/plugin/server/server.py"]
+      }
+    }
+  }
+  ```
+
+- **Cursor** — `~/.cursor/mcp.json`, same `mcpServers` shape as above.
+- **Claude Desktop** — `claude_desktop_config.json`, same `mcpServers` shape as above.
+- **Gemini CLI** — `~/.gemini/settings.json`:
+
+  ```json
+  {
+    "mcpServers": {
+      "maven-mcp": {
+        "command": "python3",
+        "args": ["/path/to/krozov-ai-tools/plugins/maven-mcp/plugin/server/server.py"]
+      }
+    }
+  }
+  ```
+
+- **Codex** — `~/.codex/config.toml`:
+
+  ```toml
+  [mcp_servers.maven-mcp]
+  command = "python3"
+  args = ["/path/to/krozov-ai-tools/plugins/maven-mcp/plugin/server/server.py"]
+  ```
+
+Environment variables (`GITHUB_TOKEN`, `MAVEN_MCP_OFFLINE`, …) can be passed through each client's `env` field.
+
+### HTTP mode (remote / cloud agents)
+
+For agents that cannot spawn a local process (cloud sandboxes, remote workspaces), the server also speaks stateless Streamable HTTP. Start it once:
+
+```bash
+MAVEN_MCP_TRANSPORT=http MAVEN_MCP_HTTP_HOST=127.0.0.1 MAVEN_MCP_HTTP_PORT=8765 \
+  python3 /path/to/krozov-ai-tools/plugins/maven-mcp/plugin/server/server.py
+```
+
+The MCP endpoint is `http://<host>:<port>/mcp` (single `POST` endpoint, JSON responses, no SSE). Connect with a URL-based entry instead of `command`:
+
+- **Kimi Code** (`mcp.json`): `{"mcpServers": {"maven-mcp": {"url": "http://127.0.0.1:8765/mcp"}}}`
+- **Gemini CLI** (`settings.json`): `{"mcpServers": {"maven-mcp": {"httpUrl": "http://127.0.0.1:8765/mcp"}}}`
+- **Codex** (`config.toml`): `[mcp_servers.maven-mcp]` with `url = "http://127.0.0.1:8765/mcp"`
+
+`MAVEN_MCP_HTTP_HOST` defaults to `127.0.0.1` and `MAVEN_MCP_HTTP_PORT` to `8765`. The HTTP transport has **no authentication** — bind it to localhost or a trusted network only; for exposure to cloud agents over the internet, put it behind a reverse proxy that terminates TLS and enforces auth.
 
 ## Hooks
 

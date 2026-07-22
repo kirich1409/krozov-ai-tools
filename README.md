@@ -24,7 +24,7 @@ Install a plugin:
 
 ### maven-mcp
 
-Maven dependency intelligence for JVM projects. Auto-registers an MCP server that provides tools for version lookup, dependency auditing, vulnerability checking, and changelog tracking across Maven Central, Google Maven, and custom repositories.
+Maven dependency intelligence for JVM projects. Auto-registers an MCP server that provides tools for version lookup, dependency auditing, vulnerability checking, and changelog tracking across Maven Central, Google Maven, and custom repositories. The server also runs standalone (stdio or HTTP) and can be connected to any MCP-compatible agent — see [Use with any MCP client](plugins/maven-mcp/README.md#use-with-any-mcp-client).
 
 **Features:**
 - Version intelligence — stability-aware selection, upgrade type classification

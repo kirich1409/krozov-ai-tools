@@ -11,6 +11,7 @@ import email.utils
 import functools
 import hashlib
 import http.client
+import http.server
 import ipaddress
 import json
 import logging
@@ -11578,7 +11579,201 @@ def dispatch(msg: Any) -> None:
         _write_response(response)
 
 
+# ---------------------------------------------------------------------------
+# Streamable HTTP transport (stateless; MCP spec 2025-03-26 compatible)
+# ---------------------------------------------------------------------------
+
+HTTP_TRANSPORT_DEFAULT_HOST = "127.0.0.1"
+HTTP_TRANSPORT_DEFAULT_PORT = 8765
+HTTP_TRANSPORT_PATH = "/mcp"
+
+# Origin-header hostnames treated as local (DNS-rebinding hardening); urlsplit
+# lowercases and strips IPv6 brackets before the comparison below.
+_HTTP_LOCAL_ORIGIN_HOSTS = ("localhost", "127.0.0.1", "::1")
+
+
+def _http_port_from_env() -> int:
+    """``MAVEN_MCP_HTTP_PORT`` — override for the HTTP transport listen port.
+    Read fresh on every call (not memoized) so tests can override via
+    ``unittest.mock.patch.dict``. Missing, non-integer, or out-of-range values
+    fall back to ``HTTP_TRANSPORT_DEFAULT_PORT`` with a warning rather than
+    raising — a malformed override must degrade, not prevent startup."""
+    raw = (os.environ.get("MAVEN_MCP_HTTP_PORT") or "").strip()
+    if not raw:
+        return HTTP_TRANSPORT_DEFAULT_PORT
+    try:
+        value = int(raw)
+    except ValueError:
+        value = -1
+    if not 0 < value < 65536:
+        _logger.warning(
+            "Ignoring invalid MAVEN_MCP_HTTP_PORT %r; using default port %d",
+            raw,
+            HTTP_TRANSPORT_DEFAULT_PORT,
+        )
+        return HTTP_TRANSPORT_DEFAULT_PORT
+    return value
+
+
+def _http_origin_allowed(origin: str) -> bool:
+    """True when an Origin header value denotes a loopback host. A value that
+    does not parse to a hostname at all is not allowed."""
+    try:
+        hostname = urllib.parse.urlsplit(origin).hostname
+    except ValueError:
+        return False
+    return hostname is not None and hostname.lower() in _HTTP_LOCAL_ORIGIN_HOSTS
+
+
+def _is_loopback_host(host: str) -> bool:
+    """True for localhost / 127.0.0.1 / ::1 — used only to decide whether the
+    no-authentication bind warning fires, not to restrict anything."""
+    stripped = host.strip("[]").lower()
+    if stripped == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(stripped).is_loopback
+    except ValueError:
+        return False
+
+
+class _MCPHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
+    """One JSON-RPC message per POST; no sessions, no SSE streams."""
+
+    def log_message(self, format: str, *args: Any) -> None:
+        # Route the per-request access log through the module logger at DEBUG
+        # (dropped at the default WARNING level) instead of stderr directly.
+        _logger.debug("http transport: " + format, *args)
+
+    def _send_json(self, status: int, payload: Dict) -> None:
+        body = json.dumps(payload).encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _send_empty(self, status: int, extra_headers: Optional[Dict[str, str]] = None) -> None:
+        self.send_response(status)
+        for name, value in (extra_headers or {}).items():
+            self.send_header(name, value)
+        self.send_header("Content-Length", "0")
+        self.end_headers()
+
+    def _reject_method(self) -> None:
+        self._send_empty(405, {"Allow": "POST"})
+
+    # Stateless JSON responses only — the streamable-HTTP spec's GET (SSE
+    # stream) and DELETE (session teardown) verbs are not implemented.
+    def do_GET(self) -> None:
+        self._reject_method()
+
+    def do_HEAD(self) -> None:
+        self._reject_method()
+
+    def do_DELETE(self) -> None:
+        self._reject_method()
+
+    def do_PUT(self) -> None:
+        self._reject_method()
+
+    def do_PATCH(self) -> None:
+        self._reject_method()
+
+    def do_OPTIONS(self) -> None:
+        self._reject_method()
+
+    def do_POST(self) -> None:
+        if self.path != HTTP_TRANSPORT_PATH:
+            self._send_empty(404)
+            return
+        origin = self.headers.get("Origin")
+        if origin is not None and not _http_origin_allowed(origin):
+            self._send_empty(403)
+            return
+        length_raw = self.headers.get("Content-Length")
+        try:
+            length = int(length_raw) if length_raw is not None else -1
+        except ValueError:
+            length = -1
+        if length < 0:
+            self._send_empty(400)
+            return
+        try:
+            body = self.rfile.read(length)
+        except OSError:
+            self._send_empty(400)
+            return
+        try:
+            msg = json.loads(body)
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            self._send_json(400, {
+                "jsonrpc": "2.0",
+                "id": None,
+                "error": {"code": -32700, "message": "Parse error: body is not valid JSON"},
+            })
+            return
+        if isinstance(msg, list):
+            # JSON-RPC batching was removed from the target MCP protocol
+            # revision (#398) — a top-level array is an Invalid Request, not a
+            # batch (mirrors _dispatch_message's non-dict branch).
+            self._send_json(400, {
+                "jsonrpc": "2.0",
+                "id": None,
+                "error": {"code": -32600, "message": "Invalid Request: expected a JSON object"},
+            })
+            return
+        try:
+            response = _dispatch_message(msg)
+        except Exception as e:
+            self._send_json(500, {
+                "jsonrpc": "2.0",
+                "id": msg.get("id") if isinstance(msg, dict) else None,
+                "error": {"code": -32603, "message": f"Internal error: {e}"},
+            })
+            return
+        if response is None:
+            # Notification — accepted, no response body.
+            self._send_empty(202)
+            return
+        self._send_json(200, response)
+
+
+def _make_http_server(host: str, port: int) -> http.server.ThreadingHTTPServer:
+    """Build the HTTP transport server bound to (host, port). Pass port 0 for
+    an ephemeral port (tests); the bound port is readable via ``server_port``.
+    Handler threads call ``_dispatch_message`` directly — handlers are already
+    thread-tolerant, so no extra locking lives here."""
+    httpd = http.server.ThreadingHTTPServer((host, port), _MCPHTTPRequestHandler)
+    httpd.daemon_threads = True
+    return httpd
+
+
+def run_http_server(host: str, port: int) -> None:
+    """Serve the HTTP transport on (host, port) until interrupted."""
+    if not _is_loopback_host(host):
+        _logger.warning(
+            "maven-mcp HTTP transport has no authentication; binding to "
+            "non-loopback host %r is intended for trusted networks only",
+            host,
+        )
+    httpd = _make_http_server(host, port)
+    _logger.info(
+        "maven-mcp HTTP transport listening on http://%s:%d%s",
+        host, httpd.server_port, HTTP_TRANSPORT_PATH,
+    )
+    try:
+        httpd.serve_forever()
+    finally:
+        httpd.server_close()
+
+
 def main() -> None:
+    transport = (os.environ.get("MAVEN_MCP_TRANSPORT") or "stdio").strip().lower()
+    if transport == "http":
+        host = (os.environ.get("MAVEN_MCP_HTTP_HOST") or "").strip() or HTTP_TRANSPORT_DEFAULT_HOST
+        run_http_server(host, _http_port_from_env())
+        return
     for line in sys.stdin:
         line = line.strip()
         if not line:
