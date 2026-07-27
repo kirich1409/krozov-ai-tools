@@ -5,6 +5,7 @@ description: >-
   "check the license of X before I add it", "what's the SPDX id for this artifact", or
   wants license intelligence (SPDX id, category, plain-English notes) for one or more
   specific Maven dependencies — direct lookup, not a transitive-closure scan.
+disable-model-invocation: true
 ---
 
 # Dependency License

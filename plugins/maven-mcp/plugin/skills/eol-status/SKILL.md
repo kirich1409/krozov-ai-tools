@@ -5,6 +5,7 @@ description: >-
   life", "is this Spring Boot version EOL", "is JDK 17 still maintained", "check end-of-life
   status", "when do I need to upgrade", or wants the support/end-of-life status of a JDK,
   Kotlin, Gradle, or Spring Boot version via endoflife.date.
+disable-model-invocation: true
 ---
 
 # EOL Status

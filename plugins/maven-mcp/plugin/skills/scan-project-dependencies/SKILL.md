@@ -6,6 +6,7 @@ description: >-
   from my Gradle/Maven project", or wants a raw inventory of declared coordinates without
   checking for updates or vulnerabilities. Does not fetch latest versions — see /check-deps
   for that.
+disable-model-invocation: true
 ---
 
 # Scan Project Dependencies

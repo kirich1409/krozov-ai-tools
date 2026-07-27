@@ -7,6 +7,7 @@ description: >-
   version should I use for each of these", or is considering adding a handful of new
   libraries and wants their latest versions before picking one. For updating an existing
   project's declared dependencies use /check-deps instead.
+disable-model-invocation: true
 ---
 
 # Check Multiple Versions

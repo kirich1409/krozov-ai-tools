@@ -5,6 +5,7 @@ description: >-
   manage", "show me the managed versions in this platform", "what does importing
   io.ktor:ktor-bom pin", or provides a Maven BOM / Gradle platform() coordinate and wants
   its full set of managed dependency versions.
+disable-model-invocation: true
 ---
 
 # Expand BOM

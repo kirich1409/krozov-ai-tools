@@ -6,6 +6,7 @@ description: >-
   against our policy", or wants the FULL transitive closure of one or more root
   dependencies checked against a project license posture — not just the direct
   dependency's own license (see /dependency-license for that).
+disable-model-invocation: true
 ---
 
 # License Compliance

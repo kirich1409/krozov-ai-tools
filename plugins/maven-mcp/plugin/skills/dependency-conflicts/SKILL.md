@@ -5,6 +5,7 @@ description: >-
   dependency problem", "which libraries resolve to more than one version", "check for
   version conflicts across my project", or wants to know whether two paths in the
   dependency graph pull in incompatible versions of the same library.
+disable-model-invocation: true
 ---
 
 # Dependency Conflicts

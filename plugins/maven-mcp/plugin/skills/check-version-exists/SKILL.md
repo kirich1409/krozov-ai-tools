@@ -6,6 +6,7 @@ description: >-
   exists", or provides a full groupId:artifactId:version and wants to confirm that exact
   version is available in a Maven repository — not what the latest is (use /latest-version
   for that).
+disable-model-invocation: true
 ---
 
 # Check Version Exists

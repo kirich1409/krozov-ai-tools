@@ -5,6 +5,7 @@ description: >-
   pull in transitively", "full transitive graph of Y", "what does adding this dependency
   bring with it", or wants the resolved dependency graph (nodes and edges) for a single
   Maven artifact.
+disable-model-invocation: true
 ---
 
 # Transitive Graph

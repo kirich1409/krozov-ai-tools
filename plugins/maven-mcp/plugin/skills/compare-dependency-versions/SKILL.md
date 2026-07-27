@@ -5,6 +5,7 @@ description: >-
   asks "is my version of X behind latest", "how far behind is 3.0.0", "what upgrade type
   would this be — major, minor, or patch", "classify the version jump from A to B", or wants
   upgrade-type classification for specific coordinates outside of a full project scan.
+disable-model-invocation: true
 ---
 
 # Compare Dependency Versions

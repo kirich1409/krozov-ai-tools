@@ -7,6 +7,7 @@ description: >-
   wants an OSV.dev vulnerability check for coordinates that may not even be in a build file
   yet. For scanning an entire Gradle/Maven project's declared dependencies use
   /check-deps-vulnerabilities instead.
+disable-model-invocation: true
 ---
 
 # Dependency Vulnerabilities
