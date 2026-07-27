@@ -4,6 +4,7 @@ description: >-
   Use when the user asks to "find a library for X", "search maven central for JSON parsing
   libraries", "what's the artifact id for Y", "look up an artifact by keyword", or doesn't
   know the exact groupId:artifactId and wants to search by keyword or partial coordinate.
+disable-model-invocation: true
 ---
 
 # Search Artifacts

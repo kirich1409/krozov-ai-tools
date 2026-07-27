@@ -35,28 +35,43 @@ The server registers tools that Claude can call during a conversation. It querie
 
 ### Skills
 
+Claude Code keeps a listing of every installed skill's name and description in context, on a
+budget of ~1% of the model's context window; when the listing overflows, descriptions get
+dropped. Twenty-one entries from one plugin consume that budget on their own, so only the
+skills whose body adds a workflow beyond a single tool call stay model-routed. The rest are
+manual: the slash command and the underlying MCP tool are unchanged, Claude just no longer
+carries their descriptions in every session.
+
+**Model-routed** — Claude picks these up on its own, and you can also invoke them by name:
+
 | Skill | Description |
 |-------|-------------|
 | `/latest-version <groupId:artifactId>` | Find latest version of a Maven artifact |
+| `/check-deps` | Scan project for outdated dependencies and update them |
+| `/check-deps-vulnerabilities` | Scan project dependencies for known CVEs/GHSA via OSV (includes Gradle/Maven submodules) |
+| `/audit-project-dependencies` | One combined report: updates + vulnerabilities + optional license posture |
+| `/check-version-compatibility` | Validate AGP/Gradle/JDK/Kotlin and Spring Boot BOM/javax→jakarta compatibility |
+| `/dependency-changes` | Show release notes/changelog between two versions of a Maven/Gradle dependency |
+| `/dependency-health` | Assess whether a Maven dependency is worth adopting (maintenance, activity, license, owner) |
+| `/catalog-entry` | Generate or validate a Gradle version-catalog (`libs.versions.toml`) entry |
+
+**Manual only** (`disable-model-invocation: true`) — invoke by name; Claude reaches the same
+capability through the MCP tool above:
+
+| Skill | Description |
+|-------|-------------|
 | `/check-version-exists` | Confirm whether one specific, already-known version exists |
 | `/check-multiple-versions` | Batch latest-version lookup for several artifacts being evaluated |
 | `/compare-dependency-versions` | Compare specific current versions against latest and classify the upgrade type |
-| `/check-deps` | Scan project for outdated dependencies and update them |
 | `/scan-project-dependencies` | Raw inventory of a project's declared dependencies (no freshness/CVE check) |
 | `/expand-bom` | Expand a Maven BOM/platform into its managed dependency versions |
 | `/transitive-graph` | Resolved transitive dependency graph for a single GAV |
 | `/vulnerability-paths` | Trace each transitively vulnerable dependency back to the project root |
 | `/dependency-conflicts` | Flag GAs resolved at multiple versions across a project |
-| `/check-version-compatibility` | Validate AGP/Gradle/JDK/Kotlin and Spring Boot BOM/javax→jakarta compatibility |
-| `/check-deps-vulnerabilities` | Scan project dependencies for known CVEs/GHSA via OSV (includes Gradle/Maven submodules) |
 | `/dependency-vulnerabilities` | Check specific named coordinates for known CVEs/GHSA, outside a project scan |
-| `/dependency-changes` | Show release notes/changelog between two versions of a Maven/Gradle dependency |
-| `/dependency-health` | Assess whether a Maven dependency is worth adopting (maintenance, activity, license, owner) |
 | `/dependency-license` | SPDX/category license intelligence for specific dependencies |
 | `/license-compliance` | Aggregate transitive licenses vs a project license policy; flag copyleft/violations |
 | `/search-artifacts` | Search Maven Central (or Nexus/Artifactory in closed mode) by keyword |
-| `/audit-project-dependencies` | One combined report: updates + vulnerabilities + optional license posture |
-| `/catalog-entry` | Generate or validate a Gradle version-catalog (`libs.versions.toml`) entry |
 | `/eol-status` | Check end-of-life / support status for JDK, Kotlin, Gradle, or Spring Boot |
 
 ### Supported build systems
