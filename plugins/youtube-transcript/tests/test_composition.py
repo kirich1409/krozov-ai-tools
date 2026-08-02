@@ -239,7 +239,8 @@ def _watch_page_html(api_key: str = "TEST_INNERTUBE_API_KEY") -> str:
         'var ytInitialPlayerResponse = {"videoDetails": {"videoId": "stub"}};'
         "</script>"
         "<script>"
-        f'ytcfg.set({{"INNERTUBE_API_KEY":"{api_key}","INNERTUBE_CONTEXT":{{}}}});'
+        f'ytcfg.set({{"INNERTUBE_API_KEY":"{api_key}","INNERTUBE_CONTEXT":{{}},'
+        '"INNERTUBE_CONTEXT_CLIENT_VERSION":"2.20240101.00.00","STS":12345}});'
         "</script></body></html>"
     )
 

@@ -7,42 +7,62 @@ live InnerTube calls) and `swarm-report/research/youtube-transcript-size-measure
 `providers/innertube.py` may import only `domain/`, `net/` (`ALLOWED_EDGES`), plus
 same-package `providers/base.py`/`providers/video_ref.py`. Stdlib only.
 
-**Wire-protocol details this module pins that could not be captured against live
-traffic in this task's own sandbox (T-P3 found leg 2's player POST returns
-`FAILED_PRECONDITION` and leg 3's real caption bytes are unreachable in that same
-sandbox, on 2026-08-02 -- see that report's §2/§3) are called out individually
-below, each flagged UNVERIFIED, synthesized structurally from the research report's
-already-confirmed mechanism (never invented from nothing) per this task's own
-fallback instruction:**
+**Client identity and timedtext format, CONFIRMED against real live YouTube traffic
+on 2026-08-03** (the orchestrator ran live HTTP calls directly, from a session with
+real network egress, against real video IDs -- not a sandboxed subagent lacking
+egress; see `swarm-report/youtube-transcript-report-live-fix.md` for the receipt):
 
-- `_CLIENT_VERSION`/`_USER_AGENT`: the research report confirms `ANDROID`/`IOS`
-  client context is required (never `WEB`) but does not record an exact client
-  version or User-Agent string. **UNVERIFIED** -- a conservative, commonly-cited
-  `ANDROID` client version/UA shape, not captured live this pass.
-- `_PLAYER_ENDPOINT`: T-P3 §8 states `www.youtube.com` served all 3 legs "in
-  practice" for this project's confirmed host set, with `youtubei.googleapis.com`
-  recorded as a documented alternate tried but not confirmed working (both attempts
-  returned `FAILED_PRECONDITION` in that sandbox). This module uses
-  `www.youtube.com` for the player POST on that basis. **UNVERIFIED against a
-  successful live player-POST response** (T-P3 never got one, from either host).
-- **No `fmt`/`format` query parameter is appended to a track's `baseUrl` before the
-  timedtext GET.** This is evidence-grounded, not a guess: the real, live-captured
-  `baseUrl` values in `tests/fixtures/innertube_player_response.json` (T-P3) carry
-  no `fmt`/`format` parameter at all, and the research report separately observed
-  `format="3"` responses from equivalent real captured URLs -- consistent with
-  `format=3` being the server's default when the parameter is omitted. Still
-  **UNVERIFIED end-to-end** (T-P3 could not fetch real caption bytes this pass --
-  every captured `baseUrl` carries an `exp=xpe` marker and returned an empty body
-  when fetched live, §3).
-- `_build_player_request_body()`'s exact field set (only `context.client.{clientName,
-  clientVersion,hl,gl}` + top-level `videoId`) is the minimal shape the research
-  report's mechanism describes; a real capture may need additional fields
-  (`contentCheckOk`, `racyCheckOk`, `thirdParty`, ...) not documented there.
+- **The `ANDROID` client is now blocked at the player-POST leg.** As of 2026-08-03,
+  the `ANDROID`-client body this module previously sent returns HTTP 400
+  `FAILED_PRECONDITION` on every retry, with no header/body variation curing it
+  (proxy host swap, client-version bumps, `contentCheckOk`/`racyCheckOk` additions).
+  This is a device-integrity/attestation check YouTube added to native-app client
+  endpoints -- unsolvable with a plain HTTP client, and not this plugin's bug.
+- **The `WEB` client works for the player-POST leg**, confirmed against two real
+  videos, with no cookies and no `Origin`/`Referer` headers required. The two things
+  that matter: `context.client.clientName = "WEB"`, and
+  `playbackContext.contentPlaybackContext.signatureTimestamp` set to an integer
+  extracted from the watch-page HTML (the literal substring `"STS":<digits>`,
+  present alongside `INNERTUBE_API_KEY` in the same document already fetched at leg
+  1 -- no new request needed). Without `signatureTimestamp`, the `WEB` client
+  returns `playabilityStatus.status: "UNPLAYABLE"`, `reason: "Video unavailable"`.
+  `_CLIENT_VERSION` is likewise extracted live from the same watch-page HTML
+  (`INNERTUBE_CONTEXT_CLIENT_VERSION`) rather than hardcoded, since a fixed client
+  version string goes stale. `_USER_AGENT` is a real desktop-browser UA string, since
+  the client identity is now `WEB`, not an Android app.
+  This does **not** contradict the earlier research report's "never `WEB`" finding --
+  that finding was about the *watch-page leg* (leg 1) hitting an earlier barrier
+  under a `WEB` request context, which this fix never touches (leg 1 still uses
+  `_USER_AGENT` as its own header, independent of `context.client.clientName`, which
+  only appears in leg 2's POST body). This fix is about the *player-POST leg* (leg 2)
+  using `WEB` context WITH a correct `signatureTimestamp` -- a combination the
+  original research never tried.
+- `_PLAYER_ENDPOINT` stays `https://www.youtube.com/youtubei/v1/player` -- confirmed
+  working as-is, no host switch needed.
+- **The timedtext `baseUrl` needs `&fmt=srv3` appended.** A live `baseUrl` fetched
+  without any `fmt` parameter returns `<transcript><text start="0.0"
+  dur="6.96">...</text></transcript>` -- decimal-seconds `start`/`dur` attributes, a
+  shape this module's cue-parsing code (`_decode_segments`) is NOT written against.
+  Appending `&fmt=srv3` to the same `baseUrl` returns `<timedtext format="3"><body><p
+  t="0" d="6960">...</p></body></timedtext>` -- integer-millisecond `t`/`d`
+  attributes, the shape `_decode_segments` expects. The unparameterized default
+  changed to the legacy `srv1`-style shape at some point after this module's
+  original (correct-at-the-time) inference that `format=3` was the server's default;
+  `fmt=srv3` is now appended explicitly, still through `net/client.py`'s full
+  host/scheme/port allowlist re-check (unskipped, per this repo's own plan.md).
 
-Every one of the above is the *conservative, most-grounded* choice available from
-the research artifacts on hand, not an invented shape -- and every one is called out
-again in this task's own report for `/acceptance`'s live-canary pass (T-15) to
-confirm or correct against real traffic.
+**Still UNVERIFIED / synthesized** (not covered by the 2026-08-03 live-traffic fix
+above -- do not treat these as confirmed just because the client-identity/timedtext-
+format facts now are):
+
+- `_build_player_request_body()`'s exact field set beyond `context.client.*` and
+  `playbackContext.contentPlaybackContext.signatureTimestamp` -- a real capture may
+  need additional fields (`contentCheckOk`, `racyCheckOk`, `thirdParty`, ...) not
+  exercised by this fix's live verification.
+- The `blocked_by_provider`/age-gate/region-block discriminator marker lists
+  (`_BLOCKED_BODY_MARKERS`, `_AGE_REASON_MARKERS`, `_REGION_REASON_MARKERS`) remain
+  synthetic placeholders -- the research spike's 47+ live calls, and this fix's own
+  2 live videos, never triggered any of them for real.
 """
 
 import json
@@ -51,7 +71,7 @@ import random
 import re
 import time
 from typing import Any, Callable, Dict, List, Mapping, NamedTuple, Optional, Set, Tuple, Type
-from urllib.parse import urlencode
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from domain import (
     MAX_SEGMENTS,
@@ -99,30 +119,48 @@ from providers.video_ref import normalize
 
 _LOGGER = logging.getLogger(__name__)
 
-# --- Client identity (see module docstring: UNVERIFIED, synthesized) -------------
+# --- Client identity (see module docstring: confirmed live 2026-08-03) -----------
 #
-# One constant, used for every leg's `User-Agent` header (cycle 9 fix, tasks.md) --
-# never `server.py`'s own constant, which this module has no `ALLOWED_EDGES` route
-# to anyway (`providers/innertube.py` may only reach `domain/`/`net/`).
-_CLIENT_NAME = "ANDROID"
-_CLIENT_VERSION = "19.09.37"
-_USER_AGENT = f"com.google.android.youtube/{_CLIENT_VERSION} (Linux; U; Android 11) gzip"
+# `_CLIENT_NAME` is a fixed constant, used both for leg 2's POST body
+# (`context.client.clientName`) and named here for clarity; `_CLIENT_VERSION` is
+# NOT a fixed constant (a hardcoded WEB client version string would go stale) --
+# it's extracted live from the watch-page HTML every call, see
+# `_extract_client_version()` below. `_USER_AGENT` is used for every leg's
+# `User-Agent` header (cycle 9 fix, tasks.md) -- never `server.py`'s own constant,
+# which this module has no `ALLOWED_EDGES` route to anyway (`providers/innertube.py`
+# may only reach `domain/`/`net/`).
+_CLIENT_NAME = "WEB"
+_USER_AGENT = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36"
+)
 
 _WATCH_PAGE_URL = "https://www.youtube.com/watch?v={video_id}"
 _PLAYER_ENDPOINT = "https://www.youtube.com/youtubei/v1/player"
 
 _YT_INITIAL_PLAYER_RESPONSE_MARKER = "ytInitialPlayerResponse"
 _API_KEY_PATTERN = re.compile(r'"INNERTUBE_API_KEY"\s*:\s*"([^"]+)"')
+# Both extracted from the same watch-page HTML as `INNERTUBE_API_KEY`, no new
+# request (module docstring: confirmed live 2026-08-03).
+_CLIENT_VERSION_PATTERN = re.compile(r'"INNERTUBE_CONTEXT_CLIENT_VERSION"\s*:\s*"([^"]+)"')
+_STS_PATTERN = re.compile(r'"STS"\s*:\s*(\d+)')
 
 
-def _build_player_request_body(video_id: VideoId) -> Dict[str, Any]:
+def _build_player_request_body(
+    video_id: VideoId, client_version: str, signature_timestamp: int
+) -> Dict[str, Any]:
     return {
         "context": {
             "client": {
                 "clientName": _CLIENT_NAME,
-                "clientVersion": _CLIENT_VERSION,
+                "clientVersion": client_version,
                 "hl": "en",
                 "gl": "US",
+            }
+        },
+        "playbackContext": {
+            "contentPlaybackContext": {
+                "signatureTimestamp": signature_timestamp,
             }
         },
         "videoId": video_id.value,
@@ -250,13 +288,11 @@ def _parse_xml_checked(data: bytes) -> Any:
 def _extract_api_key(html: str) -> str:
     """Extracts `INNERTUBE_API_KEY` from a watch page's HTML. The embedded
     `ytInitialPlayerResponse = {...};` assignment's own JSON content is not read
-    further by this provider (leg 2's `ANDROID`/`IOS`-context player response is
-    the actual source of truth for playability/captions/videoDetails/microformat --
-    a `WEB`-client response is known, per the research report, to hit an earlier
-    barrier) -- its presence is used only as a gate: a watch page with the
-    assignment genuinely absent (e.g. a consent-interstitial page) is `UpstreamChanged`
-    before leg 2 is ever attempted (tasks.md's T-10 block, plan.md's two-step
-    dependency note)."""
+    further by this provider (leg 2's player POST response is the actual source of
+    truth for playability/captions/videoDetails/microformat) -- its presence is used
+    only as a gate: a watch page with the assignment genuinely absent (e.g. a
+    consent-interstitial page) is `UpstreamChanged` before leg 2 is ever attempted
+    (tasks.md's T-10 block, plan.md's two-step dependency note)."""
     marker_index = html.find(_YT_INITIAL_PLAYER_RESPONSE_MARKER)
     if marker_index == -1:
         raise UpstreamChanged("ytInitialPlayerResponse assignment not found in watch page")
@@ -277,6 +313,29 @@ def _extract_api_key(html: str) -> str:
     if api_key_match is None:
         raise UpstreamChanged("INNERTUBE_API_KEY not found in watch page")
     return api_key_match.group(1)
+
+
+def _extract_client_version(html: str) -> str:
+    """Extracts `INNERTUBE_CONTEXT_CLIENT_VERSION` from the same watch-page HTML
+    `_extract_api_key()` reads -- no new request. Used as the `WEB` client's
+    `context.client.clientVersion`, live rather than hardcoded, so this module never
+    ships a client version string that goes stale (module docstring)."""
+    match = _CLIENT_VERSION_PATTERN.search(html)
+    if match is None:
+        raise UpstreamChanged("INNERTUBE_CONTEXT_CLIENT_VERSION not found in watch page")
+    return match.group(1)
+
+
+def _extract_signature_timestamp(html: str) -> int:
+    """Extracts `STS` (signature timestamp) from the same watch-page HTML
+    `_extract_api_key()` reads -- no new request. Required by leg 2's `WEB`-client
+    player POST (`playbackContext.contentPlaybackContext.signatureTimestamp`);
+    without it the player response is `UNPLAYABLE`/"Video unavailable" (module
+    docstring, confirmed live 2026-08-03)."""
+    match = _STS_PATTERN.search(html)
+    if match is None:
+        raise UpstreamChanged("STS not found in watch page")
+    return int(match.group(1))
 
 
 # --- Leg 2: playabilityStatus positive gate ---------------------------------------
@@ -469,6 +528,21 @@ def _extract_listing(player_response: Any) -> _ParsedListing:
 # --- Leg 3: timedtext XML -> Segment decode ---------------------------------------
 
 
+def _append_fmt_srv3(base_url: str) -> str:
+    """Appends `fmt=srv3` to a track's `baseUrl` query string via
+    `urlsplit`/`parse_qsl`/`urlencode` (not naive string concatenation, which would
+    mishandle a `baseUrl` that already ends in `?` vs. one that doesn't). Confirmed
+    live 2026-08-03 (module docstring): without `fmt=srv3` the timedtext response is
+    `<transcript><text start=".." dur="..">` (decimal seconds) -- a shape
+    `_decode_segments()` is NOT written against; with it, the response is
+    `<timedtext format="3"><body><p t=".." d="..">` (integer milliseconds), the
+    shape `_decode_segments()` expects."""
+    parts = urlsplit(base_url)
+    query = parse_qsl(parts.query, keep_blank_values=True)
+    query.append(("fmt", "srv3"))
+    return urlunsplit((parts.scheme, parts.netloc, parts.path, urlencode(query), parts.fragment))
+
+
 def _decode_segments(root: Any, deadline: Deadline) -> Tuple[Segment, ...]:
     """Streams `<p t="ms" d="ms">text</p>` cues out of the parsed timedtext tree via
     `root.iter("p")` -- deliberately not anchored to a specific `<body>` nesting
@@ -538,13 +612,14 @@ class InnertubeSession(ProviderSession):
         if deadline.expired():
             raise DeadlineExpired("deadline expired before timedtext decode")
 
-        base_url = self._base_urls[track.track_id]
-        # No `fmt`/`format` query parameter appended (see module docstring) -- the
-        # URL is used verbatim, so this still passes through `net.fetch()`'s full
-        # host/scheme/port allowlist re-check trivially (host unchanged), which is
-        # deliberately not skipped here even though it cannot reject anything new.
+        # `fmt=srv3` appended (see module docstring, confirmed live 2026-08-03) --
+        # the resulting URL still passes through `net.fetch()`'s full
+        # host/scheme/port allowlist re-check (host unchanged from the original
+        # `baseUrl`'s host), which is deliberately not skipped even though it
+        # cannot reject anything new.
+        timedtext_url = _append_fmt_srv3(self._base_urls[track.track_id])
         response = _fetch_checked(
-            base_url,
+            timedtext_url,
             headers={"User-Agent": _USER_AGENT},
             deadline=deadline,
             transport=self._transport,
@@ -586,13 +661,18 @@ class InnertubeProvider(TranscriptProvider):
         )
         html = watch_response.body.decode("utf-8", errors="replace")
         api_key = _extract_api_key(html)
+        client_version = _extract_client_version(html)
+        signature_timestamp = _extract_signature_timestamp(html)
 
         if deadline.expired():
             raise DeadlineExpired("deadline expired between watch-page parse and player POST")
 
-        # --- Leg 2: player POST (ANDROID client context, never WEB) --------------
+        # --- Leg 2: player POST (WEB client context + signatureTimestamp, --------
+        # confirmed live 2026-08-03 -- see module docstring) -----------------------
         player_url = f"{_PLAYER_ENDPOINT}?{urlencode({'key': api_key})}"
-        player_body = json.dumps(_build_player_request_body(video_id)).encode("utf-8")
+        player_body = json.dumps(
+            _build_player_request_body(video_id, client_version, signature_timestamp)
+        ).encode("utf-8")
         player_response_raw = _fetch_checked(
             player_url,
             method="POST",

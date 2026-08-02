@@ -18,6 +18,7 @@ import json
 import unittest
 from typing import Any, Dict, List, Optional, Sequence, Union
 from unittest import mock
+from urllib.parse import parse_qsl, urlsplit
 from xml.etree import ElementTree
 
 import _helpers  # type: ignore[import-not-found]  # noqa: F401
@@ -35,7 +36,13 @@ _VIDEO_ID_2 = domain.VideoId(value="9bZkp7q19f0")
 # --- Fixture builders ---------------------------------------------------------
 
 
-def _watch_page_html(*, api_key: str = "TEST_INNERTUBE_API_KEY", with_player_response: bool = True) -> str:
+def _watch_page_html(
+    *,
+    api_key: str = "TEST_INNERTUBE_API_KEY",
+    with_player_response: bool = True,
+    client_version: str = "2.20240101.00.00",
+    sts: int = 12345,
+) -> str:
     if not with_player_response:
         # A consent-interstitial-shaped page: no `ytInitialPlayerResponse` assignment
         # at all (tasks.md's T-10 block, plan.md's two-step-dependency note).
@@ -45,7 +52,8 @@ def _watch_page_html(*, api_key: str = "TEST_INNERTUBE_API_KEY", with_player_res
         'var ytInitialPlayerResponse = {"videoDetails": {"videoId": "stub"}};'
         "</script>"
         "<script>"
-        f'ytcfg.set({{"INNERTUBE_API_KEY":"{api_key}","INNERTUBE_CONTEXT":{{}}}});'
+        f'ytcfg.set({{"INNERTUBE_API_KEY":"{api_key}","INNERTUBE_CONTEXT":{{}},'
+        f'"INNERTUBE_CONTEXT_CLIENT_VERSION":"{client_version}","STS":{sts}}});'
         "</script></body></html>"
     )
 
@@ -396,6 +404,83 @@ class TestJsonStructuralFailuresMapToUpstreamChanged(unittest.TestCase):
             self._open_expect_upstream_changed(json.dumps(response).encode("utf-8"))
 
 
+# --- WEB client identity + signatureTimestamp (live fix, 2026-08-03) --------------
+
+
+class TestPlayerRequestBodyUsesWebClientAndSignatureTimestamp(unittest.TestCase):
+    def test_player_request_body_uses_web_client_and_signature_timestamp(self) -> None:
+        fake_fetch = _FakeFetch(
+            [
+                _watch_ok_response(client_version="2.20260803.01.00", sts=98765),
+                _player_ok_response(_player_response()),
+            ]
+        )
+        provider = innertube.InnertubeProvider(sleep=lambda s: None, jitter=lambda a, b: 0.0)
+        with mock.patch.object(innertube, "fetch", fake_fetch):
+            provider.open(_VIDEO_ID, domain.Deadline.start(60))
+
+        player_call = fake_fetch.calls[1]
+        body = json.loads(player_call["body"])
+        self.assertEqual(body["context"]["client"]["clientName"], "WEB")
+        self.assertEqual(body["context"]["client"]["clientVersion"], "2.20260803.01.00")
+        self.assertEqual(body["playbackContext"]["contentPlaybackContext"]["signatureTimestamp"], 98765)
+        self.assertIsInstance(
+            body["playbackContext"]["contentPlaybackContext"]["signatureTimestamp"], int
+        )
+
+    def test_missing_client_version_in_watch_page_raises_upstream_changed(self) -> None:
+        html = _watch_page_html().replace('"INNERTUBE_CONTEXT_CLIENT_VERSION":"2.20240101.00.00",', "")
+        fake_fetch = _FakeFetch([_ok_response(html.encode("utf-8"))])
+        provider = innertube.InnertubeProvider(sleep=lambda s: None, jitter=lambda a, b: 0.0)
+        with mock.patch.object(innertube, "fetch", fake_fetch), \
+                self.assertRaises(providers_base.UpstreamChanged):
+            provider.open(_VIDEO_ID, domain.Deadline.start(60))
+
+    def test_missing_sts_in_watch_page_raises_upstream_changed(self) -> None:
+        html = _watch_page_html().replace('"STS":12345', "")
+        fake_fetch = _FakeFetch([_ok_response(html.encode("utf-8"))])
+        provider = innertube.InnertubeProvider(sleep=lambda s: None, jitter=lambda a, b: 0.0)
+        with mock.patch.object(innertube, "fetch", fake_fetch), \
+                self.assertRaises(providers_base.UpstreamChanged):
+            provider.open(_VIDEO_ID, domain.Deadline.start(60))
+
+
+class TestAppendFmtSrv3(unittest.TestCase):
+    def test_fmt_srv3_appended_to_baseurl_with_existing_query(self) -> None:
+        result = innertube._append_fmt_srv3("https://www.youtube.com/api/timedtext?v=x&lang=en")
+        self.assertTrue(result.startswith("https://www.youtube.com/api/timedtext?"))
+        query = dict(parse_qsl(urlsplit(result).query))
+        self.assertEqual(query.get("fmt"), "srv3")
+        self.assertEqual(query.get("v"), "x")
+        self.assertEqual(query.get("lang"), "en")
+
+    def test_fmt_srv3_appended_to_baseurl_with_no_query(self) -> None:
+        result = innertube._append_fmt_srv3("https://www.youtube.com/api/timedtext")
+        self.assertEqual(result, "https://www.youtube.com/api/timedtext?fmt=srv3")
+
+    def test_fmt_srv3_appended_to_baseurl_with_trailing_question_mark(self) -> None:
+        result = innertube._append_fmt_srv3("https://www.youtube.com/api/timedtext?")
+        self.assertEqual(result, "https://www.youtube.com/api/timedtext?fmt=srv3")
+
+    def test_session_fetch_uses_fmt_srv3_url_and_still_hits_allowlisted_host(self) -> None:
+        provider = innertube.InnertubeProvider(sleep=lambda s: None, jitter=lambda a, b: 0.0)
+        fake_fetch = _FakeFetch(
+            [
+                _watch_ok_response(),
+                _player_ok_response(_player_response()),
+                _ok_response(_timedtext_xml([(0, 900, "hi")])),
+            ]
+        )
+        with mock.patch.object(innertube, "fetch", fake_fetch):
+            session = provider.open(_VIDEO_ID, domain.Deadline.start(60))
+            session.fetch(session.listing.tracks[0], domain.Deadline.start(60))
+
+        timedtext_call = fake_fetch.calls[2]
+        parsed = urlsplit(timedtext_call["url"])
+        self.assertEqual(parsed.hostname, "www.youtube.com")
+        self.assertIn("fmt=srv3", parsed.query)
+
+
 class TestDeeplyNestedJsonRecursionError(unittest.TestCase):
     def test_deeply_nested_json_recursion_error_maps_to_upstream_changed(self) -> None:
         # Empirically confirmed (this task's own spike) to raise RecursionError from
@@ -592,13 +677,13 @@ class TestUserAgentPresentOnEveryLeg(unittest.TestCase):
         self.assertEqual(len(fake_fetch.calls), 3)
         for call in fake_fetch.calls:
             self.assertEqual(call["headers"]["User-Agent"], innertube._USER_AGENT)
-        # It is the ANDROID client's own string, never net/client.py's
-        # `BASE_HEADERS` (which owns only Accept-Encoding, T-6b) and -- once
-        # T-13b's server.py exists -- never that module's constant either; this
-        # module has no `ALLOWED_EDGES` route there regardless (`providers.innertube`
-        # may only reach `domain`/`net`).
+        # It is the WEB client's own string (a desktop-browser UA, confirmed live
+        # 2026-08-03), never net/client.py's `BASE_HEADERS` (which owns only
+        # Accept-Encoding, T-6b) and -- once T-13b's server.py exists -- never that
+        # module's constant either; this module has no `ALLOWED_EDGES` route there
+        # regardless (`providers.innertube` may only reach `domain`/`net`).
         self.assertNotIn("User-Agent", net_client.BASE_HEADERS)
-        self.assertTrue(innertube._USER_AGENT.startswith("com.google.android.youtube/"))
+        self.assertTrue(innertube._USER_AGENT.startswith("Mozilla/5.0"))
 
 
 # --- 18 (descriptive "exactly-3-requests-per-invocation" item): request budget ----

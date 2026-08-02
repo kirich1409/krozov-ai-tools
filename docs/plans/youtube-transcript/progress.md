@@ -36,6 +36,32 @@
 ## Learnings
 <!-- Дописывать по строке на завершённую задачу: неожиданности, подводные камни, решения,
      принятые по ходу реализации. Это память, переживающая сброс контекста. -->
+- **Live-fix pass (2026-08-03, found by the orchestrator's own direct live HTTP calls against real
+  YouTube, not a sandboxed subagent lacking egress)**: two of `providers/innertube.py`'s previously
+  UNVERIFIED wire-protocol choices (T-10) turned out wrong once tested against real traffic, both
+  now fixed and confirmed. (1) **`ANDROID`/`IOS` client context at the player-POST leg (leg 2) is
+  now blocked** — HTTP 400 `FAILED_PRECONDITION` on every retry, no header/body variation curing
+  it. This is a device-integrity/attestation check YouTube added to native-app client endpoints
+  as of this date — a real-world upstream change, not a defect in this plugin or in the original
+  research (`swarm-report/research/research-youtube-subtitles-plugin.md`'s 47+ live calls predate
+  this change). Fixed: leg 2 now uses `context.client.clientName = "WEB"` plus
+  `playbackContext.contentPlaybackContext.signatureTimestamp` (an integer `STS` extracted from the
+  same leg-1 watch-page HTML already fetched for `INNERTUBE_API_KEY` — no new request), and
+  `context.client.clientVersion` is likewise extracted live (`INNERTUBE_CONTEXT_CLIENT_VERSION`)
+  rather than hardcoded. `_USER_AGENT` is now a real desktop Chrome UA string. Confirmed working
+  against two real videos, no cookies/`Origin`/`Referer` needed. (2) **The timedtext `baseUrl`'s
+  unparameterized default format changed** — a live fetch with no `fmt` query param now returns
+  `<transcript><text start=".." dur="..">` (decimal seconds), not the `<timedtext format="3"><body>
+  <p t=".." d="..">` (integer milliseconds) shape `_decode_segments()` expects; the module's prior
+  docstring inference ("format=3 is the server's default when omitted") was reasonable at the time
+  it was written but is empirically wrong as of this date. Fixed: `fmt=srv3` is now appended
+  explicitly (via `urlsplit`/`parse_qsl`/`urlencode`, not string concatenation), still through
+  `net/client.py`'s full host/scheme/port allowlist re-check (unskipped, per plan.md's own prior
+  anticipation of this exact scenario). AC-23's exact-request-count budget unaffected — still 3
+  requests for `get_transcript`, 2 for `list_transcript_tracks`, since `STS`/client version come
+  from the same leg-1 GET. See `swarm-report/youtube-transcript-report-live-fix.md` for the full
+  diff, live end-to-end verification output (real video IDs, metadata-only, no caption text
+  logged), and test/lint/type-check results.
 - Acceptance-fix pass (2026-08-02): `/acceptance` found `select_track()`'s tier-2 `languages`
   fallthrough violated AC-3 ("does NOT silently fall back to another language") — a supplied,
   non-empty `languages` list matching no track fell through to tiers 3/4/5 instead of returning
