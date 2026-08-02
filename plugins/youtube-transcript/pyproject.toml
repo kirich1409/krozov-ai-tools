@@ -1,0 +1,43 @@
+[tool.coverage.run]
+# Repo-root-relative: CI invokes `coverage run --rcfile=plugins/youtube-transcript/pyproject.toml`
+# from the repo root (mirrors plugins/maven-mcp/pyproject.toml -- verified there that
+# coverage.py does not walk up from an --rcfile to reinterpret paths relative to it;
+# they are CWD-relative, same as mypy).
+source = ["plugins/youtube-transcript/plugin/server"]
+
+[tool.coverage.report]
+show_missing = true
+# No tests exist yet (T-1 only creates the package skeleton) -- this threshold is a
+# placeholder mirroring maven-mcp's shape, to be revisited once the suite has a
+# track record, same as maven-mcp's own note.
+fail_under = 75
+
+[tool.mypy]
+python_version = "3.9"
+# NOTE: unlike ruff's [tool.ruff.lint.per-file-ignores] below (resolved relative to
+# THIS file's directory, verified empirically in plugins/maven-mcp/pyproject.toml),
+# mypy resolves `files`/`mypy_path` relative to the invocation CWD. CI runs mypy from
+# the repo root (matching every other command in this repo's CLAUDE.md), so these are
+# repo-root-relative.
+files = ["plugins/youtube-transcript/plugin/server", "plugins/youtube-transcript/tests"]
+mypy_path = ["plugins/youtube-transcript/plugin/server"]
+warn_unused_configs = true
+warn_redundant_casts = true
+
+[tool.ruff]
+target-version = "py39"
+# Inert while E501 is ignored below; kept so a future re-enable of line-length
+# starts from a deliberate number instead of ruff's 88-char default.
+line-length = 100
+
+[tool.ruff.lint]
+# Same pragmatic subset as plugins/maven-mcp/pyproject.toml, chosen there
+# empirically against that codebase (issue #408): real bugs (F, most of B), basic
+# style (E/W minus line length), comprehension quality (C4), simplification hints
+# (SIM), ruff-native checks (RUF), and stdlib-override naming (N). Mirrored here
+# rather than re-deriving from scratch since this package's stdlib-only ethos and
+# conventions are the same.
+select = ["E", "F", "W", "B", "C4", "SIM", "RUF", "N"]
+ignore = [
+    "E501",  # line-too-long -- no formatter enforced, matching maven-mcp.
+]
