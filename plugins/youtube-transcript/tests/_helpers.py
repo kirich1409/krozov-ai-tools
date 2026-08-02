@@ -59,6 +59,19 @@ import domain  # noqa: E402
 import providers.base as providers_base  # noqa: E402
 
 
+# --- Segment/Transcript builder (T-5) ----------------------------------------------
+
+
+def make_segments(
+    count: int, *, text: Callable[[int], str] = lambda i: f"segment {i}"
+) -> Tuple["domain.Segment", ...]:
+    """Builds `count` evenly-spaced 900ms-long segments (100ms gaps between them,
+    1000ms apart start-to-start) with per-index text from `text(i)` -- for T-5+'s
+    `formats/` tests, which routinely need many segments of varying length without
+    writing each one out by hand."""
+    return tuple(domain.Segment(start_ms=i * 1000, duration_ms=900, text=text(i)) for i in range(count))
+
+
 # --- Provider port test doubles --------------------------------------------------
 
 
@@ -202,5 +215,6 @@ __all__: List[str] = [
     "FakeProvider",
     "FakeSession",
     "http_error",
+    "make_segments",
     "mock_urlopen",
 ]
