@@ -124,11 +124,12 @@ class TestSegmentIndexBoundsRejected(unittest.TestCase):
                     cursor.decode(_encode_payload(payload))
 
         # Non-int types, including bool (a subclass of int in Python, but not a
-        # valid segment index).
-        for bad_segment_index in (True, False, "42", 3.5, None):
-            with self.subTest(bad_segment_index=bad_segment_index):
+        # valid segment index). A separate loop variable name avoids a mypy
+        # redefinition error against the first loop's inferred `int` type above.
+        for bad_segment_index_wrong_type in (True, False, "42", 3.5, None):
+            with self.subTest(bad_segment_index=bad_segment_index_wrong_type):
                 payload = _valid_payload()
-                payload["segmentIndex"] = bad_segment_index
+                payload["segmentIndex"] = bad_segment_index_wrong_type
                 with self.assertRaises(domain.CursorInvalid):
                     cursor.decode(_encode_payload(payload))
 
