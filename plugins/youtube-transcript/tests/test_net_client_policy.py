@@ -79,6 +79,24 @@ class TestNullHostRejected(unittest.TestCase):
         _rejected_before_opener_touched(self, "https:///x")
 
 
+class TestMalformedUrlMapsToPolicyRejected(unittest.TestCase):
+    """Security-review fix pass (T-6-secfix), finding 1: `urlsplit(url)` and the
+    `.port` property access inside `_check_policy` both raise a bare `ValueError`
+    on malformed input -- confirmed empirically (brief's finding 1) for all three
+    URLs below -- which used to escape `fetch()` outside its closed `NetError` set
+    entirely. Each must now surface as `PolicyRejected`, never a bare `ValueError`,
+    with the opener never touched."""
+
+    def test_malformed_urls_raise_policy_rejected_not_value_error(self) -> None:
+        for url in (
+            "https://www.youtube.com:99999/x",  # port out of range 0-65535
+            "https://www.youtube.com:abc/x",  # port could not be cast to integer
+            "https://[::1/x",  # malformed IPv6 bracket syntax
+        ):
+            with self.subTest(url=url):
+                _rejected_before_opener_touched(self, url)
+
+
 class TestAllowlistExactAndSuffix(unittest.TestCase):
     def test_allowlist_exact_and_suffix(self) -> None:
         # Positive: both confirmed hosts (T-P3) are accepted, and the request
@@ -212,6 +230,44 @@ class TestResponseIsPlainDataContainer(unittest.TestCase):
         response = client.Response(status=200, headers={}, body=b"x")
         self.assertFalse(hasattr(response, "read"))
         self.assertFalse(hasattr(response, "fp"))
+
+
+class TestFetchOnlyEverRaisesClosedNetErrorSetForMalformedUrls(unittest.TestCase):
+    """The reviewer's own optional recommendation (T-6-secfix brief): a small
+    fuzz-style corpus of malformed URL strings, asserting `fetch()` only ever
+    raises members of the closed `NetError` set -- would have caught finding 1
+    directly (a bare `ValueError` escaping `_check_policy`), rather than relying
+    on each malformed shape being separately anticipated by name."""
+
+    def test_malformed_url_corpus_never_escapes_net_error(self) -> None:
+        corpus = (
+            "http://www.youtube.com/x",
+            "https:///x",
+            "https://www.youtube.com:99999/x",
+            "https://www.youtube.com:abc/x",
+            "https://[::1/x",
+            "not-a-url-at-all",
+            "https://www.youtube.com:8080/x",
+            "",
+            "https://evil.com/x",
+        )
+        for url in corpus:
+            with self.subTest(url=url):
+                fake_opener = Mock()
+                with patch.object(client, "_OPENER", new=fake_opener):
+                    try:
+                        client.fetch(url)
+                    except client.NetError:
+                        pass
+                    except Exception as error:
+                        # Deliberately broad: this test's entire point is to catch
+                        # anything that ISN'T a NetError, which a narrower except
+                        # clause would defeat.
+                        self.fail(
+                            f"fetch({url!r}) raised {type(error).__name__}, "
+                            "not a member of the closed NetError set"
+                        )
+                fake_opener.open.assert_not_called()
 
 
 if __name__ == "__main__":

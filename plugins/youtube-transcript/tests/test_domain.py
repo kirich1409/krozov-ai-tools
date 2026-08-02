@@ -109,6 +109,16 @@ class TestRedactUrl(unittest.TestCase):
         for forbidden in ("user", "token", "q=1", "frag"):
             self.assertNotIn(forbidden, redacted)
 
+    def test_redact_url_never_raises_on_malformed_input(self) -> None:
+        # net/client.py's T-6-secfix fix pass, finding 1 at one remove: `urlsplit()`
+        # raises a bare `ValueError` on malformed IPv6 bracket syntax -- confirmed
+        # empirically -- and this function is `_log_and_raise`'s one unconditional
+        # call on every logged `NetError`, so this must never re-raise either, or
+        # logging a malformed-URL `PolicyRejected` would itself crash.
+        redacted = domain.redact_url("https://[::1/x")
+        self.assertIsInstance(redacted, str)
+        self.assertNotIn("[::1", redacted)
+
 
 class TestTrackDescriptorValidation(unittest.TestCase):
     def test_language_name_length_bound_rejected(self) -> None:

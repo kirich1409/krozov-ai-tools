@@ -204,17 +204,40 @@ def _check_policy(url: str) -> None:
       (`https://www.youtube.com:8080/...`) is rejected. This guards the
       upstream-supplied `baseUrl` for the timedtext leg (T-10/AC-18), which is not
       caller-controlled but still needs this check.
+
+    Security-review fix pass (T-6-secfix), two findings:
+
+    - `urlsplit(url)` and the `.port` property access below both raise a bare
+      `ValueError` on malformed input (out-of-range port, non-numeric port,
+      malformed IPv6 bracket syntax -- confirmed empirically for all three), which
+      would otherwise escape `fetch()` outside its closed `NetError` set entirely.
+      Both are wrapped here and translated to `PolicyRejected`, same as any other
+      rejection reason this function raises.
+    - Every raise below routes through `_log_and_raise` rather than raising
+      directly, so a policy-layer rejection is logged (redacted) exactly like every
+      other exception `fetch()` raises -- previously these three bypassed
+      `_log_and_raise` entirely, since this function runs before `fetch()`'s own
+      `try` block.
     """
-    parts = urlsplit(url)
+    try:
+        parts = urlsplit(url)
+    except ValueError as error:
+        _log_and_raise(PolicyRejected(f"malformed URL: {error}"), url, cause=error)
+
     if parts.scheme != ALLOWED_SCHEME:
-        raise PolicyRejected(f"scheme {parts.scheme!r} is not {ALLOWED_SCHEME!r}")
+        _log_and_raise(PolicyRejected(f"scheme {parts.scheme!r} is not {ALLOWED_SCHEME!r}"), url)
 
     host = parts.hostname
     if not host or host not in ALLOWED_HOSTS:
-        raise PolicyRejected(f"host {host!r} is not in the allowlist")
+        _log_and_raise(PolicyRejected(f"host {host!r} is not in the allowlist"), url)
 
-    if parts.port is not None and parts.port != ALLOWED_PORT:
-        raise PolicyRejected(f"port {parts.port} is not {ALLOWED_PORT}")
+    try:
+        port = parts.port
+    except ValueError as error:
+        _log_and_raise(PolicyRejected(f"malformed URL: {error}"), url, cause=error)
+
+    if port is not None and port != ALLOWED_PORT:
+        _log_and_raise(PolicyRejected(f"port {port} is not {ALLOWED_PORT}"), url)
 
 
 class _NoRedirectHandler(urllib.request.HTTPRedirectHandler):
@@ -297,14 +320,21 @@ def _retry_after(error: urllib.error.HTTPError) -> int:
         return 0
 
 
-def _log_and_raise(error: NetError, url: str, *, cause: Optional[BaseException] = None) -> None:
+def _log_and_raise(error: NetError, url: str, *, cause: Optional[BaseException] = None) -> NoReturn:
     """Every raised `NetError` is logged at DEBUG first -- always through
     `domain.redact_url(url)`, never the raw `url` (T-10's timedtext leg URL carries
     a signed `?...&sig=...`-shaped query string upstream; the exception messages
     raised in this module never interpolate the raw URL either, only fixed text and
     status codes, so this call site is the one place that could otherwise leak it).
     Raises `error` (chained onto `cause` when given) -- called at every terminal
-    raise point below so no exception exits this function unlogged."""
+    raise point below so no exception exits this function unlogged.
+
+    Typed `NoReturn` (security-review fix pass, T-6-secfix) rather than the
+    previously-committed `-> None`: this function has always unconditionally raised
+    on every path, `-> None` was simply an inaccurate annotation. `NoReturn` is what
+    lets mypy treat `_check_policy`'s own call sites (below) as truly terminal, so
+    the variable reads immediately after each of them are recognized as
+    unreachable-if-raised rather than possibly-unbound."""
     _LOGGER.debug("net.fetch failed for %s: %s", redact_url(url), error)
     if cause is not None:
         raise error from cause
@@ -499,7 +529,19 @@ def fetch(
             # capped/streaming way; a cap/deadline violation reading THIS body
             # ends the call directly (the status was already determined, so
             # retrying would not change it).
-            raw_body = _read_capped_body(error, deadline)
+            #
+            # Security-review fix pass (T-6-secfix): this call is inside the
+            # `except urllib.error.HTTPError` clause of the outer `try` above, so a
+            # `ResponseTooLarge`/`TransportFailed` raised here would otherwise
+            # propagate straight out of `fetch()` unlogged -- Python does not
+            # re-dispatch an exception raised inside one except-block to a sibling
+            # except-clause of the same `try` (those sibling clauses, further down,
+            # are what catch these same two exception types on the success-read
+            # path above). Caught and routed through `_log_and_raise` here instead.
+            try:
+                raw_body = _read_capped_body(error, deadline)
+            except (ResponseTooLarge, TransportFailed) as read_error:
+                _log_and_raise(read_error, url)
         except (urllib.error.URLError, OSError, TimeoutError) as error:
             last_error = TransportFailed(f"transport error: {error}")
             if attempt_index == HTTP_MAX_ATTEMPTS - 1:

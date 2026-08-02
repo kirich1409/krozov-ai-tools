@@ -448,6 +448,30 @@ class TestLogRedactsQueryString(unittest.TestCase):
         self.assertIn("https://www.youtube.com/api/timedtext", full_log)
 
 
+class TestPolicyRejectionIsLoggedAndRedacted(unittest.TestCase):
+    """Security-review fix pass (T-6-secfix), finding 2: `_check_policy`'s three
+    `PolicyRejected` raises used to bypass `_log_and_raise` entirely, since
+    `_check_policy` runs before `fetch()`'s own `try` block -- a DEBUG-level log
+    handler captured nothing on a scheme rejection (confirmed empirically, brief's
+    finding 2). Uses a `?pot=...&sig=...`-shaped query string (same shape as
+    `TestLogRedactsQueryString` above) to also cover the brief's redaction
+    constraint for this newly-routed log entry specifically."""
+
+    def test_policy_rejection_logs_redacted_entry(self) -> None:
+        url = "http://www.youtube.com/api/timedtext?pot=ABC123&sig=DEF456"
+        with self.assertLogs("net.client", level="DEBUG") as cm, self.assertRaises(
+            client.PolicyRejected
+        ):
+            client.fetch(url)
+
+        full_log = "\n".join(cm.output)
+        self.assertNotIn("pot=", full_log)
+        self.assertNotIn("sig=", full_log)
+        self.assertNotIn("ABC123", full_log)
+        self.assertNotIn("DEF456", full_log)
+        self.assertIn("http://www.youtube.com/api/timedtext", full_log)
+
+
 class TestAcceptEncodingPresentOnEveryRequest(unittest.TestCase):
     def test_accept_encoding_present_on_every_request(self) -> None:
         self.assertEqual(client._merge_headers(None), {"Accept-Encoding": "gzip"})
@@ -514,6 +538,58 @@ class TestNonRedirectStatusReadThroughRetryLoop(unittest.TestCase):
             )
         self.assertEqual(response.status, 404)
         self.assertEqual(response.body, b"not found")
+
+
+class TestNonRetryableStatusBodyReadFailureIsLogged(unittest.TestCase):
+    """Security-review fix pass (T-6-secfix), finding 3: `_read_capped_body(error,
+    deadline)`'s call inside the non-redirect/429/5xx fallback branch above (e.g.
+    404) is nested inside `fetch()`'s own `except urllib.error.HTTPError` clause --
+    a `ResponseTooLarge`/`TransportFailed` raised there used to propagate straight
+    out of `fetch()` unlogged, since Python does not re-dispatch an exception
+    raised inside one except-block to a sibling except-clause of the same `try`
+    (confirmed empirically, brief's finding 3). Both bodies below are logged
+    (asserted via `assertLogs`) as well as correctly raised/typed."""
+
+    def test_error_status_body_read_too_large_is_logged(self) -> None:
+        # Oversized: same byte-cap mechanism as `TestResponseTooLargeDuringAttempt
+        # IsNeverRetried`, just triggered from inside the 404 fallback branch
+        # instead of the success-read path.
+        clock = _FakeClock()
+        transport, _sleeps = _fake_transport(clock)
+        deadline = _generous_deadline(clock)
+        opener = _ScriptedOpener(
+            clock, [(0.0, http_error("https://www.youtube.com/x", 404, body=b"x" * 20))]
+        )
+        with patch.object(client, "HTTP_MAX_RESPONSE_BYTES", 10), patch.object(
+            client, "_OPENER", new=opener
+        ), self.assertLogs("net.client", level="DEBUG") as cm, self.assertRaises(
+            client.ResponseTooLarge
+        ):
+            client.fetch("https://www.youtube.com/x", deadline=deadline, transport=transport)
+        self.assertEqual(len(opener.calls), 1)
+        self.assertTrue(any("net.fetch failed" in line for line in cm.output))
+
+    def test_error_status_body_read_deadline_exhausted_is_logged(self) -> None:
+        # Deadline-exhausted: the network budget is used up by the (fake-clock)
+        # time the 404 response itself took to arrive, so `_read_capped_body`'s
+        # own first-iteration deadline check fires before it ever calls
+        # `.read()` on the error body -- same mechanism as
+        # `TestDeadlineExhaustedDuringBodyReadThenFloorBlocksRetry` above, just
+        # reached via the non-retryable-status branch instead of the
+        # success-read path.
+        clock = _FakeClock()
+        transport, _sleeps = _fake_transport(clock)
+        deadline = client.Deadline.start(client.ENCODE_RESERVE + 20.0, clock=clock.now)
+        opener = _ScriptedOpener(
+            clock,
+            [(25.0, http_error("https://www.youtube.com/x", 404, body=b"not found"))],
+        )
+        with patch.object(client, "_OPENER", new=opener), self.assertLogs(
+            "net.client", level="DEBUG"
+        ) as cm, self.assertRaises(client.TransportFailed):
+            client.fetch("https://www.youtube.com/x", deadline=deadline, transport=transport)
+        self.assertEqual(len(opener.calls), 1)
+        self.assertTrue(any("net.fetch failed" in line for line in cm.output))
 
 
 class TestTransportErrorExhaustsRetryThenRaises(unittest.TestCase):

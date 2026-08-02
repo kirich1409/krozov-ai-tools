@@ -317,5 +317,18 @@ def sanitize_text(s: str) -> str:
 # with it) -- cycle 8 widened this from query-only redaction, closing a gap where
 # userinfo credentials embedded in a URL would otherwise have survived.
 def redact_url(url: str) -> str:
-    parsed = urlsplit(url)
+    # `urlsplit()` raises a bare `ValueError` on some malformed input (e.g.
+    # malformed IPv6 bracket syntax, `https://[::1/x` -- confirmed empirically,
+    # net/client.py's T-6-secfix fix pass, finding 1): this function is
+    # `net/client.py::_log_and_raise`'s one unconditional call on every logged
+    # `NetError`, including `_check_policy`'s own malformed-URL `PolicyRejected`
+    # (that same fix pass's finding 2 routed those through `_log_and_raise` too) --
+    # so without this guard, logging that exact rejection would itself raise a
+    # bare `ValueError` out of `_log_and_raise`, defeating finding 1's fix at one
+    # remove. A fixed placeholder, never the raw `url`, preserves this function's
+    # one job (never leak the raw URL) for input too malformed to even parse.
+    try:
+        parsed = urlsplit(url)
+    except ValueError:
+        return "<unparseable URL>"
     return parsed._replace(query="", fragment="", netloc=parsed.hostname or "").geturl()
