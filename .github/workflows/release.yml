@@ -51,6 +51,16 @@ jobs:
         working-directory: .
         run: python3 -m unittest discover -s plugins/maven-mcp/tests
 
+      # Unified versioning releases every plugin in marketplace.json together
+      # under one tag, so the gate must run every plugin's suite, not just
+      # maven-mcp's. working-directory: . overrides the job's
+      # defaults.run.working-directory (plugins/maven-mcp) for the same reason
+      # as the step above: without it, the -s path would resolve relative to
+      # plugins/maven-mcp instead of the repo root.
+      - name: Run Python tests (youtube-transcript)
+        working-directory: .
+        run: python3 -m unittest discover -s plugins/youtube-transcript/tests
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
         with:

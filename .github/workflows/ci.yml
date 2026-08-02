@@ -236,3 +236,202 @@ jobs:
       - if: steps.changes.outputs.maven_mcp == 'true'
         name: Coverage report (floor enforced via fail_under in pyproject.toml)
         run: coverage report --rcfile=plugins/maven-mcp/pyproject.toml
+
+  # --- youtube-transcript ---------------------------------------------------
+  # Same 4-job shape as maven-mcp above (job-always-runs / steps-path-gated),
+  # mirrored exactly rather than generalized into a shared/reusable workflow --
+  # this repo has exactly two plugins today and a premature abstraction would
+  # cost more to keep in sync than the duplication does. Job IDs are prefixed
+  # (youtube-transcript-*) since maven-mcp already owns the unprefixed
+  # python-tests/ruff/mypy/coverage IDs.
+  youtube-transcript-tests:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.9", "3.13"]
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Detect youtube-transcript changes
+        id: changes
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT_NAME" != "pull_request" ]; then
+            echo "Push event - run all steps."
+            echo "youtube_transcript=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # Pull request: three-dot diff (merge-base..head) so we see only
+          # commits introduced by the PR, not unrelated changes that landed
+          # on main between fork-point and head.
+          CHANGED=$(git diff --name-only "$BASE_SHA...$HEAD_SHA" -- \
+            'plugins/youtube-transcript/**' '.github/workflows/ci.yml')
+          if [ -n "$CHANGED" ]; then
+            echo "youtube-transcript changed:"
+            echo "$CHANGED"
+            echo "youtube_transcript=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "No youtube-transcript changes - skipping test steps."
+            echo "youtube_transcript=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Setup Python ${{ matrix.python-version }}
+        if: steps.changes.outputs.youtube_transcript == 'true'
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - if: steps.changes.outputs.youtube_transcript == 'true'
+        run: python3 -m unittest discover -s plugins/youtube-transcript/tests -v
+
+      # Zero-dependency static gate (same rationale as maven-mcp's compileall step).
+      - if: steps.changes.outputs.youtube_transcript == 'true'
+        run: python -m compileall plugins/youtube-transcript/plugin/server
+
+  youtube-transcript-ruff:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Detect youtube-transcript changes
+        id: changes
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT_NAME" != "pull_request" ]; then
+            echo "Push event - run all steps."
+            echo "youtube_transcript=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          CHANGED=$(git diff --name-only "$BASE_SHA...$HEAD_SHA" -- \
+            'plugins/youtube-transcript/**' '.github/workflows/ci.yml')
+          if [ -n "$CHANGED" ]; then
+            echo "youtube-transcript changed:"
+            echo "$CHANGED"
+            echo "youtube_transcript=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "No youtube-transcript changes - skipping quality steps."
+            echo "youtube_transcript=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Setup Python
+        if: steps.changes.outputs.youtube_transcript == 'true'
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      # Same pin as maven-mcp's ruff job; see plugins/youtube-transcript/pyproject.toml
+      # for the config (target-version = py39, matching the tests matrix).
+      - if: steps.changes.outputs.youtube_transcript == 'true'
+        run: pip install ruff==0.15.22
+
+      - if: steps.changes.outputs.youtube_transcript == 'true'
+        name: Ruff lint
+        run: ruff check plugins/youtube-transcript/plugin/server plugins/youtube-transcript/tests
+
+  youtube-transcript-mypy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Detect youtube-transcript changes
+        id: changes
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT_NAME" != "pull_request" ]; then
+            echo "Push event - run all steps."
+            echo "youtube_transcript=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          CHANGED=$(git diff --name-only "$BASE_SHA...$HEAD_SHA" -- \
+            'plugins/youtube-transcript/**' '.github/workflows/ci.yml')
+          if [ -n "$CHANGED" ]; then
+            echo "youtube-transcript changed:"
+            echo "$CHANGED"
+            echo "youtube_transcript=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "No youtube-transcript changes - skipping quality steps."
+            echo "youtube_transcript=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Setup Python
+        if: steps.changes.outputs.youtube_transcript == 'true'
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      # Same version pin as maven-mcp's mypy job -- see that job's comment for
+      # why 1.20.2 is the newest release that still supports `--python-version
+      # 3.9` as a check target.
+      - if: steps.changes.outputs.youtube_transcript == 'true'
+        run: pip install mypy==1.20.2
+
+      - if: steps.changes.outputs.youtube_transcript == 'true'
+        name: mypy type check
+        run: mypy --config-file plugins/youtube-transcript/pyproject.toml
+
+  youtube-transcript-coverage:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Detect youtube-transcript changes
+        id: changes
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT_NAME" != "pull_request" ]; then
+            echo "Push event - run all steps."
+            echo "youtube_transcript=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          CHANGED=$(git diff --name-only "$BASE_SHA...$HEAD_SHA" -- \
+            'plugins/youtube-transcript/**' '.github/workflows/ci.yml')
+          if [ -n "$CHANGED" ]; then
+            echo "youtube-transcript changed:"
+            echo "$CHANGED"
+            echo "youtube_transcript=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "No youtube-transcript changes - skipping quality steps."
+            echo "youtube_transcript=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Setup Python
+        if: steps.changes.outputs.youtube_transcript == 'true'
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - if: steps.changes.outputs.youtube_transcript == 'true'
+        run: pip install coverage==7.15.2
+
+      - if: steps.changes.outputs.youtube_transcript == 'true'
+        name: Run tests under coverage
+        run: coverage run --rcfile=plugins/youtube-transcript/pyproject.toml -m unittest discover -s plugins/youtube-transcript/tests -v
+
+      - if: steps.changes.outputs.youtube_transcript == 'true'
+        name: Coverage report (floor enforced via fail_under in pyproject.toml)
+        run: coverage report --rcfile=plugins/youtube-transcript/pyproject.toml

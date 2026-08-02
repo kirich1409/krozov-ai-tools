@@ -1,0 +1,141 @@
+name: youtube-transcript live canary
+
+# Weekly live-network canary for the youtube-transcript plugin (T-15's live
+# canary test, plugins/youtube-transcript/tests/test_live_canary.py). T-15
+# has not landed yet as of this workflow's introduction (T-P2) -- see the
+# "Run live canary test" step below for how that gap is handled.
+#
+# Unlike maven-mcp-live-canary.yml (single fail-loud attempt, no counter),
+# this workflow adds a cache-based CONSECUTIVE-failure counter: a lone
+# failure is recorded but does not escalate, giving a transient upstream
+# blip (rate limiting, a momentary YouTube-side hiccup) a couple of weekly
+# retries to self-resolve. Only the 3rd consecutive failure fails the
+# workflow loudly, which is this task's actual requirement -- not just the
+# workflow skeleton.
+#
+# "Fails loud" here means: a failed scheduled workflow run is a red run in
+# the Actions tab, and GitHub emails the user who last edited the workflow's
+# schedule on scheduled-workflow failure. No issue-opening or other
+# notification integration is added deliberately: this workflow's
+# `permissions: contents: read` is a hard requirement (acceptance
+# criterion), and opening an issue would need `issues: write` -- widening
+# permissions to add a nicer notification channel is out of scope for this
+# task.
+#
+# actions/cache entries are immutable per key (saving to an already-existing
+# key is a silent no-op, verified against actions/cache's own docs), so the
+# counter file is saved under a NEW key every run (github.run_id) and
+# restored via the `restore-keys` prefix, which always falls back to the
+# most recent prior run's counter since the exact key never hits (each
+# run_id is unique by construction).
+#
+# DEBUG logging is never enabled here (acceptance criterion): no
+# ACTIONS_STEP_DEBUG/ACTIONS_RUNNER_DEBUG env var is set, and no
+# plugin-level debug/verbose log-level env var is passed to the canary
+# step.
+#
+# Known caveat (accepted, not mitigated here, same as
+# maven-mcp-live-canary.yml): GitHub auto-disables scheduled workflows after
+# ~60 days of repository inactivity, which is itself a silent failure mode.
+on:
+  schedule:
+    # Weekly, offset from codeql.yml (Monday 05:37 UTC) and
+    # maven-mcp-live-canary.yml (Wednesday 04:22 UTC) so all three don't land
+    # in the same runner-queue window.
+    - cron: "51 5 * * 3"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  live-canary:
+    runs-on: ubuntu-latest
+    # Defensive bound, same rationale as maven-mcp-live-canary.yml: caps a
+    # future retry/backoff regression from turning into a multi-hour hang on
+    # a scheduled job.
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      # Exact key is always a first-time miss (github.run_id is unique per
+      # run) -- the restore-keys prefix is what actually recovers the prior
+      # run's counter. cache-hit is intentionally unused: a miss here just
+      # means "no counter file yet" (first-ever run, or cache retention
+      # expired), which the next step already treats as count=0 via the
+      # missing-file branch.
+      - name: Restore consecutive-failure counter
+        uses: actions/cache/restore@v4
+        with:
+          path: canary-counter.txt
+          key: youtube-transcript-canary-counter-${{ github.run_id }}
+          restore-keys: |
+            youtube-transcript-canary-counter-
+
+      - name: Read counter
+        id: counter
+        run: |
+          set -euo pipefail
+          if [ -f canary-counter.txt ]; then
+            COUNT=$(cat canary-counter.txt)
+          else
+            COUNT=0
+          fi
+          echo "Current consecutive-failure count: $COUNT"
+          echo "count=$COUNT" >> "$GITHUB_OUTPUT"
+
+      # TODO(T-15): this references the eventual test path
+      # (plugins/youtube-transcript/tests/test_live_canary.py) before T-15
+      # creates it. That's safe: this step only runs on this workflow's own
+      # schedule/workflow_dispatch trigger, never as part of T-P2's own
+      # `bash scripts/validate.sh` check. Until T-15 lands, `unittest
+      # discover -p test_live_canary.py` matches zero files and exits 5
+      # ("NO TESTS RAN", verified empirically) -- i.e. this step fails now,
+      # which is the correct placeholder behavior: it surfaces (via the
+      # counter, escalating after 3 weekly runs) that T-15's canary still
+      # needs to land, rather than silently reporting green for a canary
+      # that isn't testing anything yet.
+      - name: Run live canary test
+        id: run-canary
+        continue-on-error: true
+        env:
+          YOUTUBE_TRANSCRIPT_LIVE_CANARY: "1"
+        run: python3 -m unittest discover -s plugins/youtube-transcript/tests -p test_live_canary.py -v
+
+      - name: Update counter
+        run: |
+          set -euo pipefail
+          if [ "${{ steps.run-canary.outcome }}" = "success" ]; then
+            echo "Canary passed -- resetting counter to 0."
+            echo 0 > canary-counter.txt
+          else
+            NEW_COUNT=$(( ${{ steps.counter.outputs.count }} + 1 ))
+            echo "Canary failed -- consecutive-failure count now $NEW_COUNT."
+            echo "$NEW_COUNT" > canary-counter.txt
+          fi
+
+      # Always save, even when the counter step above is skipped by an
+      # earlier hard failure (there isn't one on this path today, but
+      # `if: always()` keeps the counter durable if a future edit adds one).
+      - name: Save consecutive-failure counter
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: canary-counter.txt
+          key: youtube-transcript-canary-counter-${{ github.run_id }}
+
+      - name: Fail loud at 3 consecutive failures
+        run: |
+          set -euo pipefail
+          COUNT=$(cat canary-counter.txt)
+          if [ "$COUNT" -ge 3 ]; then
+            echo "::error::youtube-transcript live canary has failed $COUNT consecutive times -- treating as a real regression, not a transient flake."
+            exit 1
+          fi
+          if [ "${{ steps.run-canary.outcome }}" != "success" ]; then
+            echo "::warning::youtube-transcript live canary failed (consecutive count: $COUNT), below the 3-failure escalation threshold -- not failing the workflow yet."
+          fi

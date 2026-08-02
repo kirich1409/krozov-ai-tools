@@ -340,6 +340,31 @@ check_frontmatter() {
   fail "frontmatter validation failed (see output above)"
 }
 
+# ---------- L9: Workflow permissions ----------
+#
+# Every workflow must declare a `permissions:` key somewhere (top-level,
+# applying to all its jobs, or per-job, like release.yml's publish job and
+# codeql.yml's analyze job) rather than relying on the GITHUB_TOKEN default
+# permissions (broad, repo-setting-dependent, and easy to widen by accident).
+# This is deliberately a presence check, not a least-privilege audit: it
+# catches a workflow that omits the key entirely, not one whose declared
+# scopes are too broad -- that judgment call stays a human/code-review
+# concern.
+
+check_workflow_permissions() {
+  echo "--- L9: Workflow files declare a permissions: key ---"
+  local dir=".github/workflows"
+  [ -d "$dir" ] || return
+  for wf in "$dir"/*.yml "$dir"/*.yaml; do
+    [ -f "$wf" ] || continue
+    if grep -qE '^[[:space:]]*permissions:' "$wf"; then
+      ok "$wf declares permissions:"
+    else
+      fail "$wf is missing a permissions: key (top-level or per-job) -- relies on default GITHUB_TOKEN permissions"
+    fi
+  done
+}
+
 # ---------- Entry point ----------
 
 main() {
@@ -367,6 +392,7 @@ main() {
   check_hook_scripts
   check_frontmatter
   check_field_types
+  check_workflow_permissions
 
   if [ -n "$CHECK_TAG" ]; then
     check_tag_versions "$CHECK_TAG"
