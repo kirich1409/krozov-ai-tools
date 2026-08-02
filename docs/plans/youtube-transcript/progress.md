@@ -12,7 +12,7 @@
 - [x] T-6b — `net/client.py` resource controls: caps, deadline, retry, XML guard
 - [x] T-7 — `protocol/envelope.py` + `schemas.py`
 - [x] T-8 — `tools/cursor.py`
-- [ ] T-9 — `tools/resolution.py`
+- [x] T-9 — `tools/resolution.py`
 - [ ] T-13a — `protocol/registry.py` + `dispatch.py`
 - [ ] T-10 — `providers/innertube.py`
 - [ ] T-11 — `tools/list_transcript_tracks.py`
