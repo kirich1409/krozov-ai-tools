@@ -143,7 +143,12 @@ _API_KEY_PATTERN = re.compile(r'"INNERTUBE_API_KEY"\s*:\s*"([^"]+)"')
 # Both extracted from the same watch-page HTML as `INNERTUBE_API_KEY`, no new
 # request (module docstring: confirmed live 2026-08-03).
 _CLIENT_VERSION_PATTERN = re.compile(r'"INNERTUBE_CONTEXT_CLIENT_VERSION"\s*:\s*"([^"]+)"')
-_STS_PATTERN = re.compile(r'"STS"\s*:\s*(\d+)')
+# Digit count bounded to 10 (comfortably covers any realistic timestamp-shaped
+# value) so int()'s conversion of the captured group can't be handed a
+# pathologically long digit string -- the same class of defensive cap this
+# module already applies elsewhere (byte cap, gzip-bomb cap, XML entity
+# reject), per the live-fix scoped security review's finding.
+_STS_PATTERN = re.compile(r'"STS"\s*:\s*(\d{1,10})')
 
 
 def _build_player_request_body(
