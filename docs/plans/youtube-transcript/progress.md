@@ -24,7 +24,7 @@
 - [x] T-P1 — Versioning and repo-doc generalization
 - [x] T-P2 — CI workflows
 - [ ] T-P3 — Network spike: allowlist confirmation, canary videos, size/latency/RSS measurement
-- [ ] T-P4 — Spec addendum: sync remaining plan/spec divergences
+- [x] T-P4 — Spec addendum: sync remaining plan/spec divergences
 
 ## Blocking / Human-owned items (not a task, tracked here so they aren't missed at merge time)
 - [ ] Register the four new `youtube-transcript` CI jobs as required branch-protection status checks — repo-settings action, Human-owned, cannot be verified from the working tree by any agent. Blocks release (spec Prerequisites, plan.md Risks).
