@@ -140,5 +140,80 @@ class TestEncodeReserveDerivation(unittest.TestCase):
         self.assertEqual(domain.ENCODE_RESERVE, domain.HTTP_TIMEOUT + domain.CPU_PHASE_BUDGET)
 
 
+# --- T-14: DomainFailure totality, cycle-7-corrected count ------------------------
+#
+# `ProviderError` is itself a DIRECT subclass of `DomainFailure` (declared in
+# `providers/base.py`), alongside `DeadlineExpired`/`CursorInvalid`/
+# `TrackFieldInvalid` (declared here) -- its own ten leaf subclasses
+# (`VideoNotFound`, `VideoUnavailable`, `AgeRestricted`, `RegionBlocked`,
+# `LiveNotReady`, `RateLimited`, `BlockedByProvider`, `UpstreamChanged`,
+# `TranscriptTooLarge`, `TransportError`) are subclasses of `ProviderError`, not
+# direct children of `DomainFailure` -- so `DomainFailure.__subclasses__()`
+# (non-recursive, one level) is 4 members, not 13. The two counts are asserted
+# separately, by name, rather than one conflated "the tree" assertion that
+# silently picks one of the two without saying so (tasks.md's own cycle-7 fix,
+# undercounted by one in an earlier revision that missed `ProviderError` itself
+# being a direct child alongside its own leaves).
+
+
+def _import_provider_error_leaves():
+    # Imported lazily, inside the test function, not at module top-level: this
+    # file (`domain/__init__.py`'s own test) otherwise has no reason to depend on
+    # `providers/base.py` at import time, and every other test in this module
+    # exercises `domain/` in isolation.
+    import providers.base as providers_base
+
+    return providers_base
+
+
+class TestDomainFailureDirectChildrenCount(unittest.TestCase):
+    def test_domain_failure_direct_children_count(self) -> None:
+        providers_base = _import_provider_error_leaves()
+        direct_children = set(domain.DomainFailure.__subclasses__())
+        self.assertEqual(
+            direct_children,
+            {
+                providers_base.ProviderError,
+                domain.DeadlineExpired,
+                domain.CursorInvalid,
+                domain.TrackFieldInvalid,
+            },
+        )
+        self.assertEqual(len(direct_children), 4)
+
+
+class TestDomainFailureLeafSetMatchesExactly(unittest.TestCase):
+    def test_domain_failure_leaf_set_matches_exactly(self) -> None:
+        providers_base = _import_provider_error_leaves()
+        provider_error_leaves = {
+            providers_base.VideoNotFound,
+            providers_base.VideoUnavailable,
+            providers_base.AgeRestricted,
+            providers_base.RegionBlocked,
+            providers_base.LiveNotReady,
+            providers_base.RateLimited,
+            providers_base.BlockedByProvider,
+            providers_base.UpstreamChanged,
+            providers_base.TranscriptTooLarge,
+            providers_base.TransportError,
+        }
+        self.assertEqual(set(providers_base.ProviderError.__subclasses__()), provider_error_leaves)
+        self.assertEqual(len(provider_error_leaves), 10)
+
+        non_provider_error_direct_children = {
+            domain.DeadlineExpired,
+            domain.CursorInvalid,
+            domain.TrackFieldInvalid,
+        }
+        full_leaf_set = provider_error_leaves | non_provider_error_direct_children
+        self.assertEqual(len(full_leaf_set), 13)
+
+        # `ProviderError` itself is never a leaf -- it is the abstract common base
+        # for its ten subclasses above, "never raised directly" (its own
+        # docstring) -- so it must NOT appear in the leaf set.
+        self.assertNotIn(providers_base.ProviderError, full_leaf_set)
+        self.assertNotIn(domain.DomainFailure, full_leaf_set)
+
+
 if __name__ == "__main__":
     unittest.main()

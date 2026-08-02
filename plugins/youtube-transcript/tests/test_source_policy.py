@@ -239,6 +239,135 @@ class TestUserAgentLiteralBannedInNetClient(unittest.TestCase):
         self.assertEqual(violations, [])
 
 
+# --- T-14: file-write and exec/eval/serialization primitive bans -----------------
+#
+# Two independent ban groups, each its own named test (tasks.md's T-14 acceptance:
+# "named tests, not one combined grep") -- both scanned under `plugin/server/**`
+# only (production code; `tests/` legitimately uses `tempfile`/`subprocess` for its
+# own doubles and process-boundary smoke tests, e.g. `test_composition.py`'s
+# `TestStdlibShadowingSmokeImport`, so it is deliberately out of scope for both
+# bans here). Zero existing matches under `plugin/server/**` for either group --
+# these are regression guards for the "zero filesystem writes"/"stdlib only, no
+# dynamic execution" properties this server already holds, not remediation for a
+# current violation.
+
+# Group 1: filesystem-write / directory-mutation primitives.
+_FILE_WRITE_PATTERNS: List[Pattern[str]] = [
+    re.compile(r"open\([^()]*[\"'][wa]b?[\"']"),  # open(..., "w"/"a"/"wb"/"ab")
+    re.compile(r"\.write_text\("),
+    re.compile(r"\.write_bytes\("),
+    re.compile(r"os\.mkdir\("),
+    re.compile(r"os\.makedirs\("),
+    re.compile(r"os\.open\("),
+    re.compile(r"os\.rename\("),
+    re.compile(r"os\.replace\("),
+    re.compile(r"shutil\."),
+    re.compile(r"tempfile\."),
+]
+
+# Group 2: process-execution / dynamic-code / unsafe-deserialization primitives.
+_EXEC_AND_SERIALIZATION_PATTERNS: List[Pattern[str]] = [
+    re.compile(r"\bsubprocess\b"),
+    re.compile(r"os\.system\("),
+    re.compile(r"os\.popen\("),
+    re.compile(r"os\.exec[a-zA-Z]*\("),
+    re.compile(r"\beval\("),
+    re.compile(r"\bexec\("),
+    re.compile(r"\bpickle\b"),
+    re.compile(r"\bmarshal\b"),
+    re.compile(r"__import__"),
+]
+
+
+class TestNoFileWriteCalls(unittest.TestCase):
+    def test_no_file_write_calls(self) -> None:
+        # Self-check: the mechanism actually matches each banned pattern, one per
+        # line, exactly once each -- built from concatenated string parts so this
+        # fixture doesn't itself trip some OTHER file's ban (matching this
+        # module's own established fixture convention).
+        fixture = "\n".join(
+            [
+                'f = open(path, "w")',
+                "f2 = open(path, mode='a')",
+                "p.write_text(data)",
+                "p.write_bytes(data)",
+                "os.mkdir(path)",
+                "os.makedirs(path)",
+                "fd = os.open(path, os.O_RDONLY)",
+                "os.rename(a, b)",
+                "os.replace(a, b)",
+                "shutil.copy(a, b)",
+                "tempfile.NamedTemporaryFile()",
+            ]
+        )
+        self.assertEqual(len(find_pattern_matches(fixture, _FILE_WRITE_PATTERNS)), 11)
+
+        # Clean lines this codebase actually uses -- read-only `open()` and
+        # `Path.open()` for reading never match.
+        self.assertEqual(
+            find_pattern_matches(
+                "\n".join(['f = open(path, "r")', "f2 = open(path, encoding='utf-8')"]),
+                _FILE_WRITE_PATTERNS,
+            ),
+            [],
+        )
+
+        # Real tree: zero matches under plugin/server/** -- this server never
+        # writes to disk (AC-19/plan.md's "zero filesystem writes" property,
+        # closed dynamically by test_no_file_writes.py, this ban is the static
+        # regression guard).
+        violations = []
+        for path in _iter_server_py_files(_SERVER_DIR):
+            with open(path, encoding="utf-8") as source_file:
+                source = source_file.read()
+            for match in find_pattern_matches(source, _FILE_WRITE_PATTERNS):
+                violations.append(f"{path}: {match}")
+        self.assertEqual(violations, [])
+
+
+class TestNoExecutionOrSerializationPrimitives(unittest.TestCase):
+    def test_no_execution_or_serialization_primitives(self) -> None:
+        # Inert string-literal fixture lines, never executed -- this test only
+        # feeds them through `find_pattern_matches`'s regex scan (the same
+        # self-check convention every other ban test in this file already uses,
+        # e.g. `TestNoTlsBypassTokens`) to prove the ban mechanism itself matches
+        # each banned pattern; none of `eval(`/`os.system(`/etc. below ever runs.
+        fixture = "\n".join(
+            [
+                "import subprocess",
+                "os.system('rm -rf /')",
+                "os.popen('ls')",
+                "os.execv(path, args)",
+                "eval('1 + 1')",
+                "exec('x = 1')",
+                "import pickle",
+                "import marshal",
+                "__import__('os')",
+            ]
+        )
+        self.assertEqual(
+            len(find_pattern_matches(fixture, _EXEC_AND_SERIALIZATION_PATTERNS)), 9
+        )
+
+        # A clean line using an unrelated word sharing a substring ("execute",
+        # not "exec(") never matches.
+        self.assertEqual(
+            find_pattern_matches("result = execute_query(sql)\n", _EXEC_AND_SERIALIZATION_PATTERNS),
+            [],
+        )
+
+        # Real tree: zero matches under plugin/server/** -- stdlib-only, no
+        # dynamic code execution or unsafe deserialization anywhere in this
+        # server (AC-14 and this task's own regression guard).
+        violations = []
+        for path in _iter_server_py_files(_SERVER_DIR):
+            with open(path, encoding="utf-8") as source_file:
+                source = source_file.read()
+            for match in find_pattern_matches(source, _EXEC_AND_SERIALIZATION_PATTERNS):
+                violations.append(f"{path}: {match}")
+        self.assertEqual(violations, [])
+
+
 class TestOpenerBanExcludesNothingUnderPluginServer(unittest.TestCase):
     def test_opener_ban_excludes_nothing_under_plugin_server(self) -> None:
         # This ban's exclusion set is empty -- and it is its OWN exclusion set, not

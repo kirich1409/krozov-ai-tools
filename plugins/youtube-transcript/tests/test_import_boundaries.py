@@ -438,6 +438,181 @@ class TestProvidersBaseCannotImportInnertube(unittest.TestCase):
         self.assertEqual(reverse_violations, [])
 
 
+# --- T-14: the real import graph, symbol-level, following re-exports -------------
+#
+# `TestCurrentTreeCompliance` above (T-3) already validates every module's own
+# import statements against `ALLOWED_EDGES`, file by file -- but only ever checks
+# the *immediately named* module of each import, via string-prefix matching
+# (`"composition.TranscriptProvider".startswith("composition.")`). It cannot see
+# past one hop: if some permitted module re-exports a name whose *true* origin is
+# a module reached through an illegitimate hop somewhere upstream, nothing in that
+# check resolves WHERE the symbol actually came from -- only that the directly-
+# named module string is permitted.
+#
+# This section builds the real, symbol-level graph: for every `from X import
+# NAME` anywhere under `plugin/server/**`, follow `NAME` through every re-export
+# hop (a name that is itself bound via `from Y import NAME2` in X's own source,
+# recursively) down to the module where it is genuinely, locally defined --
+# then independently re-validates every hop in that chain against `ALLOWED_EDGES`
+# right here, self-contained (not by relying on some other test having already
+# checked the intermediate module's own file). This is the same property T-3's
+# own check named only in `tasks.md` prose ("every imported symbol resolves to a
+# module the importing module's ALLOWED_EDGES row actually permits") -- now
+# actually falsifiable, against the real, fully-built graph.
+#
+# `composition.py`'s own module docstring is the concrete, sanctioned example this
+# section must NOT flag: `server.py` does `from composition import
+# TranscriptProvider`, whose true origin is `providers/base.py` -- `server`'s own
+# `ALLOWED_EDGES` row has no direct `providers.base` entry, but the chain
+# `server -> composition -> providers.base` is legitimate hop-by-hop
+# (`server -> composition` and `composition -> providers.base` are each
+# individually permitted), which is exactly what this check allows.
+
+
+def _module_local_bindings(
+    module_key: str, source: str
+) -> Dict[str, Tuple[str, Optional[str], Optional[str]]]:
+    """Every name `module_key` binds at module (top) scope, mapped to one of:
+
+    - `("local", None, None)`: a genuine top-level `def`/`class`/assignment --
+      the resolution terminus.
+    - `("import_module", "<dotted module>", None)`: bound via a bare `import X`
+      (or `import X as alias`) -- the whole module object, not a re-exportable
+      symbol in the `from X import NAME` sense.
+    - `("import", "<resolved source module>", "<source name>")`: bound via
+      `from Y import NAME [as alias]` -- a re-export candidate, resolved further
+      by the caller.
+
+    Only `tree.body` (true top-level) bindings count -- a name bound inside a
+    function/class body is not reachable via `from module_key import name` from
+    another module at all, so it is correctly invisible here.
+    """
+    tree = ast.parse(source, filename=module_key)
+    bindings: Dict[str, Tuple[str, Optional[str], Optional[str]]] = {}
+    for node in tree.body:
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            bindings[node.name] = ("local", None, None)
+        elif isinstance(node, ast.Assign):
+            for target in node.targets:
+                if isinstance(target, ast.Name):
+                    bindings[target.id] = ("local", None, None)
+        elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+            bindings[node.target.id] = ("local", None, None)
+        elif isinstance(node, ast.Import):
+            for alias in node.names:
+                bound_name = alias.asname or alias.name.split(".", 1)[0]
+                bindings[bound_name] = ("import_module", alias.name, None)
+        elif isinstance(node, ast.ImportFrom):
+            resolved = _resolve_from_module(node, module_key)
+            for alias in node.names:
+                bound_name = alias.asname or alias.name
+                if resolved is None:
+                    bindings[bound_name] = ("import_module", alias.name, None)
+                else:
+                    bindings[bound_name] = ("import", resolved, alias.name)
+    return bindings
+
+
+def _resolve_symbol_chain(
+    module_key: str,
+    name: str,
+    file_sources: Dict[str, str],
+    _visited: Tuple[str, ...] = (),
+) -> List[str]:
+    """Returns `[module_key, ..., origin_module]`, the full chain of modules this
+    symbol's resolution passes through, ending at the module where `name` is
+    genuinely defined (or a bare-`import`-module re-export terminus). Returns
+    `[module_key]` alone if `module_key` isn't one of this project's own modules,
+    if a cycle is detected (self-referential re-export -- pathological, but this
+    must terminate rather than recurse forever), or if `name` isn't found bound
+    at that module's top scope at all (a wildcard import or a genuinely broken
+    import -- the caller treats an unresolvable chain as its own violation)."""
+    if module_key in _visited or module_key not in file_sources:
+        return [module_key]
+    bindings = _module_local_bindings(module_key, file_sources[module_key])
+    if name not in bindings:
+        return [module_key]
+    kind, target, source_name = bindings[name]
+    if kind == "local" or target is None:
+        return [module_key]
+    if kind == "import_module" or source_name is None:
+        return [module_key, target]
+    return [module_key, *_resolve_symbol_chain(
+        target, source_name, file_sources, (*_visited, module_key)
+    )]
+
+
+def _hop_is_permitted(earlier: str, later: str) -> bool:
+    earlier_top = earlier.split(".", 1)[0]
+    later_top = later.split(".", 1)[0]
+    if earlier_top == later_top:
+        return True  # same-package hop, always allowed (general rule)
+    permitted = _resolve_permitted(earlier)
+    if permitted is None:
+        return False
+    return any(later == entry or later.startswith(entry + ".") for entry in permitted)
+
+
+class TestRealImportGraphMatchesAllowedEdges(unittest.TestCase):
+    def test_real_import_graph_matches_allowed_edges(self) -> None:
+        files = _iter_server_py_files(_SERVER_DIR)
+        file_sources: Dict[str, str] = {}
+        for path in files:
+            module_key = _module_key_for_path(path, _SERVER_DIR)
+            with open(path, encoding="utf-8") as source_file:
+                file_sources[module_key] = source_file.read()
+
+        violations: List[str] = []
+        for module_key, source in file_sources.items():
+            tree = ast.parse(source, filename=module_key)
+            for node in ast.walk(tree):
+                if not isinstance(node, ast.ImportFrom):
+                    continue
+                resolved = _resolve_from_module(node, module_key)
+                if resolved is None:
+                    continue
+                resolved_top = resolved.split(".", 1)[0]
+                # Only this project's own modules can "re-export" a symbol in the
+                # sense this check resolves -- a stdlib/third-party import has no
+                # further chain to follow, and is already fully covered by
+                # TestCurrentTreeCompliance's own stdlib/restricted-egress checks.
+                if resolved_top not in _PROJECT_TOP_PACKAGES:
+                    continue
+                for alias in node.names:
+                    chain = [module_key, *_resolve_symbol_chain(resolved, alias.name, file_sources)]
+                    for earlier, later in zip(chain, chain[1:]):
+                        if not _hop_is_permitted(earlier, later):
+                            violations.append(
+                                f"{module_key}: symbol {alias.name!r} imported from "
+                                f"{resolved!r} resolves via {chain!r}, and hop "
+                                f"{earlier!r} -> {later!r} is not a permitted "
+                                f"ALLOWED_EDGES edge"
+                            )
+        self.assertEqual(violations, [], "\n".join(violations))
+
+
+class TestRealImportGraphCatchesForgedReexportChain(unittest.TestCase):
+    def test_real_import_graph_catches_forged_reexport_chain(self) -> None:
+        """Self-test proving the mechanism actually fires: `formats` has no
+        permitted edge to `providers.innertube` (`ALLOWED_EDGES["formats"] ==
+        {"domain"}`). A synthetic module that legitimately imports from
+        `formats` (permitted for `tools`) re-exporting a name whose *true* origin
+        is `providers.innertube` must be caught -- proving this check sees past
+        the one hop `TestCurrentTreeCompliance`'s own per-file scan cannot."""
+        file_sources = {
+            "formats": "from providers.innertube import InnertubeProvider as smuggled\n",
+            "providers.innertube": "class InnertubeProvider:\n    pass\n",
+        }
+        chain = ["tools", *_resolve_symbol_chain("formats", "smuggled", file_sources)]
+        self.assertEqual(chain, ["tools", "formats", "providers.innertube"])
+        violations = [
+            (earlier, later)
+            for earlier, later in zip(chain, chain[1:])
+            if not _hop_is_permitted(earlier, later)
+        ]
+        self.assertEqual(violations, [("formats", "providers.innertube")])
+
+
 class TestStdlibCheckAgainstCommittedPerLegLists(unittest.TestCase):
     def test_stdlib_check_against_committed_per_leg_lists(self) -> None:
         # The two lists must genuinely differ -- guards against cycle 5's own bug
