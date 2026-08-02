@@ -146,6 +146,51 @@ class TestLanguageUnavailable(unittest.TestCase):
         self.assertEqual(outcome.status, domain.Status.LANGUAGE_UNAVAILABLE)
         self.assertEqual(outcome.payload["availableLanguages"], ["de", "en"])
 
+    def test_capped_languages_without_track_id_returns_language_unavailable(self) -> None:
+        """AC-3 residual gap (fix2): `validate_languages()` collapses "no
+        `languages` supplied" and "cap violated" (>10 entries) into the same `[]`
+        -- `get_transcript.py` must recover the distinction from the raw
+        argument and reject a cap-violating request the same way as a
+        non-matching one, instead of silently falling through to the AC-2
+        default-invocation tiers (which would otherwise resolve `default_track`
+        here and return `status: ok`)."""
+        video_id = domain.VideoId("dQw4w9WgXcQ")
+        default_track = _track("de", "manual", is_default=True)
+        session = FakeSession(_listing([default_track], default_audio_language="de"))
+        provider = FakeProvider(normalize_result=video_id, session=session)
+
+        outcome = get_transcript.handle(
+            provider,
+            _deadline(),
+            {"video": "dQw4w9WgXcQ", "languages": [f"l{i}" for i in range(11)]},
+        )
+
+        self.assertEqual(outcome.status, domain.Status.LANGUAGE_UNAVAILABLE)
+        self.assertEqual(outcome.payload["availableLanguages"], ["de"])
+
+    def test_capped_languages_with_track_id_still_resolves_via_track_id(self) -> None:
+        """AC-5: `trackId` takes precedence over a capped `languages` list when
+        both are supplied -- the cap violation must not block a valid
+        `trackId`-only resolution."""
+        video_id = domain.VideoId("dQw4w9WgXcQ")
+        track = _track("en")
+        transcript = domain.Transcript(segments=make_segments(2))
+        session = FakeSession(_listing([track]), transcripts={track.track_id: transcript})
+        provider = FakeProvider(normalize_result=video_id, session=session)
+
+        outcome = get_transcript.handle(
+            provider,
+            _deadline(),
+            {
+                "video": "dQw4w9WgXcQ",
+                "languages": [f"l{i}" for i in range(11)],
+                "trackId": track.track_id,
+            },
+        )
+
+        self.assertEqual(outcome.status, domain.Status.OK)
+        self.assertIs(outcome.payload["resolved_track"], track)
+
     def test_available_languages_capped_at_fifty(self) -> None:
         video_id = domain.VideoId("dQw4w9WgXcQ")
         tracks = [_track(f"l{i:03d}") for i in range(60)]

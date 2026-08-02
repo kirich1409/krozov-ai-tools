@@ -77,7 +77,17 @@ def _handle_fresh(provider: TranscriptProvider, deadline: Deadline, args: Dict[s
         # -- `provider.open` must not be called at all here.
         return ToolOutcome(status=Status.VIDEO_NOT_FOUND)
 
-    languages = validate_languages(args.get("languages"))
+    raw_languages = args.get("languages")
+    languages = validate_languages(raw_languages)
+    # AC-3: a genuinely cap-violated `languages` list (>10 entries, or an entry
+    # >20 chars) validates down to `[]`, identically to "no `languages` supplied
+    # at all" -- `validate_languages()` itself doesn't distinguish the two (see
+    # its own docstring). This flag recovers the distinction here, from the raw,
+    # unvalidated argument, so a cap violation can be rejected the same way as a
+    # non-matching language (AC-3) instead of silently falling through to the
+    # AC-2 default-invocation tiers. A `None` or already-empty `raw_languages` is
+    # legitimately "no languages requested" and leaves this `False`.
+    languages_capped = isinstance(raw_languages, (list, tuple)) and len(raw_languages) > 0 and not languages
     track_id = args.get("trackId")
     fmt = args.get("format")
     if fmt not in FORMATS:
@@ -89,6 +99,7 @@ def _handle_fresh(provider: TranscriptProvider, deadline: Deadline, args: Dict[s
         deadline,
         video_id,
         languages=languages,
+        languages_capped=languages_capped,
         track_id=track_id,
         fmt=fmt,
         include_timestamps=include_timestamps,
@@ -122,6 +133,7 @@ def _handle_with_cursor(
         deadline,
         VideoId(fields.video_id),
         languages=None,
+        languages_capped=False,
         track_id=fields.track_id,
         fmt=fields.format,
         include_timestamps=fields.include_timestamps,
@@ -135,6 +147,7 @@ def _resolve_and_paginate(
     video_id: VideoId,
     *,
     languages: Optional[List[str]],
+    languages_capped: bool,
     track_id: Optional[str],
     fmt: str,
     include_timestamps: bool,
@@ -149,7 +162,16 @@ def _resolve_and_paginate(
         # is never called.
         return ToolOutcome(status=Status.NO_TRANSCRIPT)
 
-    resolved = select_track(listing, languages=languages, track_id=track_id)
+    if languages_capped and track_id is None:
+        # AC-3/AC-5: a cap-violated `languages` list is rejected the same way as
+        # a non-matching one -- but only when there's no `trackId` to fall back
+        # to (AC-5: `trackId` still takes precedence over a capped `languages`
+        # list when both are supplied). Short-circuit `select_track` entirely by
+        # forcing the same "no track resolved" branch below, rather than
+        # duplicating its `availableLanguages` construction.
+        resolved = None
+    else:
+        resolved = select_track(listing, languages=languages, track_id=track_id)
     if resolved is None:
         # AC-3/AC-5: sorted, deduped languageCode list from the freshly resolved
         # tracks, capped at AC-1's shared 50-entry limit.
