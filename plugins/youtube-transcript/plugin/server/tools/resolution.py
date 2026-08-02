@@ -79,7 +79,13 @@ def select_track(
        than falling through to tiers 2-5 -- so the caller (AC-5) can map that
        directly to `language_unavailable` instead of silently resolving a
        different track than the one explicitly requested.
-    2. The caller's `languages` preference list (AC-3).
+    2. The caller's `languages` preference list (AC-3). If `languages` was
+       supplied (non-empty) and matches no track, this is likewise a hard stop:
+       `None` is returned immediately, the same as tier 1's no-match case --
+       tiers 3-5 are **not** consulted in this case (AC-3: "It does NOT silently
+       fall back to another language."). Tiers 3-5 below only ever run when
+       `languages` was NOT supplied at all (empty/`None`) -- AC-2's own
+       "called with no languages/trackId/format params" default-invocation case.
     3. A track whose `language_code` matches `listing.default_audio_language`.
     4. A track upstream marks as the default caption track (`is_default=True`),
        independent of tier 3's signal.
@@ -89,7 +95,9 @@ def select_track(
 
     A `default_audio_language` of `None` and the absence of any `is_default=True`
     track are both valid, non-error states: tiers 3/4 are silently skipped, not
-    raised as an error, falling through to tier 5 (AC-2).
+    raised as an error, falling through to tier 5 (AC-2) -- but only on the
+    no-`languages`-supplied path; see tier 2 above for the `languages`-supplied
+    hard-stop case.
     """
     if track_id is not None:
         parsed = parse_track_id(track_id)
@@ -104,9 +112,10 @@ def select_track(
     sorted_tracks = sort_tracks(listing.tracks)
 
     if languages:
-        match = _match_languages(sorted_tracks, languages)
-        if match is not None:
-            return match
+        # AC-3: `languages` was explicitly supplied and non-empty -- this tier
+        # is a hard stop. A match returns immediately; a non-match returns
+        # `None` immediately, without falling through to tiers 3-5 below.
+        return _match_languages(sorted_tracks, languages)
 
     if listing.default_audio_language is not None:
         for track in sorted_tracks:

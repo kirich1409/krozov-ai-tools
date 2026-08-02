@@ -19,11 +19,10 @@ host, or after an `@` userinfo separator) rather than only as the actual host.
 member of the allowlist under exact equality.
 """
 
-import re
 from typing import Optional
 from urllib.parse import parse_qs, urlsplit
 
-from domain import VideoId
+from domain import VIDEO_ID_PATTERN, VideoId
 
 # AC-6's allowlist -- `youtu.be` doubles as both a host and (via its path) the ID
 # carrier for that one form.
@@ -45,7 +44,8 @@ _PATH_PREFIXES = ("/shorts/", "/live/", "/embed/")
 
 # AC-6's post-normalization validation pattern -- applied to whatever candidate ID
 # extraction above produced, regardless of which input form it came from.
-_VIDEO_ID_PATTERN = re.compile(r"^[A-Za-z0-9_-]{11}$")
+# `domain.VIDEO_ID_PATTERN` is the single, `domain/`-owned copy (acceptance-fix
+# pass) -- this module no longer maintains its own.
 
 
 def _extract_candidate(value: str) -> Optional[str]:
@@ -88,6 +88,6 @@ def normalize(value: str) -> Optional[VideoId]:
     candidate = _extract_candidate(value)
     if candidate is None:
         return None
-    if not _VIDEO_ID_PATTERN.match(candidate):
+    if not VIDEO_ID_PATTERN.match(candidate):
         return None
     return VideoId(value=candidate)

@@ -28,7 +28,12 @@ _OTHER_DOMAIN_FAILURE_STATUS = {
 
 def outcome_from_error(exc: DomainFailure) -> ToolOutcome:
     if isinstance(exc, ProviderError):
-        return ToolOutcome(status=exc.status)
+        # AC-22: thread the real upstream `Retry-After` value (if any) into the
+        # payload under the exact key `protocol/envelope.py::build()` already
+        # reads (`retry_after_seconds`) -- otherwise `RateLimited.retry_after`
+        # never reaches the wire and AC-22's clamp is permanently dead code.
+        payload = {"retry_after_seconds": exc.retry_after} if exc.retry_after is not None else {}
+        return ToolOutcome(status=exc.status, payload=payload)
     for exc_type, status in _OTHER_DOMAIN_FAILURE_STATUS.items():
         if isinstance(exc, exc_type):
             return ToolOutcome(status=status)

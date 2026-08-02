@@ -149,12 +149,35 @@ class TrackListing:
     default_audio_language: Optional[str]
 
 
+# AC-6's video ID shape -- the single, `domain/`-owned copy of this pattern.
+# `providers/video_ref.py` and `tools/cursor.py` each previously maintained their
+# own independent copy of this exact regex (both already import from `domain/`
+# regardless, per `ALLOWED_EDGES`, so there was no boundary reason for the
+# duplication) -- consolidated here (acceptance-fix pass, security-expert finding)
+# so the AC-6 pattern has exactly one source of truth instead of three modules
+# needing to stay in sync by convention.
+VIDEO_ID_PATTERN = re.compile(r"^[A-Za-z0-9_-]{11}$")
+
+
 @dataclass(frozen=True)
 class VideoId:
     """An already-normalized, AC-6-validated video identifier -- never the caller's
-    raw `video` string."""
+    raw `video` string.
+
+    `__post_init__` enforces the AC-6 pattern structurally (mirroring
+    `TrackDescriptor.__post_init__` above), rather than relying on both of this
+    type's two construction call sites (`providers/video_ref.py`,
+    `tools/get_transcript.py::_handle_with_cursor`) to each validate before
+    constructing -- acceptance-fix pass, security-expert finding: `value` feeds
+    unencoded into an outbound URL string (`providers/innertube.py`'s
+    `_WATCH_PAGE_URL.format(...)`), so a future third construction site skipping
+    that convention would otherwise have no structural guard at all."""
 
     value: str
+
+    def __post_init__(self) -> None:
+        if not VIDEO_ID_PATTERN.match(self.value):
+            raise TrackFieldInvalid("VideoId value failed the AC-6 pattern")
 
 
 @dataclass(frozen=True)

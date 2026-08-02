@@ -92,12 +92,14 @@ class TestSelectTrackTiers(unittest.TestCase):
         self.assertIs(result, wanted)
 
     def test_tier3_upstream_default_track(self) -> None:
-        """With no `default_audio_language` signal and no `languages` entry
-        matching any track, the `is_default=True` track wins over the
-        alphabetically-first fallback (isolating this tier from tier 2's
-        `languages` precedence -- see
-        `test_language_preference_beats_default_signal_tracks` for that
-        interaction)."""
+        """With no `default_audio_language` signal and no `languages` supplied
+        at all, the `is_default=True` track wins over the alphabetically-first
+        fallback (isolating this tier from tier 2's `languages` precedence --
+        see `test_language_preference_beats_default_signal_tracks` for that
+        interaction). Deliberately no `languages` argument here (not even a
+        non-matching one): since the AC-3 fix, a non-empty `languages` that
+        matches nothing is itself a hard stop (`None`) and would never reach
+        this tier -- see `test_language_mismatch_is_hard_stop_no_fallback`."""
         wanted = _track("ja", "manual", is_default=True)
         listing = _listing(
             [
@@ -106,7 +108,7 @@ class TestSelectTrackTiers(unittest.TestCase):
             ],
             default_audio_language=None,
         )
-        result = select_track(listing, languages=["zz"])
+        result = select_track(listing)
         self.assertIs(result, wanted)
 
     def test_language_preference_beats_default_signal_tracks(self) -> None:
@@ -159,10 +161,13 @@ class TestSelectTrackTiers(unittest.TestCase):
 
     def test_tier5_fallback(self) -> None:
         """With every earlier tier's signal absent (no `track_id`, no
-        `default_audio_language`, no `is_default` track, no matching
-        `languages`), the fallback is the first manual track sorted by
+        `languages` supplied at all, no `default_audio_language`, no
+        `is_default` track), the fallback is the first manual track sorted by
         `language_code`, else the first auto-generated track sorted by
-        `language_code` -- exactly `sort_tracks()`'s own ordering."""
+        `language_code` -- exactly `sort_tracks()`'s own ordering. Deliberately
+        no `languages` argument here: since the AC-3 fix, a non-empty
+        `languages` that matches nothing is itself a hard stop and would never
+        reach tier 5 -- see `test_language_mismatch_is_hard_stop_no_fallback`."""
         listing = _listing(
             [
                 _track("zz", "auto"),
@@ -171,7 +176,7 @@ class TestSelectTrackTiers(unittest.TestCase):
             ],
             default_audio_language=None,
         )
-        result = select_track(listing, languages=["not-present"])
+        result = select_track(listing)
         self.assertIsNotNone(result)
         assert result is not None
         self.assertEqual((result.kind, result.language_code), ("manual", "aa"))
@@ -190,6 +195,25 @@ class TestSelectTrackTiers(unittest.TestCase):
     def test_select_track_empty_listing_returns_none(self) -> None:
         listing = _listing([], default_audio_language=None)
         self.assertIsNone(select_track(listing))
+
+    def test_language_mismatch_is_hard_stop_no_fallback(self) -> None:
+        """AC-3 regression: `languages` supplied (non-empty) and matching no
+        track is a hard stop -- `select_track` must return `None` immediately,
+        even though both a `default_audio_language` match (tier 3) and an
+        `is_default=True` track (tier 4) are present and would otherwise
+        resolve successfully. AC-3's own text: "If nothing matches, the
+        response returns status: 'language_unavailable' ... It does NOT
+        silently fall back to another language." Before this fix,
+        `select_track` fell through to tiers 3/4/5 here and incorrectly
+        returned the `default_audio_language`/`is_default` track instead of
+        `None`."""
+        default_and_is_default_track = _track("de", "manual", is_default=True)
+        listing = _listing(
+            [default_and_is_default_track, _track("en", "manual")],
+            default_audio_language="de",
+        )
+        result = select_track(listing, languages=["xx"])
+        self.assertIsNone(result)
 
     def test_both_default_signals_absent_tier_skipped(self) -> None:
         """`default_audio_language is None` and no track has `is_default=True` is

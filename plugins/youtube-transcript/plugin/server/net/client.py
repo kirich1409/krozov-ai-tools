@@ -136,6 +136,18 @@ class Response:
 # boundary; `providers/innertube.py` (T-10) is the single place translating each of
 # these into a `ProviderError` subclass (which *is* a `DomainFailure`) before
 # anything crosses further out to `tools/`/`protocol/`.
+#
+# A `BlockedUpstream` member previously lived here but was removed
+# (acceptance-fix pass, coverage-audit gap-1): `net/client.py` never detects a
+# consent-wall/bot-check response itself -- it returns a plain `Response` for
+# any non-redirect/429/5xx status (including 403), by design (plan.md line 141:
+# "`blocked_by_provider`'s discriminator ... is the same class of gap[, implemented
+# as an isolated function]" scoped to `providers/innertube.py`, not this module).
+# `providers/innertube.py::_looks_blocked_by_body`/`_enforce_playability_gate`'s
+# bot-check `reason` string are the actual, sole discriminators, both raising
+# `BlockedByProvider` directly -- never routing through this module's exception
+# set at all. Keeping an unraised `BlockedUpstream` here was dead code with no
+# real network-layer signal behind it, not a missing test.
 
 
 class NetError(Exception):
@@ -160,10 +172,6 @@ class Throttled(NetError):  # noqa: N818
 
 class PolicyRejected(NetError):  # noqa: N818
     """Scheme/host allowlist rejection, or a redirect (AC-19's boundary)."""
-
-
-class BlockedUpstream(NetError):  # noqa: N818
-    """A consent-wall/bot-check response shape (T-10's discriminator)."""
 
 
 class MalformedUpstream(NetError):  # noqa: N818

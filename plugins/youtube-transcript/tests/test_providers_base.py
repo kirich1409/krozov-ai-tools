@@ -15,6 +15,7 @@ import _helpers  # type: ignore[import-not-found]  # noqa: F401
 import domain
 import providers.base as providers_base
 import tools as tools_module
+from protocol import envelope
 
 
 class TestTrackIdCodec(unittest.TestCase):
@@ -112,6 +113,40 @@ class TestOutcomeFromErrorTotality(unittest.TestCase):
         self.assertEqual(deadline_outcome.status, domain.Status.TRANSPORT_ERROR)
         cursor_outcome = tools_module.outcome_from_error(domain.CursorInvalid("x"))
         self.assertEqual(cursor_outcome.status, domain.Status.UPSTREAM_CHANGED)
+
+
+class TestOutcomeFromErrorRetryAfter(unittest.TestCase):
+    """Regression test for the acceptance-fix pass (AC-22): `RateLimited.retry_after`
+    must survive `outcome_from_error()` and reach `envelope.build()`'s clamp, not be
+    silently dropped by an empty payload. Exercises the real pipeline end-to-end
+    (`RateLimited(retry_after=N)` -> `outcome_from_error` -> `envelope.build`), not
+    just `envelope.build()` constructed directly with the payload already populated
+    (`test_envelope.py`'s own coverage never exercises `outcome_from_error` at all,
+    so it would not have caught this bug)."""
+
+    def test_retry_after_threaded_through_to_wire_clamp(self) -> None:
+        exc = providers_base.RateLimited("rate limited (429)", retry_after=3600)
+        outcome = tools_module.outcome_from_error(exc)
+        self.assertEqual(outcome.payload.get("retry_after_seconds"), 3600)
+
+        result = envelope.build(outcome)
+        # AC-22's ceiling: an upstream value above 300 clamps to 300, not the
+        # fixed `STATUS_POLICY` default of 30 that a dropped payload would
+        # silently fall back to.
+        self.assertEqual(result["retryAfterSeconds"], 300)
+
+    def test_retry_after_absent_falls_back_to_status_policy_default(self) -> None:
+        """When upstream sent no `Retry-After` at all (`retry_after=None`), the
+        payload stays empty and `envelope.build()` legitimately falls back to
+        `STATUS_POLICY`'s fixed default -- this is not the bug case, kept as a
+        contrast so the positive case above can't pass by accident (e.g. a
+        change that always populates a default retry_after would break this)."""
+        exc = providers_base.RateLimited("rate limited (429)")
+        outcome = tools_module.outcome_from_error(exc)
+        self.assertEqual(outcome.payload, {})
+
+        result = envelope.build(outcome)
+        self.assertEqual(result["retryAfterSeconds"], 30)
 
 
 if __name__ == "__main__":

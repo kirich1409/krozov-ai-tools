@@ -7,9 +7,9 @@ source = ["plugins/youtube-transcript/plugin/server"]
 
 [tool.coverage.report]
 show_missing = true
-# No tests exist yet (T-1 only creates the package skeleton) -- this threshold is a
-# placeholder mirroring maven-mcp's shape, to be revisited once the suite has a
-# track record, same as maven-mcp's own note.
+# Placeholder mirroring maven-mcp's shape (set before this suite had a track
+# record in CI) -- revisit upward once coverage has been observed over a few PRs,
+# same as maven-mcp's own note.
 fail_under = 75
 
 [tool.mypy]

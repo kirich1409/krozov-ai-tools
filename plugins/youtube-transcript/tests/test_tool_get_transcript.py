@@ -125,6 +125,27 @@ class TestLanguageUnavailable(unittest.TestCase):
         # one entry, sorted alphabetically.
         self.assertEqual(outcome.payload["availableLanguages"], ["de", "en", "fr"])
 
+    def test_explicit_language_mismatch_does_not_fall_back_to_default_track(self) -> None:
+        """AC-3 regression: an explicit, non-matching `languages` request must
+        return `language_unavailable`, never silently falling back to a track
+        resolved via `default_audio_language`/`is_default` (AC-3: "does NOT
+        silently fall back to another language"). Fixture deliberately has
+        both a `default_audio_language` match and an `is_default=True` track
+        so that, before this fix, `select_track` would have resolved one of
+        those instead of returning `None`."""
+        video_id = domain.VideoId("dQw4w9WgXcQ")
+        default_track = _track("de", "manual", is_default=True)
+        other_track = _track("en", "manual")
+        session = FakeSession(_listing([default_track, other_track], default_audio_language="de"))
+        provider = FakeProvider(normalize_result=video_id, session=session)
+
+        outcome = get_transcript.handle(
+            provider, _deadline(), {"video": "dQw4w9WgXcQ", "languages": ["xx"]}
+        )
+
+        self.assertEqual(outcome.status, domain.Status.LANGUAGE_UNAVAILABLE)
+        self.assertEqual(outcome.payload["availableLanguages"], ["de", "en"])
+
     def test_available_languages_capped_at_fifty(self) -> None:
         video_id = domain.VideoId("dQw4w9WgXcQ")
         tracks = [_track(f"l{i:03d}") for i in range(60)]

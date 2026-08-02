@@ -24,10 +24,9 @@ needed. Stdlib only (`base64`, `json`).
 
 import base64
 import json
-import re
 from dataclasses import dataclass
 
-from domain import FORMATS, MAX_SEGMENTS, CursorInvalid
+from domain import FORMATS, MAX_SEGMENTS, VIDEO_ID_PATTERN, CursorInvalid
 from providers.base import parse_track_id
 
 # Cursor string longer than this is rejected before any decode work at all --
@@ -45,12 +44,12 @@ _EXPECTED_KEYS = frozenset(
     {_VIDEO_ID_KEY, _TRACK_ID_KEY, _FORMAT_KEY, _INCLUDE_TIMESTAMPS_KEY, _SEGMENT_INDEX_KEY}
 )
 
-# AC-6's video ID pattern, restated here rather than imported: `providers/video_ref.py`'s
-# copy is a private module attribute (`_VIDEO_ID_PATTERN`), and `tools/` has no
-# permitted edge to `providers.video_ref` in the first place (only
-# `providers.base`, ALLOWED_EDGES) -- so this module owns its own compiled
-# pattern rather than reaching for either.
-_VIDEO_ID_PATTERN = re.compile(r"^[A-Za-z0-9_-]{11}$")
+# AC-6's video ID pattern: `domain.VIDEO_ID_PATTERN` is the single, `domain/`-owned
+# copy (acceptance-fix pass, consolidated from three independent copies --
+# `providers/video_ref.py`'s prior copy was a private module attribute, and
+# `tools/` has no permitted edge to `providers.video_ref` in the first place
+# (only `providers.base`, ALLOWED_EDGES); `domain/` is the one package every
+# in-project module can already reach, so it's the correct single owner).
 
 
 @dataclass(frozen=True)
@@ -109,7 +108,7 @@ def decode(raw: str) -> CursorFields:
     segment_index = parsed[_SEGMENT_INDEX_KEY]
 
     # 4. `videoId` against the AC-6 regex.
-    if not isinstance(video_id, str) or not _VIDEO_ID_PATTERN.match(video_id):
+    if not isinstance(video_id, str) or not VIDEO_ID_PATTERN.match(video_id):
         raise CursorInvalid("cursor videoId failed the AC-6 pattern")
 
     # 5. `segmentIndex` non-negative and below MAX_SEGMENTS. `bool` is a

@@ -68,7 +68,6 @@ from domain import (
     sanitize_text,
 )
 from net.client import (
-    BlockedUpstream,
     MalformedUpstream,
     NetError,
     PolicyRejected,
@@ -188,7 +187,6 @@ _NET_ERROR_TO_PROVIDER_ERROR: Dict[Type[NetError], Type[ProviderError]] = {
     TransportFailed: TransportError,
     Throttled: RateLimited,
     PolicyRejected: UpstreamChanged,
-    BlockedUpstream: BlockedByProvider,
     MalformedUpstream: UpstreamChanged,
 }
 

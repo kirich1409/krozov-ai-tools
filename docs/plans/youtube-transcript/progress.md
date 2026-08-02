@@ -36,6 +36,21 @@
 ## Learnings
 <!-- Дописывать по строке на завершённую задачу: неожиданности, подводные камни, решения,
      принятые по ходу реализации. Это память, переживающая сброс контекста. -->
+- Acceptance-fix pass (2026-08-02): `/acceptance` found `select_track()`'s tier-2 `languages`
+  fallthrough violated AC-3 ("does NOT silently fall back to another language") — a supplied,
+  non-empty `languages` list matching no track fell through to tiers 3/4/5 instead of returning
+  `None`. Fixed: tier 2 is now a hard stop (match returns immediately, non-match returns `None`
+  immediately, no fallthrough). **Corrects T-14's Learnings entry below**, which described this
+  as intentional ("`select_track`'s tier-5 fallback means an 11-entry (or any non-matching)
+  `languages` list ALONE can never produce `language_unavailable`") — that claim is no longer
+  true for a genuinely non-matching, well-formed `languages` list (now hard-stops correctly);
+  it remains true only for the separate, still-open `validate_languages()` cap-collapse case
+  (an 11+-entry or over-length-entry list is normalized to `[]` *before* reaching `select_track`,
+  which cannot distinguish "cap violated" from "no `languages` supplied" — code-reviewer's
+  literal Issue 1 finding, out of scope for this fix pass, left as a follow-up). Also fixed in
+  the same pass: `outcome_from_error()` dropped `RateLimited.retry_after` before it reached
+  `envelope.build()`'s AC-22 clamp (now threaded through via the payload's `retry_after_seconds`
+  key). See `swarm-report/youtube-transcript-report-acceptance-fix.md` for the full receipt.
 - T-16: plugin docs (`plugins/youtube-transcript/CLAUDE.md`/`AGENTS.md`/`README.md`) written mirroring `maven-mcp`'s shape. `bash scripts/validate.sh --check-tag 0.27.0` — **green, all checks passed** (real output, see report file), confirming `server.py`'s `SERVER_VERSION`/`USER_AGENT` (0.27.0) now that T-13b has created the file (`--check-tag` was deliberately deferred here from T-P1, per tasks.md). Full test suite: 243 tests, OK (skipped=3, the gated live canary) — up from T-14's 240 (the +3 are T-15's `test_live_canary.py` cases, landed after T-14's count was taken; this task's own changes are doc-only, no test files touched). Coverage: **97%** (`TOTAL 1119 stmts, 35 miss`), `fail_under=75` satisfied with large margin, confirmed unchanged after doc-only edits. `ruff check` and `mypy` both clean (real runs, this pass).
   - **`plugin-dev:plugin-validator` — confirmed NOT AVAILABLE in this environment.** Checked available agent types (not listed) and both `.claude/settings.json`/`~/.claude/settings.json` `enabledPlugins` (plugin-dev present only in the marketplace cache, never enabled). Recorded as a blocking human-owned item above — do not read this task as having silently skipped it.
   - **`docs/PLUGIN-STANDARDS.md` §10 pre-release checklist, walked manually for both plugins** (real checks run, this pass, not asserted from memory):

@@ -133,6 +133,37 @@ class TestTrackDescriptorValidation(unittest.TestCase):
             )
 
 
+class TestVideoIdValidation(unittest.TestCase):
+    """Regression test for the acceptance-fix pass (security-expert finding):
+    `VideoId` previously had no `__post_init__` validation at all -- the AC-6
+    `^[A-Za-z0-9_-]{11}$` pattern held only by convention at its two construction
+    call sites (`providers/video_ref.py`, `tools/get_transcript.py`), not
+    structurally on the type itself. Mirrors `TestTrackDescriptorValidation`
+    above."""
+
+    def test_valid_value_accepted(self) -> None:
+        video_id = domain.VideoId("dQw4w9WgXcQ")
+        self.assertEqual(video_id.value, "dQw4w9WgXcQ")
+
+    def test_wrong_length_rejected(self) -> None:
+        with self.assertRaises(domain.TrackFieldInvalid):
+            domain.VideoId("short")
+
+    def test_invalid_character_rejected(self) -> None:
+        # The exact hostile value the security-expert artifact verified was
+        # previously accepted unvalidated (`"x&extra=1#frag"` truncated to shape).
+        with self.assertRaises(domain.TrackFieldInvalid):
+            domain.VideoId("x&extra=1#")
+
+    def test_uses_shared_domain_pattern(self) -> None:
+        # AC-6 pattern consolidation: `providers/video_ref.py` and
+        # `tools/cursor.py` both previously maintained their own independent copy
+        # of this regex -- now both import `domain.VIDEO_ID_PATTERN`, the single
+        # source of truth `VideoId.__post_init__` itself also uses.
+        self.assertTrue(domain.VIDEO_ID_PATTERN.match("dQw4w9WgXcQ"))
+        self.assertIsNone(domain.VIDEO_ID_PATTERN.match("short"))
+
+
 class TestEncodeReserveDerivation(unittest.TestCase):
     def test_encode_reserve_is_derived_in_domain(self) -> None:
         # Both operands importable directly from within domain/ itself (cycle 8) --

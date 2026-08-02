@@ -217,8 +217,17 @@ class TestRegistryCallSafetyNetBuildsGenericTransportError(unittest.TestCase):
             raise domain.CursorInvalid("forged cursor")
 
         reg = _make_registry(raising_handler)
-        result = reg.call("stub_tool", {"x": "y"})
+        with self.assertLogs("protocol.registry", level="WARNING") as cm:
+            result = reg.call("stub_tool", {"x": "y"})
         self.assertEqual(result["status"], domain.Status.TRANSPORT_ERROR.value)
+
+        # coverage-audit gap-2: `registry.py:79`'s `logger.warning` on a
+        # DomainFailure escaping a handler was previously unasserted -- confirms
+        # it actually fires (not just that the generic transport_error status is
+        # correct).
+        full_log = "\n".join(cm.output)
+        self.assertIn("stub_tool", full_log)
+        self.assertIn("CursorInvalid", full_log)
 
 
 # --- Named check #3: non-DomainFailure exception becomes -32603 ------------------
@@ -230,11 +239,19 @@ class TestNonDomainExceptionBecomes32603(unittest.TestCase):
             raise RuntimeError("a genuine bug, not a domain-modeled failure")
 
         reg = _make_registry(raising_handler)
-        response = dispatch.handle_message(reg, _tools_call_message("stub_tool", {"x": "y"}))
+        with self.assertLogs("protocol.dispatch", level="ERROR") as cm:
+            response = dispatch.handle_message(reg, _tools_call_message("stub_tool", {"x": "y"}))
         assert response is not None
 
         self.assertNotIn("result", response)
         self.assertEqual(response["error"]["code"], -32603)
+
+        # coverage-audit gap-2: `dispatch.py:110`'s `logger.exception` call on the
+        # non-DomainFailure escape path was previously unasserted -- confirms it
+        # actually fires (not just that the -32603 response shape is correct).
+        full_log = "\n".join(cm.output)
+        self.assertIn("tools/call", full_log)
+        self.assertIn("RuntimeError", full_log)
 
 
 class TestRegistryCallPropagatesNonDomainFailure(unittest.TestCase):
@@ -348,13 +365,19 @@ class TestServeStdioParseErrorReturnsMinus32700(unittest.TestCase):
         stdin = io.StringIO("not valid json at all\n")
         stdout = io.StringIO()
 
-        dispatch.serve_stdio(reg, stdin, stdout)
+        with self.assertLogs("protocol.dispatch", level="WARNING") as cm:
+            dispatch.serve_stdio(reg, stdin, stdout)
 
         lines = [line for line in stdout.getvalue().splitlines() if line]
         self.assertEqual(len(lines), 1)
         response = json.loads(lines[0])
         self.assertEqual(response["error"]["code"], -32700)
         self.assertIsNone(response["id"])
+
+        # coverage-audit gap-2: `dispatch.py:180`'s `logger.warning` on invalid
+        # stdin JSON was previously unasserted -- confirms it actually fires.
+        full_log = "\n".join(cm.output)
+        self.assertIn("invalid JSON", full_log)
 
 
 class TestServeStdioSkipsBlankLines(unittest.TestCase):

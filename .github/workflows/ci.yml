@@ -11,6 +11,14 @@ on:
 permissions:
   contents: read
 
+# Rapid pushes to the same PR branch (force-push/fixup-commit cycles) would
+# otherwise queue overlapping full job sets rather than cancel the superseded
+# run (devops-expert acceptance finding). Scoped by ref, not by job, since this
+# is a workflow-level setting.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   validate-marketplace:
     runs-on: ubuntu-latest
@@ -246,6 +254,7 @@ jobs:
   # python-tests/ruff/mypy/coverage IDs.
   youtube-transcript-tests:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     strategy:
       matrix:
         python-version: ["3.9", "3.13"]
@@ -297,6 +306,7 @@ jobs:
 
   youtube-transcript-ruff:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
         with:
@@ -343,6 +353,7 @@ jobs:
 
   youtube-transcript-mypy:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
         with:
@@ -390,6 +401,7 @@ jobs:
 
   youtube-transcript-coverage:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
         with:
