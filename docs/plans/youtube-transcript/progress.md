@@ -18,7 +18,7 @@
 - [x] T-11 — `tools/list_transcript_tracks.py`
 - [x] T-12 — `tools/get_transcript.py`
 - [x] T-13b — `composition.py` + `server.py`
-- [ ] T-14 — Cross-cutting AC tests
+- [x] T-14 — Cross-cutting AC tests
 - [ ] T-15 — Live canary
 - [ ] T-16 — Plugin docs + final `validate.sh`/coverage pass
 - [x] T-P1 — Versioning and repo-doc generalization
@@ -34,6 +34,53 @@
 ## Learnings
 <!-- Дописывать по строке на завершённую задачу: неожиданности, подводные камни, решения,
      принятые по ходу реализации. Это память, переживающая сброс контекста. -->
+- T-14: cross-cutting AC suite closed — `test_no_file_writes.py` (in-process, cwd
+  pointed at an empty `tempfile.TemporaryDirectory()`, both tools dispatched
+  against a `FakeProvider`, directory listing asserted empty before/after);
+  `test_source_policy.py` gained 2 named ban-group tests (write primitives;
+  exec/eval/serialization primitives), both zero-violation on the real tree, no
+  prior offenders; `test_request_budget.py` (new) drives all 4 exact-request-count/
+  timing scenarios through `composition.build_provider(sleep=, jitter=)` +
+  `server.build_registry()` + real `handle_message` dispatch, never global `time`/
+  `random` monkeypatching, mirroring `test_net_client_resources.py`'s
+  `_ScriptedOpener`/`_FakeClock` pattern one layer up (patched at
+  `net.client._OPENER`, the one real network-egress seam) instead of mocking
+  `net.fetch` directly; `test_status_sweep.py` (new) proves reachability of all 13
+  `Status` members by construction (through the real `get_transcript`/
+  `list_transcript_tracks` handlers against `FakeProvider`/`FakeSession`), not by
+  grepping other test files; `test_domain.py` gained the corrected 4-direct-
+  children/13-leaf `DomainFailure` totality split; `test_import_boundaries.py`
+  gained a genuinely new symbol-level check (`_module_local_bindings`/
+  `_resolve_symbol_chain`) that follows `from X import NAME` through every
+  re-export hop to the name's true defining module and re-validates each hop
+  against `ALLOWED_EDGES` independently -- strictly stronger than
+  `TestCurrentTreeCompliance`'s existing per-file, module-prefix-only check (which
+  cannot see past one re-export hop); a self-test with a synthetic forged
+  re-export chain (`formats` re-exporting a name whose true origin is
+  `providers.innertube`) proves the mechanism actually fires. **AC-3's
+  11-language-cap dispatch test needed a deliberate design choice, not just a
+  literal reading of tasks.md's prose**: `tools/resolution.py::select_track`'s
+  tier-5 fallback means an 11-entry (or any non-matching) `languages` list ALONE
+  can never produce `language_unavailable` as long as the video has any caption
+  track at all -- it always falls back to the first available track (AC-2's own
+  documented behavior, and the same reason `test_tool_get_transcript.py`'s own
+  `TestLanguageUnavailable` uses an unmatched `trackId`, never `languages` alone,
+  to reach that status). `test_eleven_languages_rejected_as_domain_error_not_
+  schema_error` combines the 11-entry array with an intentionally-unmatched
+  `trackId` so the dispatched call legitimately resolves to `language_unavailable`
+  while still proving the real point: an 11-entry array never trips a JSON-RPC
+  `-32602` at the dispatch layer (`TOOL_SCHEMAS` declares no `maxItems`, by
+  design, and `_handle_tools_call` only ever validates required fields). AC-26's
+  new dispatch-level test reuses T-7's three adversarial fixture caption texts
+  verbatim through a stub `TranscriptProvider`/`FakeSession` single-segment
+  transcript, reading `response["result"]["content"][0]["text"]` verbatim with
+  zero test-side `json.dumps()` calls -- the expected recovered region accounts
+  for `formats/text.py`'s own documented single-segment render shape
+  (`f"{segment.text}\n"`, a trailing newline `test_envelope.py`'s pure-envelope
+  unit tests don't have to account for since they bypass `formats.encode`
+  entirely). 240 tests total (226 pre-existing + 14 new: the 13 named `check`
+  tests plus one self-test proving the import-graph mechanism actually fires),
+  full suite green, 97% coverage, ruff/mypy clean via pinned `uvx` versions.
 - T-1: package skeleton + pyproject.toml mirrored from maven-mcp; `[[tool.mypy.overrides]]`/`[tool.ruff.lint.per-file-ignores]` blocks intentionally omitted (empty placeholders would mirror maven-mcp findings that don't exist here) — add only when a real finding needs one.
 - T-2: `domain/` complete, 8/8 tests green. Working on `feature/youtube-transcript-plugin` branch (created after T-1/T-2 — retroactively fixes that T-1 had landed directly on `main` uncommitted, per project CLAUDE.md's worktree/branch PR workflow).
 - T-P2: 4 new named CI jobs added to `ci.yml` (`youtube-transcript-tests` matrix 3.9/3.13, `-ruff`, `-mypy`, `-coverage`), each with its own path-based change detector, mirroring maven-mcp's job shape exactly (job IDs prefixed to avoid collision, not generalized into a shared workflow — 2 plugins doesn't justify the abstraction cost). `release.yml` gained one new step (`working-directory: .`) running youtube-transcript's suite alongside maven-mcp's; the existing per-plugin-tag loop already reads `marketplace.json` generically so it needed no change. New `youtube-transcript-live-canary.yml` implements a real cache-based consecutive-failure counter (`actions/cache/restore` + `/save`, keyed by `github.run_id` with a `restore-keys` prefix, since cache entries are immutable per exact key) that fails loud only at 3 consecutive failures; `permissions: contents: read` only, so "fails loud" (not an opened issue) was the chosen escalation — an issue would need `issues: write`. It references T-15's not-yet-existing `test_live_canary.py`; verified empirically that `unittest discover -p <missing-pattern>` exits 5 ("NO TESTS RAN"), so the canary correctly fails (and the counter increments) until T-15 lands, rather than silently passing. `validate.sh` gained an L9 check (`check_workflow_permissions`) flagging any workflow file with no `permissions:` key anywhere (top-level or per-job) — a presence check only, not a least-privilege audit. `actionlint` run against all 5 workflow files: exit 0, no findings.
