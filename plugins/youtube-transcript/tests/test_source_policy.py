@@ -32,6 +32,13 @@ shared list with a single 'exactly one entry' assertion"):
    `_helpers.py`'s `mock_urlopen`). This ban's exclusion set is empty, not shared
    with (1)'s -- `test_opener_ban_excludes_nothing_under_plugin_server` asserts
    that directly.
+
+T-6b adds a third, narrower ban: the caller-identity-header literal
+(`_CALLER_IDENTITY_HEADER_PATTERN`) is banned in `net/client.py` alone (not the
+whole tree -- that literal is legitimate everywhere else, notably T-10's own
+`headers` dict). `net/client.py` no longer owns any default for that header (see
+its module docstring); this is a regression guard against a future change
+silently reintroducing one there.
 """
 
 import ast
@@ -200,6 +207,35 @@ class TestOpenerReferenceBannedOutsideNetClient(unittest.TestCase):
             for line_no, line in enumerate(source.splitlines(), start=1):
                 if _OPENER_ACCESS_PATTERN.search(line):
                     violations.append(f"{path}:{line_no}: {line.strip()!r}")
+        self.assertEqual(violations, [])
+
+
+# --- T-6b: the caller-identity-header literal ban, scoped to net/client.py only -
+#
+# `net/client.py` owns none of the decision about what identity string YouTube
+# sees on the wire (T-10 sets it explicitly on every leg's `headers` argument,
+# AC-12) -- this ban catches a future regression that reintroduces the literal
+# header-name string there, the "accidentally reintroduced a constant" class the
+# text-ban mechanism is actually good at (unlike an attribute-access pattern).
+# Scope is `net/client.py` alone, not the whole tree -- unlike the TLS-bypass-token
+# ban above, the literal is expected and legitimate everywhere ELSE in this
+# codebase (T-10's own headers dict, docs, this very file's docstring/pattern).
+_CALLER_IDENTITY_HEADER_PATTERN: Pattern[str] = re.compile("User" + "-Agent")
+
+
+class TestUserAgentLiteralBannedInNetClient(unittest.TestCase):
+    def test_user_agent_literal_banned_in_net_client(self) -> None:
+        # Self-check: matches the literal header-name string, case-sensitively,
+        # wherever it appears (code, comment, or docstring -- a blind text scan).
+        self.assertTrue(_CALLER_IDENTITY_HEADER_PATTERN.search('headers["User-Agent"] = ua'))
+        self.assertFalse(
+            _CALLER_IDENTITY_HEADER_PATTERN.search('headers["Accept-Encoding"] = "gzip"')
+        )
+
+        net_client_path = os.path.join(_SERVER_DIR, "net", "client.py")
+        with open(net_client_path, encoding="utf-8") as source_file:
+            source = source_file.read()
+        violations = find_pattern_matches(source, [_CALLER_IDENTITY_HEADER_PATTERN])
         self.assertEqual(violations, [])
 
 
