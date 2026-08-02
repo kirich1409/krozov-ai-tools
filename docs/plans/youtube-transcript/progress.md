@@ -19,7 +19,7 @@
 - [x] T-12 — `tools/get_transcript.py`
 - [x] T-13b — `composition.py` + `server.py`
 - [x] T-14 — Cross-cutting AC tests
-- [ ] T-15 — Live canary
+- [x] T-15 — Live canary
 - [ ] T-16 — Plugin docs + final `validate.sh`/coverage pass
 - [x] T-P1 — Versioning and repo-doc generalization
 - [x] T-P2 — CI workflows
@@ -34,6 +34,7 @@
 ## Learnings
 <!-- Дописывать по строке на завершённую задачу: неожиданности, подводные камни, решения,
      принятые по ходу реализации. Это память, переживающая сброс контекста. -->
+- T-15: live canary test — gated behind `YOUTUBE_TRANSCRIPT_LIVE_CANARY=1`, mirrors maven-mcp's pattern. **Live-network assertions unverified** — no egress in any sandbox this session had; skip-gate and CI discovery-pattern match with T-P2's workflow confirmed offline. Real verification is the same pending human-owned item T-P2 already tracks (manual `workflow_dispatch`).
 - T-14: cross-cutting AC suite closed — `test_no_file_writes.py` (in-process, cwd
   pointed at an empty `tempfile.TemporaryDirectory()`, both tools dispatched
   against a `FakeProvider`, directory listing asserted empty before/after);
