@@ -55,13 +55,28 @@ Each plugin's version lives in three places:
 | maven-mcp | `plugins/maven-mcp/plugin/.claude-plugin/plugin.json` (`version`), `.claude-plugin/marketplace.json` (its entry's `version`), `plugins/maven-mcp/plugin/server/server.py` (`SERVER_VERSION`, `USER_AGENT` derives from it) |
 | youtube-transcript | `plugins/youtube-transcript/plugin/.claude-plugin/plugin.json` (`version`), `.claude-plugin/marketplace.json` (its entry's `version`), `plugins/youtube-transcript/plugin/server/server.py` (`SERVER_VERSION`, `USER_AGENT` derives from it) |
 
-To release:
-1. Bump all three locations of the plugin(s) you are releasing to the new version. Plugins that are not being released keep their current version.
-2. Merge to `main`.
-3. Push a git tag matching that version: `git tag v0.9.0 && git push origin v0.9.0`.
-4. GitHub Actions (`.github/workflows/release.yml`) triggers on `v*` tags. **Tag `vX.Y.Z` releases exactly the plugins whose version is `X.Y.Z`**: `validate.sh --check-tag` verifies those plugins' three locations and logs a `SKIP:` line for every plugin on another version (a tag matching no plugin at all is an error), the Python suites of all plugins run, and a per-plugin tag `{plugin-name}--v{version}` is created **only for the released plugins**. Those per-plugin tags are what Claude Code uses to resolve `dependencies` semver ranges.
+**The release trigger is the per-plugin tag `<plugin>--v<version>`.** A unified `vX.Y.Z` tag releases nothing: `.github/workflows/release.yml` triggers on `*--v*` only, and `.github/workflows/legacy-tag-guard.yml` makes a `v*` push fail loudly instead of silently doing nothing. Historical `v*` tags stay as history.
 
-Consequence: two plugins can only be released under the same tag when they happen to stand on the same version. Making the per-plugin tag (`youtube-transcript--v0.1.0`) the release trigger itself is the next step; it is deferred until the `workflow_dispatch` dry-run exists, because that path cannot be tested before a tag is pushed.
+To release one plugin:
+1. Bump all three locations of that plugin to the new version. The other plugin is not touched.
+2. Merge to `main`. `gate` refuses a tag whose commit is not reachable from `origin/main`.
+3. Tag that commit and push the tag:
+   ```
+   git tag -a youtube-transcript--v0.2.0 -m "Release youtube-transcript 0.2.0"
+   git push origin youtube-transcript--v0.2.0
+   ```
+   The name must match `^[a-z0-9-]+--v[0-9]+\.[0-9]+\.[0-9]+$` and the plugin must be listed in `.claude-plugin/marketplace.json`; anything else fails in `gate`.
+4. `release.yml` then runs four jobs:
+   - **gate** — resolves plugin and version from the tag, verifies the tagged commit is reachable from `origin/main`, runs `validate.sh --check-tag <tag>` (asserting *that* plugin's three locations) and plain `validate.sh`, and runs every plugin's Python suite on 3.9.
+   - **pack** — only when `plugins/<plugin>/mcpb/manifest.template.json` exists; installs the pinned mcpb toolchain, runs the npm audit gate, builds the `.mcpb`, smoke-tests it, and exports its SHA-256 as a job output.
+   - **attest** — push events only; re-checks the downloaded bytes against `pack`'s checksum, then mints build provenance (`actions/attest`) *before* anything is published.
+   - **publish** — re-checks the bytes, then creates the GitHub Release titled `<plugin> <version>` with the `.mcpb` and `.mcpb.sha256` attached. A plugin without a bundle still gets a release, with no assets.
+
+That per-plugin tag is also what Claude Code resolves plugin `dependencies` semver ranges through, so it must never be moved or deleted after publication — a repository ruleset over `*--v*` forbids deletion and non-fast-forward updates. A botched release is recovered with a new patch version, not by re-pointing the tag (see `docs/PLUGIN-STANDARDS.md` §12).
+
+`workflow_dispatch` on `release.yml` is **always** a dry run: it runs `gate` and `pack` for the chosen plugin and can neither attest nor publish (there is deliberately no `dry_run` input). Use it before the first tag under a changed workflow.
+
+Scope of the ancestry check, stated honestly: it guards against a maintainer tagging an unreviewed commit by accident, not against a party with push access — the workflow that runs for a tag is the workflow *at the tagged commit*. It is not a security boundary.
 
 ## Worktrees
 

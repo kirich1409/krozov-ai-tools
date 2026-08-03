@@ -6,6 +6,16 @@
 #   bash scripts/validate.sh --check-tag 1.2.3  # + verify the plugins released by
 #                                               #   tag v1.2.3 (those standing on
 #                                               #   that version) are consistent
+#   bash scripts/validate.sh --check-tag youtube-transcript--v1.2.3
+#                                               # + verify that ONE named plugin's
+#                                               #   three version locations are at
+#                                               #   1.2.3
+#
+# The per-plugin form is what release.yml passes: with a per-plugin tag the
+# released plugin is named, so validation must assert that plugin specifically —
+# otherwise a tag naming one plugin passes on another plugin's version
+# coincidence. The argument is matched against two anchored patterns and nothing
+# else; a value matching neither is a hard error, never a prefix strip.
 #
 # Exit code: 0 if all checks pass, 1 if any error found.
 set -uo pipefail
@@ -147,6 +157,96 @@ check_semver() {
   done < <(jq -r '.plugins[] | [.name, .version, .source] | @tsv' "$MARKETPLACE")
 }
 
+# The three version locations of one plugin, factored out so the bare-version
+# form (check_tag_versions) and the per-plugin-tag form
+# (check_plugin_tag_versions) assert exactly the same things. $tag_label is only
+# used in messages: "v1.2.3" for the bare form, "plugin--v1.2.3" for the other.
+
+# Location 2: plugin.json.
+_check_tag_plugin_json() {
+  local name="$1" source="$2" version="$3" tag_label="$4"
+  local plugin_json="${source}/.claude-plugin/plugin.json"
+  if [ ! -f "$plugin_json" ]; then
+    fail "'$name' plugin.json not found at $plugin_json"
+    return
+  fi
+  local plugin_version
+  plugin_version=$(jq -r '.version' "$plugin_json")
+  if [ "$plugin_version" != "$version" ]; then
+    fail "'$name' plugin.json version \"$plugin_version\" does not match tag ${tag_label}"
+  else
+    ok "'$name' plugin.json version $plugin_version"
+  fi
+}
+
+# Location 3: bundled MCP server scripts — version constants must track the tag.
+# The script path is derived from each plugin.json mcpServers entry
+# (${CLAUDE_PLUGIN_ROOT} resolves to the plugin source dir). This is the
+# runtime that actually ships, so a stale SERVER_VERSION/USER_AGENT here is
+# silent version skew that the manifest checks cannot catch.
+_check_tag_server_constants() {
+  local name="$1" source="$2" version="$3" tag_label="$4"
+  local plugin_json="${source}/.claude-plugin/plugin.json"
+  [ -f "$plugin_json" ] || return
+  local arg script found sver
+  while IFS= read -r arg; do
+    [ -n "$arg" ] || continue
+    script=$(printf '%s' "$arg" | sed "s|\${CLAUDE_PLUGIN_ROOT}|${source}|g")
+    [ -f "$script" ] || continue
+    found=0
+    while IFS= read -r sver; do
+      found=1
+      if [ "$sver" != "$version" ]; then
+        fail "'$name' $script version constant \"$sver\" does not match tag ${tag_label}"
+      else
+        ok "'$name' $script version constant $sver"
+      fi
+    done < <(grep -oE '(SERVER_VERSION|USER_AGENT)[[:space:]]*=[[:space:]]*"[^"]*"' "$script" \
+               | grep -oE '[0-9]+\.[0-9]+\.[0-9]+')
+    if [ "$found" -eq 0 ]; then
+      fail "'$name' $script has no SERVER_VERSION/USER_AGENT version constant to verify against tag ${tag_label}"
+    fi
+  done < <(jq -r '
+    .mcpServers // {}
+    | to_entries[]
+    | select(.value.command | test("^python"))
+    | .value.args[]? | select(test("\\.py$"))
+  ' "$plugin_json")
+}
+
+# Per-plugin tag `<plugin>--v<version>` (the release trigger). Exactly one plugin
+# is named, so exactly that plugin is validated: a tag naming plugin A must not
+# pass because plugin B happens to stand on the same version. Three distinct
+# error classes, each with its own message: unknown plugin (raised here),
+# version mismatch (per location), unparseable tag (raised by the caller before
+# this function is reached — the name is never used to build a path until it has
+# matched the anchored pattern AND been found in marketplace.json).
+check_plugin_tag_versions() {
+  local plugin="$1" version="$2"
+  local tag="${plugin}--v${version}"
+  echo "--- L4: Plugin released by tag ${tag} ---"
+
+  local entry
+  entry=$(jq -r --arg n "$plugin" '.plugins[] | select(.name == $n) | [.version, .source] | @tsv' "$MARKETPLACE")
+  if [ -z "$entry" ]; then
+    fail "tag ${tag} names plugin '$plugin', which is not in $MARKETPLACE"
+    return
+  fi
+
+  local mkt_version source
+  IFS=$'\t' read -r mkt_version source <<< "$entry"
+
+  # Location 1: marketplace.json.
+  if [ "$mkt_version" != "$version" ]; then
+    fail "'$plugin' marketplace.json version \"$mkt_version\" does not match tag ${tag}"
+  else
+    ok "marketplace.json '$plugin' version $mkt_version"
+  fi
+
+  _check_tag_plugin_json "$plugin" "$source" "$version" "$tag"
+  _check_tag_server_constants "$plugin" "$source" "$version" "$tag"
+}
+
 # Plugin versions are independent: a tag vX.Y.Z releases exactly those plugins
 # whose marketplace.json version equals X.Y.Z. Plugins on another version are
 # not part of this release and are skipped -- loudly, because a silent skip is
@@ -176,52 +276,15 @@ check_tag_versions() {
     return
   fi
 
-  # plugin.json of the released plugins — data-driven from marketplace.json
+  # plugin.json and the bundled server constants of the released plugins —
+  # data-driven from marketplace.json, same two checks the per-plugin-tag form
+  # runs (see the helpers above).
   while IFS=$'\t' read -r name source; do
-    plugin_json="${source}/.claude-plugin/plugin.json"
-    if [ ! -f "$plugin_json" ]; then
-      fail "'$name' plugin.json not found at $plugin_json"
-      continue
-    fi
-    plugin_version=$(jq -r '.version' "$plugin_json")
-    if [ "$plugin_version" != "$version" ]; then
-      fail "'$name' plugin.json version \"$plugin_version\" does not match tag v${version}"
-    else
-      ok "'$name' plugin.json version $plugin_version"
-    fi
+    _check_tag_plugin_json "$name" "$source" "$version" "v${version}"
   done < <(jq -r --arg v "$version" '.plugins[] | select(.version == $v) | [.name, .source] | @tsv' "$MARKETPLACE")
 
-  # Bundled MCP server scripts — version constants must track the tag.
-  # The script path is derived from each plugin.json mcpServers entry
-  # (${CLAUDE_PLUGIN_ROOT} resolves to the plugin source dir). This is the
-  # runtime that actually ships, so a stale SERVER_VERSION/USER_AGENT here is
-  # silent version skew that the manifest checks above cannot catch.
   while IFS=$'\t' read -r name source; do
-    plugin_json="${source}/.claude-plugin/plugin.json"
-    [ -f "$plugin_json" ] || continue
-    while IFS= read -r arg; do
-      [ -n "$arg" ] || continue
-      script=$(printf '%s' "$arg" | sed "s|\${CLAUDE_PLUGIN_ROOT}|${source}|g")
-      [ -f "$script" ] || continue
-      found=0
-      while IFS= read -r sver; do
-        found=1
-        if [ "$sver" != "$version" ]; then
-          fail "'$name' $script version constant \"$sver\" does not match tag v${version}"
-        else
-          ok "'$name' $script version constant $sver"
-        fi
-      done < <(grep -oE '(SERVER_VERSION|USER_AGENT)[[:space:]]*=[[:space:]]*"[^"]*"' "$script" \
-                 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+')
-      if [ "$found" -eq 0 ]; then
-        fail "'$name' $script has no SERVER_VERSION/USER_AGENT version constant to verify against tag v${version}"
-      fi
-    done < <(jq -r '
-      .mcpServers // {}
-      | to_entries[]
-      | select(.value.command | test("^python"))
-      | .value.args[]? | select(test("\\.py$"))
-    ' "$plugin_json")
+    _check_tag_server_constants "$name" "$source" "$version" "v${version}"
   done < <(jq -r --arg v "$version" '.plugins[] | select(.version == $v) | [.name, .source] | @tsv' "$MARKETPLACE")
 }
 
@@ -378,6 +441,61 @@ check_workflow_permissions() {
   done
 }
 
+# ---------- L10: No Actions expressions inside run: bodies ----------
+#
+# An Actions expression inside a `run:` body is substituted into the script
+# TEXT before bash ever parses it, so quoting on the author's side cannot make
+# it safe -- a value containing a quote or a command substitution becomes
+# script source. Every workflow-controlled value must reach bash through `env:`
+# and be referenced as "$VAR".
+#
+# This check is the control, not the linter: measured during review, actionlint
+# flags `github.event.issue.title` in a run body but NOT `github.ref_name` in
+# the identical position, so the rule holds only as far as it is mechanised
+# here.
+#
+# Detection is indentation-based rather than a full YAML parse (this repo ships
+# no YAML library): a `run:` whose value starts with a block indicator opens a
+# body, and every deeper-indented line belongs to it. An inline `run:` value is
+# scanned directly.
+
+check_run_interpolation() {
+  echo "--- L10: No Actions expressions inside run: bodies ---"
+  local dir=".github/workflows"
+  [ -d "$dir" ] || return
+  local wf hits
+  for wf in "$dir"/*.yml "$dir"/*.yaml; do
+    [ -f "$wf" ] || continue
+    hits=$(awk '
+      {
+        if (in_block) {
+          if ($0 ~ /^[[:space:]]*$/) next
+          match($0, /^[[:space:]]*/)
+          if (RLENGTH > base) {
+            if (index($0, "${{")) print FILENAME ":" FNR ":" $0
+            next
+          }
+          in_block = 0
+        }
+        if ($0 ~ /^[[:space:]]*#/) next
+        if ($0 ~ /^[[:space:]]*(-[[:space:]]+)?run:([[:space:]]|$)/) {
+          match($0, /^[[:space:]]*/); base = RLENGTH
+          rest = substr($0, index($0, "run:") + 4)
+          sub(/^[[:space:]]+/, "", rest)
+          if (rest ~ /^[|>]/) { in_block = 1; next }
+          if (index(rest, "${{")) print FILENAME ":" FNR ":" $0
+        }
+      }
+    ' "$wf")
+    if [ -z "$hits" ]; then
+      ok "$wf has no Actions expressions in run: bodies"
+    else
+      echo "$hits" >&2
+      fail "$wf interpolates an Actions expression into a run: body -- pass the value through env: and reference it as \"\$VAR\""
+    fi
+  done
+}
+
 # ---------- Entry point ----------
 
 main() {
@@ -406,9 +524,21 @@ main() {
   check_frontmatter
   check_field_types
   check_workflow_permissions
+  check_run_interpolation
 
+  # Two anchored patterns, tried in order; anything else is a hard error. Never
+  # a prefix strip: `${TAG#v}` on an attacker-chosen tag name yields whatever is
+  # left over, and the leftover then reaches jq and the filesystem. The
+  # per-plugin pattern is tried first because a bare version can never contain
+  # "--v", so the two are disjoint.
   if [ -n "$CHECK_TAG" ]; then
-    check_tag_versions "$CHECK_TAG"
+    if [[ "$CHECK_TAG" =~ ^([a-z0-9-]+)--v([0-9]+\.[0-9]+\.[0-9]+)$ ]]; then
+      check_plugin_tag_versions "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}"
+    elif [[ "$CHECK_TAG" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+      check_tag_versions "$CHECK_TAG"
+    else
+      fail "--check-tag value is neither a bare version (X.Y.Z) nor a per-plugin tag (<plugin>--vX.Y.Z): $CHECK_TAG"
+    fi
   fi
 
   echo ""

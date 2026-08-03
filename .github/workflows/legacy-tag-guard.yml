@@ -1,0 +1,57 @@
+name: Legacy tag guard
+
+# Releases moved to per-plugin tags (`<plugin>--v<semver>`). The old unified
+# form is no longer a trigger for `release.yml`, and that is the problem this
+# workflow exists to solve: pushing `v0.9.0` would otherwise do *nothing* --
+# no run, no error, no notification -- while the tag appears on GitHub and
+# looks exactly like a release that happened.
+#
+# Every release before 2026-08-03 used that form, it is what the Publishing
+# sections documented for months, and it is still present throughout the repo's
+# history, so it is what a maintainer or an agent will reach for from memory.
+# A loud failure is the whole point: this workflow never succeeds.
+#
+# It deliberately does not try to "helpfully" re-tag or trigger the real
+# release. Guessing which plugin a bare `v*` tag meant is exactly the ambiguity
+# that per-plugin tags removed.
+
+# `v[0-9]*`, not `v*`: the pattern matches the WHOLE tag name, so `v*` would
+# also match a future per-plugin tag like `video-tool--v1.0.0` and hang a
+# permanently red "this published nothing" check on a release that did publish.
+# The whole procedure rests on a red check meaning the release did not happen.
+# (`tags` and `tags-ignore` cannot be combined in one push trigger.)
+on:
+  push:
+    tags: ["v[0-9]*"]
+
+permissions: {}
+
+jobs:
+  refuse:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Refuse the retired tag form
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          # $TAG is only ever echoed through an env var, never interpolated
+          # into this script's text: git accepts shell metacharacters in tag
+          # names, and Actions expressions are substituted into the script
+          # source before bash ever sees it, so author-side quoting cannot
+          # help. (This comment says "Actions expressions" rather than showing
+          # the syntax because actionlint parses the literal form even inside
+          # a shell comment.)
+          echo "::error::Tag '${TAG}' uses the retired unified release form and triggered no release."
+          echo ""
+          echo "Releases are now triggered by a per-plugin tag:"
+          echo "    git tag -a youtube-transcript--v<version> -m 'Release youtube-transcript <version>'"
+          echo "    git push origin youtube-transcript--v<version>"
+          echo ""
+          echo "That tag is also what Claude Code resolves plugin 'dependencies' ranges through."
+          echo "Bump only the released plugin's three version locations; the other plugin is untouched."
+          echo ""
+          echo "This tag published nothing. Delete it and push the per-plugin form instead:"
+          echo "    git push origin :refs/tags/${TAG}"
+          exit 1
