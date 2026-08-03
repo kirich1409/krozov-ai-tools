@@ -4,10 +4,16 @@
 # Usage: scripts/pack-mcpb.sh [--expect-version <version>] [--stage-dir <path>]
 #
 # Produces dist/youtube-transcript-<version>.mcpb and its .sha256 checksum.
-# Staging is done from `git ls-files`, not from a filename glob copy: `cp`
-# dereferences symlinks, so a tracked symlink would silently become a regular
-# file with foreign content inside the bundle. See docs/plans for the full
+# Staging is done from `git ls-files -s`, not from a filename glob copy: the
+# file list, the mode *and* the bytes all come from the index. Bytes are read
+# with `git cat-file blob <oid>`, never with `cp` from the working tree --
+# otherwise the mode gate would validate the index while the bundle received
+# whatever the working tree happened to hold (uncommitted edits, or a symlink
+# silently dereferenced into a regular file). See docs/plans for the full
 # rationale.
+#
+# Consequence, warned about at build time: uncommitted working-tree edits do
+# NOT reach the bundle. Stage the change first.
 set -euo pipefail
 
 PLUGIN_ROOT="plugins/youtube-transcript/plugin"
@@ -17,16 +23,28 @@ TEMPLATE="plugins/youtube-transcript/mcpb/manifest.template.json"
 MCPB_BIN="tools/mcpb/node_modules/.bin/mcpb"
 
 EXPECT_VERSION=""
+EXPECT_VERSION_SET=0
 STAGE_DIR_ARG=""
+STAGE_DIR_SET=0
 
+# "flag absent" and "flag present with an empty value" must stay
+# distinguishable: Stage 2 passes --expect-version "${{ ... ref_name }}", and an
+# unresolved expression expands to an empty string rather than to an error. With
+# a bare ${2:-} the cross-check would silently switch itself off there. A
+# missing value is also an explicit error, not a `shift 2` that returns 1 and
+# lets set -e kill the script without printing anything.
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --expect-version)
-      EXPECT_VERSION="${2:-}"
+      [ "$#" -ge 2 ] || { echo "::error::--expect-version requires a value" >&2; exit 1; }
+      EXPECT_VERSION="$2"
+      EXPECT_VERSION_SET=1
       shift 2
       ;;
     --stage-dir)
-      STAGE_DIR_ARG="${2:-}"
+      [ "$#" -ge 2 ] || { echo "::error::--stage-dir requires a value" >&2; exit 1; }
+      STAGE_DIR_ARG="$2"
+      STAGE_DIR_SET=1
       shift 2
       ;;
     *)
@@ -36,9 +54,26 @@ while [ "$#" -gt 0 ]; do
   esac
 done
 
+if [ "$EXPECT_VERSION_SET" -eq 1 ] && [ -z "$EXPECT_VERSION" ]; then
+  echo "::error::--expect-version was given an empty value" >&2
+  exit 1
+fi
+if [ "$STAGE_DIR_SET" -eq 1 ] && [ -z "$STAGE_DIR_ARG" ]; then
+  echo "::error::--stage-dir was given an empty value" >&2
+  exit 1
+fi
+
 # 1. Anchor to the repo root. release.yml sets a job-level working-directory,
 # so every path below must be resolved relative to the toplevel, not to cwd.
 cd "$(git rev-parse --show-toplevel)"
+
+# 1a. Toolchain preflight, before step 4 touches dist/ and with the command to
+# run spelled out. Without it the script dies later with a bare
+# "No such file or directory", having already removed the previous artifact.
+if [ ! -x "$MCPB_BIN" ]; then
+  echo "::error::mcpb CLI not found at $MCPB_BIN — run: (cd tools/mcpb && npm ci --ignore-scripts)" >&2
+  exit 1
+fi
 
 if [ ! -f "$PLUGIN_JSON" ]; then
   echo "::error::plugin.json not found at $PLUGIN_JSON" >&2
@@ -57,26 +92,48 @@ if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+
 fi
 
 # 3. Optional cross-check against the release tag.
-if [ -n "$EXPECT_VERSION" ] && [ "$EXPECT_VERSION" != "$VERSION" ]; then
+if [ "$EXPECT_VERSION_SET" -eq 1 ] && [ "$EXPECT_VERSION" != "$VERSION" ]; then
   echo "::error::version mismatch: expected $EXPECT_VERSION, plugin.json has $VERSION" >&2
   exit 1
 fi
 
-# 4. Reset only this plugin's bundle output. dist/ is gitignored and absent
-# on a fresh clone; never wipe the whole directory since other tooling may
-# use it too.
+# 4. Ensure dist/ exists. The previous artifact is NOT removed here: everything
+# from the mode gates through `mcpb pack` can still fail, and a failed build
+# must not destroy the last good bundle. Packing goes to a temp path and the
+# swap into dist/ happens in step 11, after every gate has passed.
 mkdir -p dist
-rm -f dist/youtube-transcript-*.mcpb dist/youtube-transcript-*.mcpb.sha256
 
 # 5. Staging directory. --stage-dir is used as-is and left in place on exit
 # (this is the supported hook T-4b uses to tamper with staged content before
 # calling `mcpb pack` directly). Without it, use a throwaway dir cleaned up
 # on EXIT.
-if [ -n "$STAGE_DIR_ARG" ]; then
+STAGE_TMP=""
+OUT_TMP=""
+cleanup() {
+  [ -z "$STAGE_TMP" ] || rm -rf "$STAGE_TMP"
+  [ -z "$OUT_TMP" ] || rm -rf "$OUT_TMP"
+  return 0
+}
+trap cleanup EXIT
+
+if [ "$STAGE_DIR_SET" -eq 1 ]; then
   STAGE="$STAGE_DIR_ARG"
+  # Both `git cat-file > path` and `jq > path` write *through* an existing
+  # symlink instead of replacing it, so the step-10 containment check detects
+  # the situation only after the write has already landed outside the stage
+  # tree. Run the same check up front, before anything is written, so a
+  # pre-populated stage directory cannot be used to redirect writes.
+  if [ -L "$STAGE" ]; then
+    echo "::error::non-regular entry staged: $STAGE" >&2
+    exit 1
+  fi
+  if [ -e "$STAGE" ]; then
+    PRE_BAD=$(find "$STAGE" -mindepth 1 \( -type l -o \( ! -type f -a ! -type d \) \) -print)
+    [ -z "$PRE_BAD" ] || { echo "::error::non-regular entry staged: $PRE_BAD" >&2; exit 1; }
+  fi
 else
   STAGE=$(mktemp -d)
-  trap 'rm -rf "$STAGE"' EXIT
+  STAGE_TMP="$STAGE"
 fi
 mkdir -p "$STAGE/server"
 
@@ -86,10 +143,19 @@ mkdir -p "$STAGE/server"
 # Pathspec glob magic ('**/*.py') silently drops top-level files under
 # SERVER_DIR — plain `-- SERVER_DIR` filtered in the loop is the form that
 # does not lose entries.
+#
+# Bytes come from the blob whose mode was just checked (`git cat-file blob
+# <oid>`), not from the working tree: `git ls-files -s` reports the index, so
+# reading the file with `cp` would let the gate validate one thing and the
+# bundle receive another.
 BAD_MODE=""
 NON_PY=""
+STAGED_PATHS=()
 while IFS= read -r -d '' entry; do
+  # entry: "<mode> <oid> <stage>\t<path>"
   mode="${entry%% *}"
+  entry_rest="${entry#* }"
+  oid="${entry_rest%% *}"
   path="${entry#*$'\t'}"
   case "$path" in
     *.py)
@@ -97,7 +163,8 @@ while IFS= read -r -d '' entry; do
         100644|100755)
           rel="${path#"$SERVER_DIR"/}"
           mkdir -p "$STAGE/server/$(dirname "$rel")"
-          cp -P -- "$path" "$STAGE/server/$rel"
+          git cat-file blob "$oid" > "$STAGE/server/$rel"
+          STAGED_PATHS[${#STAGED_PATHS[@]}]="$path"
           ;;
         *)
           BAD_MODE="$BAD_MODE $path($mode)"
@@ -124,11 +191,26 @@ fi
 # bundle as a regular file.
 license_entry=$(git ls-files -s -- LICENSE.md)
 license_mode="${license_entry%% *}"
+license_rest="${license_entry#* }"
+license_oid="${license_rest%% *}"
 if [ "$license_mode" != "100644" ]; then
   echo "::error::LICENSE.md has unexpected git mode: ${license_mode:-<untracked>}" >&2
   exit 1
 fi
-cp -P -- LICENSE.md "$STAGE/LICENSE.md"
+git cat-file blob "$license_oid" > "$STAGE/LICENSE.md"
+STAGED_PATHS[${#STAGED_PATHS[@]}]="LICENSE.md"
+
+# 8a. The bundle now carries index content, so working-tree edits that were
+# never staged are invisible to it. That must not happen silently: name the
+# files whose working-tree copy differs from what was bundled.
+DIRTY=$(git diff --name-only -- "${STAGED_PATHS[@]}")
+if [ -n "$DIRTY" ]; then
+  {
+    echo "::warning::working tree differs from the git index for bundled files;"
+    echo "the indexed (committed/staged) version was packed, not your edits:"
+    printf '%s\n' "$DIRTY" | sed 's/^/  /'
+  } >&2
+fi
 
 # 9. Inject the version into the manifest. The template intentionally has no
 # .version key so the repo does not gain a fourth place version is stored.
@@ -145,22 +227,33 @@ jq --arg v "$VERSION" '. + {version: $v}' "$TEMPLATE" > "$STAGE/manifest.json"
 BAD=$(find "$STAGE" -mindepth 1 \( -type l -o \( ! -type f -a ! -type d \) \) -print)
 [ -z "$BAD" ] || { echo "::error::non-regular entry staged: $BAD" >&2; exit 1; }
 
-# 11. Pack. Always the pinned local CLI, never npx.
-"$MCPB_BIN" pack "$STAGE" "dist/youtube-transcript-$VERSION.mcpb"
+# 11. Pack. Always the pinned local CLI, never npx. Output goes to a temp
+# directory first so a failure anywhere above (mode gates, `mcpb validate`,
+# the containment check, `mcpb pack` itself) leaves the previously built
+# artifact in dist/ untouched.
+OUT_TMP=$(mktemp -d)
+BUNDLE_NAME="youtube-transcript-$VERSION.mcpb"
+"$MCPB_BIN" pack "$STAGE" "$OUT_TMP/$BUNDLE_NAME"
 
-# 12. Checksum with cwd set to dist/ so the file holds a bare basename.
-# smoke-mcpb.sh repeats the same tool-selection logic independently: pack and
-# smoke run as separate `run:` blocks in separate processes, so exporting the
-# choice here would not reach it anyway.
+# 12. Checksum with cwd set to the file's directory so it holds a bare
+# basename. smoke-mcpb.sh repeats the same tool-selection logic independently:
+# pack and smoke run as separate `run:` blocks in separate processes, so
+# exporting the choice here would not reach it anyway.
 (
-  cd dist
+  cd "$OUT_TMP"
   if command -v shasum >/dev/null 2>&1; then
     SHA_TOOL=(shasum -a 256)
   else
     SHA_TOOL=(sha256sum)
   fi
-  "${SHA_TOOL[@]}" "youtube-transcript-$VERSION.mcpb" > "youtube-transcript-$VERSION.mcpb.sha256"
+  "${SHA_TOOL[@]}" "$BUNDLE_NAME" > "$BUNDLE_NAME.sha256"
 )
+
+# 12a. Swap into dist/ only now that both files exist. Only this plugin's
+# outputs are removed: dist/ is gitignored, absent on a fresh clone, and may
+# be shared with other tooling.
+rm -f dist/youtube-transcript-*.mcpb dist/youtube-transcript-*.mcpb.sha256
+mv "$OUT_TMP/$BUNDLE_NAME" "$OUT_TMP/$BUNDLE_NAME.sha256" dist/
 
 # 13. Emit the produced paths.
 MCPB_PATH="dist/youtube-transcript-$VERSION.mcpb"

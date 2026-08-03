@@ -457,6 +457,13 @@ jobs:
   # Uploads the built bundle as an artifact so it can be downloaded and
   # installed into the desktop app for the mandatory L5 manual check before
   # merge -- Stage 1 does not publish the bundle anywhere else.
+  #
+  # Precondition for that L5 step: the artifact is only produced for branches
+  # of this repository, and only the diff-reviewed build may be installed. An
+  # .mcpb runs `python3 <bundle>/server/server.py` unsandboxed with the
+  # installing user's privileges, so a bundle built from a fork PR's code must
+  # never be installed -- the upload step below is gated accordingly. Build and
+  # smoke still run on forks; that is where their value as a gate lies.
   youtube-transcript-mcpb:
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -530,15 +537,25 @@ jobs:
           npm audit --json > audit.json || true   # exits non-zero whenever findings exist
           jq -e 'has("vulnerabilities")' audit.json > /dev/null \
             || { echo "::error::npm audit produced no usable report"; exit 1; }
+          # LC_ALL=C on both inputs: `comm` compares byte-wise, so both sides
+          # must be sorted byte-wise too (same convention as smoke-mcpb.sh).
           jq -r '[.vulnerabilities[].via[]? | select(type=="object")
                   | select(.severity=="high" or .severity=="critical")
-                  | .url | split("/")[-1]] | unique[]' audit.json | sort -u > found.txt
+                  | .url | split("/")[-1]] | unique[]' audit.json | LC_ALL=C sort -u > found.txt
+          # Anchored at line start: the declared format is one id per line with
+          # free-form prose after it, so an unanchored match would also pick up
+          # ids merely *mentioned* in a rationale and allowlist them silently.
           # `|| true` because an empty allowlist is legitimate (nothing accepted
           # yet): grep exits 1 on no match, and under set -e + pipefail that
           # aborts the step before the diagnostic below can name the offenders.
-          grep -o 'GHSA-[a-z0-9-]*' audit-allowlist.txt | sort -u > allowed.txt || true
+          grep -oE '^GHSA-[a-z0-9-]+' audit-allowlist.txt | LC_ALL=C sort -u > allowed.txt || true
           UNEXPECTED=$(comm -23 found.txt allowed.txt)
           [ -z "$UNEXPECTED" ] || { echo "::error::unallowlisted advisories: $UNEXPECTED"; exit 1; }
+          # Reverse difference: an entry whose advisory was fixed upstream would
+          # otherwise stay accepted forever. Warning, not error -- an upstream
+          # fix must not turn an unrelated PR red.
+          STALE=$(comm -13 found.txt allowed.txt)
+          [ -z "$STALE" ] || echo "::warning::allowlist entries no longer reported (remove them): $STALE"
 
       - if: steps.changes.outputs.mcpb == 'true'
         name: Pack MCPB bundle
@@ -547,14 +564,17 @@ jobs:
 
       - if: steps.changes.outputs.mcpb == 'true'
         name: Smoke test bundle
-        run: bash scripts/smoke-mcpb.sh "${{ steps.pack.outputs.mcpb_path }}"
+        run: bash scripts/smoke-mcpb.sh --require-checksum "${{ steps.pack.outputs.mcpb_path }}"
 
-      # Upload before the negative tests, not after: case 9 ("staged symlink")
-      # re-invokes pack-mcpb.sh, whose step 4 clears dist/youtube-transcript-*
-      # before the symlink guard aborts it -- so running the negatives leaves
-      # dist/ empty and a later upload would fail on if-no-files-found: error.
-      # Verified by running pack -> negatives locally and finding dist/ empty.
-      - if: steps.changes.outputs.mcpb == 'true'
+      # Installable artifact for repository branches only. On a pull request
+      # from a fork the bundle is still built and smoke-tested above, but it is
+      # not published for download: see the job header for why installing a
+      # fork-built .mcpb is arbitrary code execution on the maintainer's
+      # machine.
+      - if: >-
+          steps.changes.outputs.mcpb == 'true' &&
+          (github.event_name != 'pull_request' ||
+           github.event.pull_request.head.repo.full_name == github.repository)
         name: Upload bundle artifact
         uses: actions/upload-artifact@v4
         with:

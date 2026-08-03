@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Negative-path proof for scripts/smoke-mcpb.sh: tamper a correctly-built
-# bundle nine different ways and assert that each tamper is rejected by its
+# bundle twelve different ways and assert that each tamper is rejected by its
 # own named assertion. A green run of smoke-mcpb.sh on a correct bundle does
 # not prove the checks can fail -- a subtly inverted assertion looks
 # identical on the happy path. This script is the counter-evidence.
@@ -28,20 +28,22 @@ trap cleanup EXIT
 FAILED=0
 CASES_RUN=0
 
-# run_case NAME BUNDLE EXPECTED_SUBSTRING
+# run_case NAME BUNDLE EXPECTED_SUBSTRING [SMOKE_FLAG...]
 # Asserts smoke-mcpb.sh exits non-zero on BUNDLE *and* that its combined
 # output contains EXPECTED_SUBSTRING. Checking the exit code alone is not
 # enough: a failure for the wrong reason would look identical to success.
+# Any trailing arguments are passed to smoke-mcpb.sh ahead of the bundle path.
 run_case() {
   name="$1"
   bundle="$2"
   expected="$3"
+  shift 3
 
   CASES_RUN=$((CASES_RUN + 1))
 
   output=""
   status=0
-  output=$("$SMOKE" "$bundle" 2>&1) || status=$?
+  output=$("$SMOKE" "$@" "$bundle" 2>&1) || status=$?
 
   if [ "$status" -eq 0 ]; then
     echo "FAIL [$name]: smoke-mcpb.sh exited 0 on a tampered bundle" >&2
@@ -219,7 +221,73 @@ else
   esac
 fi
 
+# --- Case 10: server dies during initialize -> assertion 7. -----------------
+# Assertion 7 is the most complex logic in the whole change (threads, queues,
+# deadlines, JSON-RPC) and was the only one never proven red. SERVER_VERSION
+# must survive the tamper, otherwise the case stops at assertion 4 and never
+# reaches 7 -- the same trap that keeps cases 3 and 4 separate.
+C10=$(case_dir dead-server)
+{
+  printf 'import sys\n'
+  printf 'sys.stderr.write("REAL CAUSE: simulated startup failure\\n")\n'
+  printf 'sys.exit(1)\n'
+  printf 'SERVER_VERSION = "%s"\n' "$(jq -r .version "$C10/manifest.json")"
+} > "$C10/server/server.py"
+OUT10="$WORKDIR/dead-server.mcpb"
+"$MCPB_BIN" pack "$C10" "$OUT10" >/dev/null
+run_case "dead server" "$OUT10" "assertion 7 failed"
+
+# --- Case 11: server floods stderr -> assertion 7, with diagnostics. --------
+# Regression test for the undrained stderr pipe: a server writing more than the
+# kernel pipe buffer (~64 KiB) before responding used to block on write, which
+# looked exactly like a hang (10 s timeout, no cause). The expected substring
+# is the marker written *after* the flood: it can only appear if the pipe was
+# drained continuously and the buffered stderr is surfaced on failure.
+C11=$(case_dir stderr-flood)
+{
+  printf 'import sys\n'
+  printf 'for _ in range(80000):\n'
+  printf '    sys.stderr.write("x" * 63 + "\\n")\n'
+  printf 'sys.stderr.write("FLOOD MARKER: server still running\\n")\n'
+  printf 'sys.stderr.flush()\n'
+  printf 'sys.exit(1)\n'
+  printf 'SERVER_VERSION = "%s"\n' "$(jq -r .version "$C11/manifest.json")"
+} > "$C11/server/server.py"
+OUT11="$WORKDIR/stderr-flood.mcpb"
+"$MCPB_BIN" pack "$C11" "$OUT11" >/dev/null
+run_case "stderr flood" "$OUT11" "FLOOD MARKER: server still running"
+
+# --- Case 12: no .sha256 next to the bundle + --require-checksum ->
+# assertion 5. The flag is what keeps a silently missing checksum from being a
+# fail-open; without it the very same bundle must still pass, so both
+# directions are asserted here.
+C12=$(case_dir missing-checksum)
+OUT12="$WORKDIR/missing-checksum.mcpb"
+"$MCPB_BIN" pack "$C12" "$OUT12" >/dev/null
+rm -f "$OUT12.sha256"
+run_case "missing checksum" "$OUT12" "assertion 5 failed: checksum file missing" --require-checksum
+
+# Not counted as a tamper case: it is the control half of case 12.
+lenient_output=""
+lenient_status=0
+lenient_output=$("$SMOKE" "$OUT12" 2>&1) || lenient_status=$?
+if [ "$lenient_status" -eq 0 ]; then
+  echo "ok [missing checksum, no flag]: same bundle accepted without --require-checksum"
+else
+  echo "FAIL [missing checksum, no flag]: expected exit 0, got $lenient_status" >&2
+  printf '%s\n' "$lenient_output" | sed 's/^/    /' >&2
+  FAILED=1
+fi
+
 echo "--- $CASES_RUN cases run ---"
+
+# A gate that can silently shrink is not a gate: without this, a case eaten by
+# a refactor or skipped by an early `if` leaves the suite green.
+EXPECTED_CASES=12
+if [ "$CASES_RUN" -ne "$EXPECTED_CASES" ]; then
+  echo "test-smoke-negatives: ran $CASES_RUN cases, expected $EXPECTED_CASES" >&2
+  exit 1
+fi
 
 if [ "$FAILED" -ne 0 ]; then
   echo "test-smoke-negatives: at least one tamper was NOT rejected by its expected assertion" >&2

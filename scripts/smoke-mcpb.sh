@@ -11,6 +11,10 @@
 # Requires a git checkout at the same commit as the bundle build (assertion 2
 # reads the tracked file list via `git ls-files`).
 #
+# Scope: this verifies a bundle built from this same checkout. Assertion 7
+# executes the bundle's server, so it is NOT a scanner for bundles from an
+# untrusted source.
+#
 # Portability: this must run on stock macOS, which ships bash 3.2 (no
 # `mapfile`/`readarray`) and no `timeout(1)`. Arrays are filled with
 # `while IFS= read -r`, and the handshake's per-step deadline is implemented
@@ -42,9 +46,12 @@ while [ "$#" -gt 0 ]; do
       fail "smoke-mcpb: unknown argument: $1"
       ;;
     *)
-      if [ -z "$BUNDLE_ARG" ]; then
-        BUNDLE_ARG="$1"
+      # A silently dropped second path is the worst failure mode for a release
+      # verifier: it would report success for a bundle it never looked at.
+      if [ -n "$BUNDLE_ARG" ]; then
+        fail "smoke-mcpb: unexpected extra argument: $1"
       fi
+      BUNDLE_ARG="$1"
       shift
       ;;
   esac
@@ -81,10 +88,18 @@ cleanup() {
 }
 trap cleanup EXIT
 
+# Path-traversal guard, deliberately BEFORE extraction. Assertion 1's
+# `server/.*\.py` pattern does not exclude `..`, and Info-ZIP happens to strip
+# `../` components on its own -- but that is a property of one unzip
+# implementation, not a check. Refuse such an archive explicitly instead.
+ENTRIES=$(unzip -Z1 "$BUNDLE")
+if printf '%s\n' "$ENTRIES" | grep -q '\.\.'; then
+  fail "assertion 1 failed: archive entry contains '..': $(printf '%s\n' "$ENTRIES" | grep '\.\.' | tr '\n' ' ')"
+fi
+
 unzip -q "$BUNDLE" -d "$TMP"
 
 # --- Assertion 1: nothing foreign in the archive. ---------------------------
-ENTRIES=$(unzip -Z1 "$BUNDLE")
 FOREIGN=$(printf '%s\n' "$ENTRIES" | grep -v '/$' | grep -vE '^(manifest\.json|LICENSE\.md|server/.*\.py)$' || true)
 if [ -n "$FOREIGN" ]; then
   fail "assertion 1 failed: foreign archive entries present: $(printf '%s' "$FOREIGN" | tr '\n' ' ')"
@@ -177,11 +192,28 @@ fi
 # PRs). Deadlines are enforced inside the Python helper (subprocess pipe I/O
 # with a real per-step timeout) rather than with timeout(1) (absent on stock
 # macOS) or a bash FIFO background-kill loop.
+#
+# ORDERING INVARIANT -- DO NOT MOVE THIS BLOCK ABOVE ASSERTION 6. This step
+# executes the command declared *inside the bundle under test*. The only reason
+# that is safe is that assertion 6 has already pinned the whole `.server`
+# object by deep equality, so `command`/`args` cannot be anything but
+# python3 + the bundled entry point. Reordering turns this verifier into a
+# runner of arbitrary commands from an archive. The explicit check below
+# re-states the invariant locally instead of relying on line order alone (it
+# also keeps "${ARGS[@]}" from tripping `set -u` on bash 3.2 when args is
+# empty).
 MANIFEST_COMMAND=$(jq -r '.server.mcp_config.command' "$TMP/manifest.json")
+if [ "$MANIFEST_COMMAND" != "python3" ]; then
+  fail "assertion 7 failed: manifest command is not python3 (assertion 6 must run first): $MANIFEST_COMMAND"
+fi
 ARGS=()
 while IFS= read -r arg_line; do
   ARGS+=("$arg_line")
 done < <(jq -r '.server.mcp_config.args[]' "$TMP/manifest.json")
+
+if [ "${#ARGS[@]}" -eq 0 ]; then
+  fail "assertion 7 failed: manifest declares no mcp_config.args (assertion 6 must run first)"
+fi
 
 for i in "${!ARGS[@]}"; do
   ARGS[i]="${ARGS[i]//\$\{__dirname\}/$TMP}"
@@ -197,8 +229,10 @@ import sys
 import threading
 
 STEP_DEADLINE_SECONDS = 10.0
+STDERR_TAIL_LINES = 200
 
 proc = None
+STDERR_BUF = []
 
 
 def fail(message):
@@ -208,6 +242,12 @@ def fail(message):
     if proc is not None and proc.poll() is None:
         proc.kill()
     print(message, file=sys.stderr)
+    # Without this the real cause (ImportError, a missing module in the
+    # bundle, an incompatible Python) collapses into a generic
+    # "no response at step initialize" and is unrecoverable from CI logs.
+    if STDERR_BUF:
+        print("--- server stderr (last %d lines) ---" % STDERR_TAIL_LINES, file=sys.stderr)
+        sys.stderr.write("".join(STDERR_BUF[-STDERR_TAIL_LINES:]))
     sys.exit(1)
 
 
@@ -223,6 +263,20 @@ try:
     )
 except OSError as exc:
     fail("assertion 7 failed: could not launch the server process: " + str(exc))
+
+
+def _drain_stderr():
+    # The pipe must be drained continuously, not read at the end: a server
+    # writing more than the kernel pipe buffer (~64 KiB) before responding
+    # blocks on write forever, which is indistinguishable from a hang.
+    try:
+        for line in proc.stderr:
+            STDERR_BUF.append(line)
+    except Exception:
+        pass
+
+
+threading.Thread(target=_drain_stderr, daemon=True).start()
 
 
 def send(message):
