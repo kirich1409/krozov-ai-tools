@@ -1,11 +1,32 @@
 name: Release
 
+# `workflow_dispatch` is declared here ahead of the release-wiring restructure
+# and does nothing on its own. GitHub only offers manual dispatch for a
+# workflow whose *default-branch* copy declares the trigger, so a restructured
+# copy on a feature branch cannot be dry-run until this declaration is on
+# `main` -- which is the whole point of landing it separately and early.
+#
+# It is inert by construction: the only job is gated on `github.event_name ==
+# 'push'`, so a dispatch produces a run whose job is skipped. There is
+# deliberately no `dry_run` input: a manual run must never be able to publish,
+# because the ancestry check below is skipped on non-tag events and a
+# publishing dispatch would therefore release unreviewed code.
 on:
   push:
     tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      plugin:
+        description: "Plugin whose release path to dry-run (used after the restructure lands)"
+        type: choice
+        required: true
+        options:
+          - youtube-transcript
+          - maven-mcp
 
 jobs:
   publish:
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     defaults:
