@@ -30,6 +30,8 @@ plugins/
 
 See the plugin's own `CLAUDE.md` for plugin-specific instructions.
 
+**Plugins are isolated.** This is a shared home for multiple independent plugins, not a monolith with unified internals. A convention, pattern, or design decision that fits one plugin (module layout, error-handling style, a specific caching or retry strategy, dependency choices) is scoped to that plugin — do not migrate it into another plugin just because both live in this repo. Evaluate each plugin's own requirements on their own terms; cross-plugin consistency is not a goal here.
+
 ## Plugin Standards
 
 All plugins must comply with [`docs/PLUGIN-STANDARDS.md`](docs/PLUGIN-STANDARDS.md). Before every release:
