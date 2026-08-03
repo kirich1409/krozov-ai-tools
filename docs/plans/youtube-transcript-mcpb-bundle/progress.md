@@ -8,19 +8,27 @@ Stage 2 (release wiring) is deferred to its own plan — see *Stage 2 handoff* i
 
 ## Tasks
 
-- [ ] T-1 — Bundle manifest template
-- [ ] T-2 — Pinned toolchain, audit gate, update channel
-- [ ] T-3 — Pack script (after T-1, T-2)
-- [ ] T-4 — Smoke script (after T-3)
-- [ ] T-4b — Negative tests for the fail-closed assertions (after T-4)
-- [ ] T-5 — CI job (after T-4b)
-- [ ] T-6 — Documentation (after T-5)
+- [x] T-1 — Bundle manifest template — `check` green; deep equality on `.server` verified ahead of T-4
+- [x] T-2 — Pinned toolchain, audit gate, update channel — allowlist generated from a live run, not transcribed: the single `high` is `GHSA-ph9p-34f9-6g65` (`tmp` path traversal), with a reachability argument showing the CLI never imports the `editor` prompt that consumes it
+- [x] T-3 — Pack script — 27 archive entries, version injected, bare-basename checksum verifies in a flat dir, and a planted symlink is rejected with `::error::non-regular entry staged`
+- [x] T-4 — Smoke script — all 8 assertions green on a real bundle; each fails with a distinct `assertion N failed: …` message, which is the contract T-4b greps
+- [x] T-4b — Negative tests — 9/9 cases rejected by their own assertion, exit 0. The `platform override` case is the one that proves deep equality earns its keep: a field-by-field check would have passed it
+- [x] T-5 — CI job — returned `DONE_WITH_CONCERNS`, and the concern was a real defect in the audit-gate body **as written in the plan**: `grep -o 'GHSA-…' audit-allowlist.txt` exits 1 on an empty allowlist, and under `set -e` + `pipefail` that aborted the step before the diagnostic could name the offenders. Reproduced, then fixed with `|| true` on that line; re-verified that an emptied allowlist now fails *with* `::error::unallowlisted advisories: GHSA-ph9p-34f9-6g65`. The agent also caught that every deliverable was still untracked — a fresh CI checkout would have gone red — so all 11 files were staged.
+- [x] T-6 — Documentation — §12 added after §11; the two plugin-file notes are byte-identical; §10 checklist deliberately untouched (its bundle item belongs to Stage 2)
 
 ## Handoff notes
 
 - Promoting `youtube-transcript-mcpb` to a **required status check** is a branch-ruleset change outside CI's reach — the maintainer does it after merge.
 - L5 is mandatory and performable before merge: open the PR run's Artifacts, download the **zip container**, unzip, `shasum -a 256 -c` inside that directory, then drag the `.mcpb` into Claude Desktop. `upload-artifact` never delivers a bare file.
 - No bundle reaches users in Stage 1 — nothing is attached to a Release yet, and `README.md` is intentionally untouched.
+
+## Whole-change verification (phase 4)
+
+All declared levels green: L0 pack, L1a (`shellcheck`, `validate.sh` still green, audit gate), L2 (9/9 negatives), L3 (8/8 smoke assertions), plus the plugin's 276 Python tests and a full clean-room cycle (`npm ci` → pack → smoke → negatives from a wiped `dist/` and `node_modules/`).
+
+**One defect found only at this level**, because it lives on the seam between two tasks rather than inside either: the CI job ordered `negatives` before `upload-artifact`, and negative case 9 re-invokes `pack-mcpb.sh`, whose step 4 clears `dist/youtube-transcript-*` before the symlink guard aborts it. Net effect — `dist/` empty at upload time, and `if-no-files-found: error` would have failed the job on **every** run. Reproduced locally, fixed by moving the upload step ahead of the negatives, then re-verified by simulating the job's step order.
+
+L5 (installing the CI artifact into Claude Desktop) remains outstanding — it needs a human and is a separate pass before merge.
 
 ## Learned
 

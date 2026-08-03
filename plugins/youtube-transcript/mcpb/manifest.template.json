@@ -1,0 +1,42 @@
+{
+  "manifest_version": "0.4",
+  "name": "youtube-transcript",
+  "description": "Fetches existing YouTube subtitles (manual or auto-generated) via the InnerTube API and returns them as plain text, SRT, or VTT. Does not perform speech-to-text or video/audio download — only retrieves captions YouTube already publishes.",
+  "author": {
+    "name": "kirich1409"
+  },
+  "homepage": "https://github.com/kirich1409/krozov-ai-tools",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/kirich1409/krozov-ai-tools"
+  },
+  "license": "MIT",
+  "keywords": [
+    "youtube",
+    "transcript",
+    "subtitles",
+    "captions"
+  ],
+  "server": {
+    "type": "python",
+    "entry_point": "server/server.py",
+    "mcp_config": {
+      "command": "python3",
+      "args": ["${__dirname}/server/server.py"]
+    }
+  },
+  "compatibility": {
+    "platforms": ["darwin", "linux"],
+    "runtimes": { "python": ">=3.9" }
+  },
+  "tools": [
+    {
+      "name": "list_transcript_tracks",
+      "description": "List a video's caption tracks (language, manual/auto, estimated character count) without fetching any track's content"
+    },
+    {
+      "name": "get_transcript",
+      "description": "Fetch a video's transcript as text (default), srt, or vtt, with cursor-based pagination for long transcripts"
+    }
+  ]
+}

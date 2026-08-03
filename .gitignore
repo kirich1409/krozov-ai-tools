@@ -15,6 +15,7 @@ __pycache__/
 .remember/
 firebase-debug.log
 package-lock.json
+!tools/mcpb/package-lock.json
 
 # Claude Code - local only
 .claude/settings.local.json

@@ -54,6 +54,8 @@ See `CLAUDE.md`'s Commands section for the lint/type-check/coverage invocations 
 
 **Tools (2):** `get_transcript` (track resolution + cursor-driven pagination + format encoding), `list_transcript_tracks` (lists caption tracks with derived `estimatedCharacters`, never fetching track content).
 
+**MCPB bundle.** The bundle (`.mcpb`, see `docs/PLUGIN-STANDARDS.md` §12) ships exactly the tracked `.py` files under `plugin/server/` plus `LICENSE.md` and a generated `manifest.json` (from `plugins/youtube-transcript/mcpb/manifest.template.json`). Adding a **Python module** needs no bundle-side change. Adding a **tool** requires updating `tools` in the manifest template. Adding a **non-`.py` runtime asset** requires changing the staging allowlist in `scripts/pack-mcpb.sh` — the build fails loudly on the last case rather than shipping a bundle missing it.
+
 ## Untrusted-content boundary
 
 Every `get_transcript` response wraps the caption text between two copies of a delimiter generated fresh, per call, from `secrets.token_hex(16)` (128 bits of entropy) — never a fixed constant, so an attacker who authored the caption text before this specific call cannot predict or pre-embed a matching forged copy. `contentNotice` and the wrapped `transcript` text are two separate dict keys (never string-concatenated), letting a reference parser recover them independently: `json.loads()` the wire bytes first, then search only the parsed `transcript` value for exactly two occurrences of the value named in `contentNotice`. See `CLAUDE.md`'s same section, or `docs/plans/youtube-transcript/plan.md`'s "Untrusted-content boundary" section for the full review history, before touching `protocol/envelope.py`.
