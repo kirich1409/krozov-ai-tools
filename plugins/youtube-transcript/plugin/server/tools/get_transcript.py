@@ -28,17 +28,32 @@ continuation call, exactly as AC-11 describes.
 Stdlib only.
 """
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 import formats
-from domain import Deadline, DomainFailure, FORMATS, Status, ToolOutcome, TrackListing, VideoId
+from domain import (
+    Deadline,
+    DomainFailure,
+    FORMATS,
+    Status,
+    ToolOutcome,
+    TrackDescriptor,
+    TrackListing,
+    VideoId,
+)
 from formats import FormatOptions, MAX_PAGE_CHARS, MAX_PAGES
 from providers.base import TranscriptProvider, UpstreamChanged
 from tools import cursor as tools_cursor
 from tools import outcome_from_error
-from tools.resolution import select_track, validate_languages
+from tools.resolution import BASIS_TRACK_ID, select_track, sort_tracks, validate_languages
 
-# AC-3's cap, shared with AC-1: at most 50 entries in `availableLanguages`.
+# AC-3's cap, shared with AC-1: at most 50 entries in `availableLanguages` --
+# and, per AC-27, the same cap on `alternativeTracks` (deliberately the one
+# constant, not a second 50 that could drift away from this one). Hitting the cap
+# is deliberately NOT signalled on either field: a caller cannot tell "these are
+# all of them" from "these are the first 50". Accepted -- a video with >51 caption
+# tracks is far outside the case AC-27 exists for, and a truncation flag would buy
+# a wire field that is `false` on effectively every real response.
 _MAX_AVAILABLE_LANGUAGES = 50
 
 # AC-4: `format` defaults to "text" when omitted -- and, since this server's own
@@ -120,6 +135,14 @@ def _handle_fresh(provider: TranscriptProvider, deadline: Deadline, args: Dict[s
 def _handle_with_cursor(
     provider: TranscriptProvider, deadline: Deadline, args: Dict[str, Any], cursor_raw: str
 ) -> ToolOutcome:
+    """AC-28 note on continuation calls: a cursor always carries a `trackId`
+    (`tools/cursor.py`'s five fields), so every page after the first resolves by
+    tier 1 and reports `selectionBasis: "track_id"` -- even when page 1's track was
+    picked by the server on tiers 3-5 and the caller chose nothing. `selectionBasis`
+    describes how *this* call resolved its track, not how the first page did; the
+    cursor format is a wire contract and deliberately does not carry the original
+    basis forward.
+    """
     # First-phase validation (shape, enum membership, MAX_SEGMENTS ceiling) --
     # raises CursorInvalid on any failure, caught by handle()'s blanket
     # `except DomainFailure` and mapped to upstream_changed.
@@ -179,10 +202,10 @@ def _resolve_and_paginate(
         # list when both are supplied). Short-circuit `select_track` entirely by
         # forcing the same "no track resolved" branch below, rather than
         # duplicating its `availableLanguages` construction.
-        resolved = None
+        selection = None
     else:
-        resolved = select_track(listing, languages=languages, track_id=track_id)
-    if resolved is None:
+        selection = select_track(listing, languages=languages, track_id=track_id)
+    if selection is None:
         # AC-3/AC-5: sorted, deduped languageCode list from the freshly resolved
         # tracks, capped at AC-1's shared 50-entry limit.
         available = sorted({track.language_code for track in listing.tracks})
@@ -190,6 +213,21 @@ def _resolve_and_paginate(
             status=Status.LANGUAGE_UNAVAILABLE,
             payload={"availableLanguages": available[:_MAX_AVAILABLE_LANGUAGES]},
         )
+    resolved = selection.track
+
+    # AC-27: the tracks this call did *not* pick, so a caller can see that a
+    # second track in the same language exists rather than discovering it only by
+    # comparing against some other service. Suppressed entirely when the caller
+    # resolved by explicit `trackId` (it already chose, including every
+    # continuation call, whose cursor carries a `trackId`) and when there is no
+    # other track to name. Order is `sort_tracks()`'s, matching AC-1's listing
+    # order; identity filtering (`is not resolved`) rather than a `track_id`
+    # comparison, since `sort_tracks()` returns these very objects.
+    alternative_tracks = (
+        tuple(track for track in sort_tracks(listing.tracks) if track is not resolved)
+        if selection.basis != BASIS_TRACK_ID
+        else ()
+    )
 
     transcript = session.fetch(resolved, deadline)
 
@@ -224,12 +262,14 @@ def _resolve_and_paginate(
         # cross-invocation caching, plan.md Decisions Made) -- not fast-pathed.
         return ToolOutcome(
             status=Status.OK,
-            payload={
-                "resolved_track": resolved,
-                "transcript": "",
-                "truncated": True,
-                "nextCursor": None,
-            },
+            payload=_ok_payload(
+                resolved=resolved,
+                selection_basis=selection.basis,
+                alternative_tracks=alternative_tracks,
+                transcript="",
+                truncated=True,
+                next_cursor=None,
+            ),
         )
 
     page = formats.encode(
@@ -258,13 +298,40 @@ def _resolve_and_paginate(
 
     return ToolOutcome(
         status=Status.OK,
-        payload={
-            "resolved_track": resolved,
-            "transcript": page.text,
-            "truncated": has_more,
-            "nextCursor": next_cursor,
-        },
+        payload=_ok_payload(
+            resolved=resolved,
+            selection_basis=selection.basis,
+            alternative_tracks=alternative_tracks,
+            transcript=page.text,
+            truncated=has_more,
+            next_cursor=next_cursor,
+        ),
     )
+
+
+def _ok_payload(
+    *,
+    resolved: TrackDescriptor,
+    selection_basis: str,
+    alternative_tracks: Tuple[TrackDescriptor, ...],
+    transcript: str,
+    truncated: bool,
+    next_cursor: Optional[str],
+) -> Dict[str, Any]:
+    """The one place a `Status.OK` payload is assembled, so the AC-27/AC-28 fields
+    cannot be present on one of this module's two success returns and missing from
+    the other. `alternative_tracks` is omitted entirely when empty (AC-27's "the
+    field SHALL be absent"), never emitted as `[]`."""
+    payload: Dict[str, Any] = {
+        "resolved_track": resolved,
+        "selectionBasis": selection_basis,
+        "transcript": transcript,
+        "truncated": truncated,
+        "nextCursor": next_cursor,
+    }
+    if alternative_tracks:
+        payload["alternative_tracks"] = alternative_tracks[:_MAX_AVAILABLE_LANGUAGES]
+    return payload
 
 
 __all__ = ["handle"]

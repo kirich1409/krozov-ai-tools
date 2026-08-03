@@ -13,7 +13,7 @@ the `TrackDescriptor`/`TrackListing` types) and `providers.base.parse_track_id`
 Stdlib only.
 """
 
-from typing import List, Optional, Sequence, Tuple
+from typing import List, NamedTuple, Optional, Sequence, Tuple
 
 from domain import TrackDescriptor, TrackListing
 from providers.base import parse_track_id
@@ -21,6 +21,42 @@ from providers.base import parse_track_id
 # AC-3: at most 10 entries, each at most 20 characters.
 _MAX_LANGUAGES = 10
 _MAX_LANGUAGE_LENGTH = 20
+
+
+class TrackSelection(NamedTuple):
+    """AC-28: `select_track()`'s result -- the resolved track *plus* the tier that
+    resolved it, so `tools/get_transcript.py` can surface `selectionBasis` on the
+    response instead of the caller having to guess whether a language it never
+    asked for was picked on its behalf (AC-2's tiers 3-5).
+
+    An internal signature only: the wire-facing `selectionBasis` string values
+    happen to equal `basis` here, but `protocol/envelope.py` is what puts them on
+    the wire, and `SELECTION_BASES` below is the closed set both agree on.
+    """
+
+    track: TrackDescriptor
+    basis: str
+
+
+# AC-28's closed set, one value per AC-2 tier, in tier order. Each tier's value is
+# a named constant that `select_track()` below returns *and* `tools/get_transcript.py`
+# compares against -- deliberately not a bare string literal at each `return` site,
+# which would leave `SELECTION_BASES` unread by any product code and reduce the
+# closed-set test to comparing a constant with its own copy (a mutation adding a
+# sixth value to the wire survived that version of the test).
+BASIS_TRACK_ID = "track_id"
+BASIS_LANGUAGES = "languages"
+BASIS_DEFAULT_AUDIO_LANGUAGE = "default_audio_language"
+BASIS_UPSTREAM_DEFAULT = "upstream_default"
+BASIS_FALLBACK = "fallback"
+
+SELECTION_BASES: Tuple[str, ...] = (
+    BASIS_TRACK_ID,
+    BASIS_LANGUAGES,
+    BASIS_DEFAULT_AUDIO_LANGUAGE,
+    BASIS_UPSTREAM_DEFAULT,
+    BASIS_FALLBACK,
+)
 
 
 def sort_tracks(tracks: Sequence[TrackDescriptor]) -> Tuple[TrackDescriptor, ...]:
@@ -69,9 +105,11 @@ def select_track(
     *,
     languages: Optional[Sequence[str]] = None,
     track_id: Optional[str] = None,
-) -> Optional[TrackDescriptor]:
+) -> Optional[TrackSelection]:
     """AC-2's five-tier deterministic resolution order, with `track_id` (AC-5)
-    taking precedence over `languages`:
+    taking precedence over `languages`. Returns the resolved track paired with the
+    tier that resolved it (AC-28's `TrackSelection`), or `None` when no track
+    resolves:
 
     1. Exact `track_id` match. If `track_id` is supplied it is the *only* tier
        consulted: an invalid `track_id` (fails `parse_track_id`'s shape check) or
@@ -106,7 +144,7 @@ def select_track(
         kind, language_code = parsed
         for track in listing.tracks:
             if track.kind == kind and track.language_code == language_code:
-                return track
+                return TrackSelection(track, BASIS_TRACK_ID)
         return None
 
     sorted_tracks = sort_tracks(listing.tracks)
@@ -115,19 +153,20 @@ def select_track(
         # AC-3: `languages` was explicitly supplied and non-empty -- this tier
         # is a hard stop. A match returns immediately; a non-match returns
         # `None` immediately, without falling through to tiers 3-5 below.
-        return _match_languages(sorted_tracks, languages)
+        matched = _match_languages(sorted_tracks, languages)
+        return None if matched is None else TrackSelection(matched, BASIS_LANGUAGES)
 
     if listing.default_audio_language is not None:
         for track in sorted_tracks:
             if track.language_code == listing.default_audio_language:
-                return track
+                return TrackSelection(track, BASIS_DEFAULT_AUDIO_LANGUAGE)
 
     for track in sorted_tracks:
         if track.is_default:
-            return track
+            return TrackSelection(track, BASIS_UPSTREAM_DEFAULT)
 
     if sorted_tracks:
-        return sorted_tracks[0]
+        return TrackSelection(sorted_tracks[0], BASIS_FALLBACK)
     return None
 
 

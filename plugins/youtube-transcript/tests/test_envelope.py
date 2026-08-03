@@ -136,11 +136,75 @@ class TestOkFieldsIncludeTranscriptAndContentNotice(unittest.TestCase):
                 "transcript",
                 "contentNotice",
                 "resolvedTrack",
+                "alternativeTracks",
+                "selectionBasis",
                 "nextCursor",
                 "truncated",
             }
             <= allowed
         )
+
+
+class TestAlternativeTracksAndSelectionBasisWire(unittest.TestCase):
+    """AC-27/AC-28: both fields are constructed here, from domain objects, and
+    both go through `FIELDS_BY_STATUS` like every other payload key."""
+
+    def _ok(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        return envelope.build(domain.ToolOutcome(status=domain.Status.OK, payload=payload))
+
+    def test_alternative_tracks_wire_shape_is_exactly_four_keys(self) -> None:
+        alternative = _make_track(
+            track_id="auto:ru", language_code="ru", language_name="Russian", kind="auto"
+        )
+        result = self._ok(
+            {
+                "resolved_track": _make_track(),
+                "selectionBasis": "languages",
+                "alternative_tracks": (alternative,),
+            }
+        )
+        self.assertEqual(
+            result["alternativeTracks"],
+            [
+                {
+                    "trackId": "auto:ru",
+                    "languageCode": "ru",
+                    "languageName": "Russian",
+                    "kind": "auto",
+                }
+            ],
+        )
+        self.assertEqual(result["selectionBasis"], "languages")
+
+    def test_alternative_track_with_no_estimated_characters_does_not_raise(self) -> None:
+        """A `get_transcript`-resolved listing never carries
+        `estimated_characters` -- `_track_wire`'s ValueError guard is for the
+        `tracks` array of `list_transcript_tracks`, and must not apply here."""
+        alternative = _make_track(track_id="auto:ru", language_code="ru", kind="auto")
+        self.assertIsNone(alternative.estimated_characters)
+        result = self._ok(
+            {"resolved_track": _make_track(), "alternative_tracks": (alternative,)}
+        )
+        self.assertEqual(len(result["alternativeTracks"]), 1)
+
+    def test_both_fields_absent_when_payload_omits_them(self) -> None:
+        result = self._ok({"resolved_track": _make_track(), "truncated": False})
+        self.assertNotIn("alternativeTracks", result)
+        self.assertNotIn("selectionBasis", result)
+
+    def test_fields_dropped_on_a_status_that_does_not_allow_them(self) -> None:
+        outcome = domain.ToolOutcome(
+            status=domain.Status.LANGUAGE_UNAVAILABLE,
+            payload={
+                "availableLanguages": ["ru"],
+                "selectionBasis": "languages",
+                "alternative_tracks": (_make_track(),),
+            },
+        )
+        result = envelope.build(outcome)
+        self.assertEqual(result["availableLanguages"], ["ru"])
+        self.assertNotIn("selectionBasis", result)
+        self.assertNotIn("alternativeTracks", result)
 
 
 class TestPayloadKeysAllowlistedPerStatus(unittest.TestCase):

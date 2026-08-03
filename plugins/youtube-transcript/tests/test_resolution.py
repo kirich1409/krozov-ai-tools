@@ -59,7 +59,11 @@ class TestSelectTrackTiers(unittest.TestCase):
             default_audio_language="en",
         )
         result = select_track(listing, languages=["de"], track_id="auto:fr")
-        self.assertIs(result, wanted)
+        assert result is not None
+        self.assertIs(result.track, wanted)
+        # AC-28: tier 1 reports `track_id` -- the basis that suppresses AC-27's
+        # `alternativeTracks` entirely, since the caller already chose.
+        self.assertEqual(result.basis, "track_id")
 
     def test_tier1_invalid_track_id_does_not_fall_through(self) -> None:
         """An unmatched/invalid `track_id` returns `None` rather than silently
@@ -89,7 +93,9 @@ class TestSelectTrackTiers(unittest.TestCase):
             default_audio_language="de",
         )
         result = select_track(listing)
-        self.assertIs(result, wanted)
+        assert result is not None
+        self.assertIs(result.track, wanted)
+        self.assertEqual(result.basis, "default_audio_language")  # AC-28, tier 3
 
     def test_tier3_upstream_default_track(self) -> None:
         """With no `default_audio_language` signal and no `languages` supplied
@@ -109,7 +115,9 @@ class TestSelectTrackTiers(unittest.TestCase):
             default_audio_language=None,
         )
         result = select_track(listing)
-        self.assertIs(result, wanted)
+        assert result is not None
+        self.assertIs(result.track, wanted)
+        self.assertEqual(result.basis, "upstream_default")  # AC-28, tier 4
 
     def test_language_preference_beats_default_signal_tracks(self) -> None:
         """Regression guard for the tier-order fix: `languages` (tier 2) must
@@ -124,7 +132,9 @@ class TestSelectTrackTiers(unittest.TestCase):
             default_audio_language="de",
         )
         result = select_track(listing, languages=["en"])
-        self.assertIs(result, wanted)
+        assert result is not None
+        self.assertIs(result.track, wanted)
+        self.assertEqual(result.basis, "languages")  # AC-28, tier 2
 
     def test_tier4_language_preference_match(self) -> None:
         """With both default-signal tiers absent, the first `languages` entry
@@ -140,7 +150,9 @@ class TestSelectTrackTiers(unittest.TestCase):
             default_audio_language=None,
         )
         result = select_track(listing, languages=["zz", "de"])
-        self.assertIs(result, wanted)
+        assert result is not None
+        self.assertIs(result.track, wanted)
+        self.assertEqual(result.basis, "languages")  # AC-28, tier 2
 
     def test_tier4_primary_subtag_match(self) -> None:
         """AC-3: `"en"` matches an available `en-US` track when no exact match
@@ -148,7 +160,8 @@ class TestSelectTrackTiers(unittest.TestCase):
         wanted = _track("en-US", "manual")
         listing = _listing([wanted, _track("fr", "manual")], default_audio_language=None)
         result = select_track(listing, languages=["en"])
-        self.assertIs(result, wanted)
+        assert result is not None
+        self.assertIs(result.track, wanted)
 
     def test_tier4_manual_preferred_over_auto(self) -> None:
         """AC-3: manual is preferred over auto-generated within the same matched
@@ -157,7 +170,8 @@ class TestSelectTrackTiers(unittest.TestCase):
         auto_same_language = _track("en", "auto", track_id="auto:en")
         listing = _listing([auto_same_language, wanted], default_audio_language=None)
         result = select_track(listing, languages=["en"])
-        self.assertIs(result, wanted)
+        assert result is not None
+        self.assertIs(result.track, wanted)
 
     def test_tier5_fallback(self) -> None:
         """With every earlier tier's signal absent (no `track_id`, no
@@ -179,7 +193,10 @@ class TestSelectTrackTiers(unittest.TestCase):
         result = select_track(listing)
         self.assertIsNotNone(result)
         assert result is not None
-        self.assertEqual((result.kind, result.language_code), ("manual", "aa"))
+        self.assertEqual(
+            (result.track.kind, result.track.language_code), ("manual", "aa")
+        )
+        self.assertEqual(result.basis, "fallback")  # AC-28, tier 5
 
     def test_tier5_fallback_auto_only(self) -> None:
         """The fallback still resolves to an auto-generated track when no manual
@@ -190,7 +207,10 @@ class TestSelectTrackTiers(unittest.TestCase):
         result = select_track(listing)
         self.assertIsNotNone(result)
         assert result is not None
-        self.assertEqual((result.kind, result.language_code), ("auto", "aa"))
+        self.assertEqual(
+            (result.track.kind, result.track.language_code), ("auto", "aa")
+        )
+        self.assertEqual(result.basis, "fallback")  # AC-28, tier 5
 
     def test_select_track_empty_listing_returns_none(self) -> None:
         listing = _listing([], default_audio_language=None)
@@ -227,14 +247,14 @@ class TestSelectTrackTiers(unittest.TestCase):
         result = select_track(listing, languages=["en"])
         self.assertIsNotNone(result)
         assert result is not None
-        self.assertEqual(result.language_code, "en")
+        self.assertEqual(result.track.language_code, "en")
 
         # And with no `languages` either, tier 5's fallback still resolves --
         # neither missing signal is treated as an error.
         fallback = select_track(listing)
         self.assertIsNotNone(fallback)
         assert fallback is not None
-        self.assertEqual(fallback.language_code, "en")
+        self.assertEqual(fallback.track.language_code, "en")
 
 
 class TestSortTracks(unittest.TestCase):
