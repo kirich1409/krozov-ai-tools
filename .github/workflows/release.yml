@@ -1,50 +1,159 @@
 name: Release
 
-# `workflow_dispatch` is declared here ahead of the release-wiring restructure
-# and does nothing on its own. GitHub only offers manual dispatch for a
-# workflow whose *default-branch* copy declares the trigger, so a restructured
-# copy on a feature branch cannot be dry-run until this declaration is on
-# `main` -- which is the whole point of landing it separately and early.
+# The release trigger is the PER-PLUGIN tag (D1): `youtube-transcript--v0.2.0`,
+# `maven-mcp--v0.28.0`. The unified `v*` trigger is gone, and with it the step
+# that derived per-plugin tags from a unified one -- along with the "would
+# clobber existing tag" failure class that step hit on v0.1.0. Historical `v*`
+# tags stay as history; a separate guard workflow makes a new `v*` push fail
+# loudly instead of silently doing nothing.
 #
-# It is inert by construction: the only job is gated on `github.event_name ==
-# 'push'`, so a dispatch produces a run whose job is skipped. There is
-# deliberately no `dry_run` input: a manual run must never be able to publish,
-# because the ancestry check below is skipped on non-tag events and a
-# publishing dispatch would therefore release unreviewed code.
+# `workflow_dispatch` is ALWAYS a dry run (D4). There is deliberately no
+# `dry_run` input: a false value would have attested and published from an
+# arbitrary unreviewed branch holding `id-token: write` and `contents: write`,
+# bypassing the ancestry check whose entire purpose is refusing exactly that.
+# `attest` and `publish` gate on `github.event_name == 'push'`, so the escape
+# hatch cannot be forged rather than merely being discouraged.
 on:
   push:
-    tags: ["v*"]
+    tags: ["*--v*"]
   workflow_dispatch:
     inputs:
       plugin:
-        description: "Plugin whose release path to dry-run (used after the restructure lands)"
-        type: choice
+        description: "Plugin to dry-run (a dispatch never attests and never publishes)"
         required: true
+        type: choice
         options:
           - youtube-transcript
           - maven-mcp
 
+# Least privilege by default; every job restates exactly what it needs. Job-level
+# `permissions:` REPLACES this rather than extending it, so a job that checks out
+# must restate `contents: read`.
+permissions: {}
+
+# Keyed on what identifies the release. `gate`'s resolved outputs do not exist at
+# workflow level, and on push the tag name already IS `<plugin>--v<version>`; on
+# dispatch nothing is published, so plugin + ref is enough to keep two dry runs
+# apart. `cancel-in-progress: false`: a half-cancelled publish is worse than a
+# queued one.
+concurrency:
+  group: release-${{ github.event_name == 'push' && github.ref_name || format('dispatch-{0}-{1}', github.event.inputs.plugin, github.ref_name) }}
+  cancel-in-progress: false
+
 jobs:
-  publish:
-    if: github.event_name == 'push'
+  # ---------------------------------------------------------------------------
+  # gate -- resolve what is being released, then refuse to release it if any
+  # repo-wide check fails. Runs on every event; nothing here writes anything.
+  # ---------------------------------------------------------------------------
+  gate:
+    name: Gate
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    defaults:
-      run:
-        working-directory: plugins/maven-mcp
 
     permissions:
-      contents: write
+      contents: read
+
+    outputs:
+      plugin: ${{ steps.resolve.outputs.plugin }}
+      version: ${{ steps.resolve.outputs.version }}
+      has_bundle: ${{ steps.resolve.outputs.has_bundle }}
 
     steps:
-      # Full history so we can verify the tag commit is reachable from main
-      # (shallow tag-only checkout would make merge-base checks meaningless).
+      # Full history so the ancestry check below is meaningful (a shallow
+      # tag-only checkout would make merge-base checks vacuous).
+      # persist-credentials: false -- this job pushes nothing.
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          persist-credentials: false
 
+      - name: Resolve plugin and version
+        id: resolve
+        # Every workflow-controlled value reaches bash through `env:` and is
+        # referenced as "$VAR" (D7). Never `${{ }}` inside the script text:
+        # Actions substitutes into the TEXT before bash parses it, so quoting on
+        # the author's side cannot help. Measured during review: `actionlint`
+        # does not flag `github.ref_name` in a `run:` body (it does flag
+        # `github.event.issue.title` in the identical position), so this rule is
+        # the control -- the linter is not.
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          TAG: ${{ github.ref_name }}
+          INPUT_PLUGIN: ${{ github.event.inputs.plugin }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT_NAME" = "push" ]; then
+            # Anchored allowlist, never a prefix strip. Measured during review:
+            # `git check-ref-format` accepts tag names containing command
+            # substitution, ';', '&&', '|' and quotes, so the tag name is
+            # untrusted input until it has matched THIS pattern.
+            if [[ "$TAG" =~ ^([a-z0-9-]+)--v([0-9]+\.[0-9]+\.[0-9]+)$ ]]; then
+              plugin="${BASH_REMATCH[1]}"
+              version="${BASH_REMATCH[2]}"
+            else
+              echo "::error::tag is not of the form <plugin>--v<major>.<minor>.<patch>"
+              exit 1
+            fi
+          else
+            # Dispatch: `github.ref_name` is a BRANCH name here, so parsing it
+            # is wrong in both directions -- a strict parse fails every dry run,
+            # a lax one feeds branch names into the shell (D6). The plugin comes
+            # from the enumerated choice input, the version from
+            # marketplace.json, and an empty lookup is a hard error below.
+            plugin="$INPUT_PLUGIN"
+            version=$(jq -r --arg n "$plugin" \
+              '.plugins[] | select(.name == $n) | .version' .claude-plugin/marketplace.json)
+          fi
+
+          # Same shape assertion on both paths. The choice input is validated by
+          # GitHub today; this is the only line that asserts the value is safe to
+          # put in a path, and it costs nothing to keep.
+          if [[ ! "$plugin" =~ ^[a-z0-9-]+$ ]]; then
+            echo "::error::resolved plugin name is not [a-z0-9-]+"
+            exit 1
+          fi
+
+          # Membership BEFORE the name is used to build any path.
+          if [ -z "$(jq -r --arg n "$plugin" \
+                '.plugins[] | select(.name == $n) | .name' .claude-plugin/marketplace.json)" ]; then
+            echo "::error::plugin '$plugin' is not listed in .claude-plugin/marketplace.json"
+            exit 1
+          fi
+
+          if [ -z "$version" ] || [ "$version" = "null" ]; then
+            echo "::error::no version resolved for plugin '$plugin'"
+            exit 1
+          fi
+          if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::resolved version is not semver: $version"
+            exit 1
+          fi
+
+          # A plugin has a bundle iff it carries an mcpb manifest template (D8).
+          # This means the WORKFLOW needs no edit for a second bundled plugin.
+          # scripts/pack-mcpb.sh still hardcodes youtube-transcript's paths and
+          # does need one -- the workflow being generic is not the same claim.
+          if [ -f "plugins/$plugin/mcpb/manifest.template.json" ]; then
+            has_bundle=true
+          else
+            has_bundle=false
+          fi
+
+          {
+            printf 'plugin=%s\n' "$plugin"
+            printf 'version=%s\n' "$version"
+            printf 'has_bundle=%s\n' "$has_bundle"
+          } >> "$GITHUB_OUTPUT"
+          echo "Resolved: plugin=$plugin version=$version has_bundle=$has_bundle"
+
+      # Push only: on a dispatch there is no tag to place, and D4 guarantees a
+      # dispatch cannot publish anything that would need this guarantee.
+      #
+      # Honest scope: this guards against maintainer accident, not against a
+      # party with push access -- the workflow that runs for a tag is the
+      # workflow AT the tagged commit. It is not a security boundary.
       - name: Verify tag commit is reachable from main
-        working-directory: .
+        if: github.event_name == 'push'
         run: |
           set -euo pipefail
           git fetch origin main
@@ -54,9 +163,23 @@ jobs:
           fi
           echo "Tag ${GITHUB_REF_NAME} (${GITHUB_SHA}) is reachable from origin/main."
 
+      # GITHUB_REF_NAME is a runner-provided environment variable, not a `${{ }}`
+      # interpolation -- the D7 rule is satisfied by construction here. The full
+      # per-plugin tag is passed, not a stripped version: validate.sh parses it
+      # with the same anchored pattern and asserts THAT plugin's three version
+      # locations, so a tag naming plugin A can no longer pass on plugin B's
+      # version coincidence.
       - name: Verify all versions match tag
-        working-directory: .
-        run: bash scripts/validate.sh --check-tag "${GITHUB_REF_NAME#v}"
+        if: github.event_name == 'push'
+        run: bash scripts/validate.sh --check-tag "$GITHUB_REF_NAME"
+
+      # Every event, including dispatch: a dry run must skip the tag-specific
+      # check only, not validation wholesale. On push this repeats the L1-L9
+      # suite that `--check-tag` also runs; the duplication is deliberate and
+      # costs seconds, whereas making it conditional puts the only unconditional
+      # validation on the path that does NOT publish.
+      - name: Validate marketplace and plugin configs
+        run: bash scripts/validate.sh
 
       # Oldest supported runtime (3.9 per plugins/maven-mcp/AGENTS.md). CI
       # already matrices 3.9+3.13; the release gate must also pin 3.9 so a
@@ -66,87 +189,279 @@ jobs:
         with:
           python-version: "3.9"
 
-      # working-directory: . overrides the job's defaults.run.working-directory
-      # (plugins/maven-mcp); without it the -s path would double-resolve to
-      # plugins/maven-mcp/plugins/maven-mcp/tests and fail.
       - name: Run Python tests
-        working-directory: .
         run: python3 -m unittest discover -s plugins/maven-mcp/tests
 
-      # The release gate runs every plugin's suite, not just maven-mcp's: the
-      # tag ships one commit of the whole repo, so a break in any plugin is a
-      # break in what the release publishes, released plugin or not.
-      # working-directory: . overrides the job's
-      # defaults.run.working-directory (plugins/maven-mcp) for the same reason
-      # as the step above: without it, the -s path would resolve relative to
-      # plugins/maven-mcp instead of the repo root.
+      # The release gate runs every plugin's suite, not just the released
+      # plugin's: the tag ships one commit of the whole repo, so a break in any
+      # plugin is a break in what the release publishes.
       - name: Run Python tests (youtube-transcript)
-        working-directory: .
         run: python3 -m unittest discover -s plugins/youtube-transcript/tests
+
+  # ---------------------------------------------------------------------------
+  # pack -- build the .mcpb. Skipped, not failed, for a plugin without a bundle.
+  # Carries the supply-chain controls from ci.yml's youtube-transcript-mcpb job
+  # (pinned node, `npm ci --ignore-scripts`, the audit gate, pinned python):
+  # those are controls, not scaffolding, and the release path must not be the
+  # weaker of the two.
+  # ---------------------------------------------------------------------------
+  pack:
+    name: Pack MCPB bundle
+    needs: gate
+    if: needs.gate.outputs.has_bundle == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    permissions:
+      contents: read
+
+    outputs:
+      bundle_name: ${{ steps.checksum.outputs.bundle_name }}
+      sha256: ${{ steps.checksum.outputs.sha256 }}
+
+    steps:
+      # Default depth is enough: pack-mcpb.sh stages from the index at THIS
+      # commit (`git ls-files -s`), never from history or the working tree.
+      # persist-credentials: false is load-bearing here rather than tidy -- this
+      # job executes third-party npm code and has no reason to hold a token.
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: tools/mcpb/package-lock.json
+
+      # Pinned rather than inherited from the runner image: the smoke test
+      # launches the bundle's server, and the bundle targets 3.9.
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.9"
+
+      - name: Install mcpb toolchain
+        working-directory: tools/mcpb
+        run: npm ci --ignore-scripts
+
+      # Audit gate for the pinned mcpb toolchain, verbatim from ci.yml. `set -euo
+      # pipefail` and the report-shape assertion are load-bearing, not cosmetic:
+      # a `run:` block is `bash -e` WITHOUT pipefail by default, so on a registry
+      # outage `jq` dies with "Cannot iterate over null", the pipeline's exit
+      # status is taken from `sort` (0), found.txt ends up empty, and the step
+      # reports success -- verified by forcing a registry outage
+      # (--registry=http://127.0.0.1:9/) and observing exactly this false green.
+      # `--audit-level` is deliberately not used: it only changes the exit code,
+      # not the JSON, so severity filtering happens in jq instead.
+      - name: Audit pinned toolchain
+        working-directory: tools/mcpb          # allowlist path is relative to this
+        run: |
+          set -euo pipefail
+          npm audit --json > audit.json || true   # exits non-zero whenever findings exist
+          jq -e 'has("vulnerabilities")' audit.json > /dev/null \
+            || { echo "::error::npm audit produced no usable report"; exit 1; }
+          # LC_ALL=C on both inputs: `comm` compares byte-wise, so both sides
+          # must be sorted byte-wise too (same convention as smoke-mcpb.sh).
+          jq -r '[.vulnerabilities[].via[]? | select(type=="object")
+                  | select(.severity=="high" or .severity=="critical")
+                  | .url | split("/")[-1]] | unique[]' audit.json | LC_ALL=C sort -u > found.txt
+          # Anchored at line start: the declared format is one id per line with
+          # free-form prose after it, so an unanchored match would also pick up
+          # ids merely *mentioned* in a rationale and allowlist them silently.
+          # `|| true` because an empty allowlist is legitimate (nothing accepted
+          # yet): grep exits 1 on no match, and under set -e + pipefail that
+          # aborts the step before the diagnostic below can name the offenders.
+          grep -oE '^GHSA-[a-z0-9-]+' audit-allowlist.txt | LC_ALL=C sort -u > allowed.txt || true
+          UNEXPECTED=$(comm -23 found.txt allowed.txt)
+          [ -z "$UNEXPECTED" ] || { echo "::error::unallowlisted advisories: $UNEXPECTED"; exit 1; }
+          # Reverse difference: an entry whose advisory was fixed upstream would
+          # otherwise stay accepted forever. Warning, not error -- an upstream
+          # fix must not turn an unrelated release red.
+          STALE=$(comm -13 found.txt allowed.txt)
+          [ -z "$STALE" ] || echo "::warning::allowlist entries no longer reported (remove them): $STALE"
+
+      # --expect-version cross-checks the tag against plugin.json inside the
+      # packer, so a mismatch cannot produce a bundle at all.
+      - name: Pack MCPB bundle
+        id: pack
+        env:
+          VERSION: ${{ needs.gate.outputs.version }}
+        run: bash scripts/pack-mcpb.sh --expect-version "$VERSION"
+
+      - name: Smoke test bundle
+        env:
+          MCPB_PATH: ${{ steps.pack.outputs.mcpb_path }}
+        run: bash scripts/smoke-mcpb.sh --require-checksum "$MCPB_PATH"
+
+      # The digest crosses the job boundary as a JOB OUTPUT, not as a file inside
+      # the artifact (D9): `attest` and `publish` must check the downloaded bytes
+      # against a value that did not travel with them, otherwise the check proves
+      # only that the artifact is internally consistent.
+      - name: Record bundle checksum
+        id: checksum
+        env:
+          MCPB_PATH: ${{ steps.pack.outputs.mcpb_path }}
+        run: |
+          set -euo pipefail
+          bundle_name=$(basename "$MCPB_PATH")
+          sha256=$(sha256sum "$MCPB_PATH" | cut -d' ' -f1)
+          if [ -z "$sha256" ]; then
+            echo "::error::empty checksum for $MCPB_PATH"
+            exit 1
+          fi
+          {
+            printf 'bundle_name=%s\n' "$bundle_name"
+            printf 'sha256=%s\n' "$sha256"
+          } >> "$GITHUB_OUTPUT"
+          echo "Packed $bundle_name sha256=$sha256"
+
+      - name: Upload bundle artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: mcpb-bundle
+          path: |
+            ${{ steps.pack.outputs.mcpb_path }}
+            ${{ steps.pack.outputs.mcpb_sha256_path }}
+          if-no-files-found: error
+          retention-days: 14
+
+  # ---------------------------------------------------------------------------
+  # attest -- provenance is minted BEFORE publication (D3): an attestation over
+  # bytes nobody received is harmless, a download nobody can verify is not.
+  #
+  # A separate job rather than extra steps inside `pack` (D9's second option):
+  # `pack` runs third-party npm code, and folding the attestation in would hand
+  # that code an OIDC signing token. The transfer is removed from the trust path
+  # by verifying the download against `pack`'s job output before signing, which
+  # is D9's first option and costs one step.
+  # ---------------------------------------------------------------------------
+  attest:
+    name: Attest build provenance
+    needs: [gate, pack]
+    if: ${{ github.event_name == 'push' && needs.gate.outputs.has_bundle == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    # Job-level permissions replace the workflow-level `{}` wholesale.
+    # `artifact-metadata: write` is required by actions/attest v4 for the
+    # artifact storage record (documented in its README alongside id-token and
+    # attestations); T-3's dry run does not exercise this job, so the first real
+    # tag is the first execution of these scopes.
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+      artifact-metadata: write
+
+    steps:
+      - name: Download bundle artifact
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: mcpb-bundle
+          path: dist
+
+      - name: Verify downloaded bytes against pack's checksum
+        env:
+          BUNDLE_NAME: ${{ needs.pack.outputs.bundle_name }}
+          EXPECTED_SHA256: ${{ needs.pack.outputs.sha256 }}
+        run: |
+          set -euo pipefail
+          actual=$(sha256sum "dist/$BUNDLE_NAME" | cut -d' ' -f1)
+          if [ "$actual" != "$EXPECTED_SHA256" ]; then
+            echo "::error::checksum mismatch for $BUNDLE_NAME: downloaded $actual, pack produced $EXPECTED_SHA256"
+            exit 1
+          fi
+          echo "Verified $BUNDLE_NAME sha256=$actual"
+
+      # actions/attest, not actions/attest-build-provenance: as of v4 the latter
+      # is documented upstream as a thin wrapper over this action, with new
+      # implementations directed here. Provenance mode is the default (no
+      # predicate or sbom input). Pinned by commit SHA, like the release action.
+      - name: Attest build provenance
+        uses: actions/attest@508db95dd578ae2727ebd6217d5ba78e4fbda05d # v4.2.1
+        with:
+          subject-path: dist/${{ needs.pack.outputs.bundle_name }}
+
+  # ---------------------------------------------------------------------------
+  # publish -- the GitHub Release. The only job holding `contents: write`.
+  # ---------------------------------------------------------------------------
+  publish:
+    name: Publish GitHub Release
+    needs: [gate, pack, attest]
+    # D2, adopted whole -- both halves, because each covers a failure the other
+    # reintroduces:
+    #   * `!cancelled()` is what stops a SKIPPED pack/attest from skipping
+    #     publish. Skips propagate through `needs` by default, so without it a
+    #     bundle-less plugin (maven-mcp) never gets a release at all.
+    #   * the two `!= 'failure'` clauses are what stop a FAILED attest from
+    #     publishing an unattested asset -- which is exactly what the usual
+    #     repair for the first problem (`if: always()`) would do.
+    # Removing either half restores one of the two defects.
+    if: >-
+      ${{ !cancelled()
+          && github.event_name == 'push'
+          && needs.gate.result == 'success'
+          && needs.pack.result != 'failure'
+          && needs.attest.result != 'failure' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    permissions:
+      contents: write
+
+    steps:
+      # No checkout: softprops/action-gh-release works entirely through the API,
+      # so this job never holds a git credential on disk.
+      - name: Download bundle artifact
+        if: needs.gate.outputs.has_bundle == 'true'
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: mcpb-bundle
+          path: dist
+
+      # BEFORE the release step: publishing first and checking after would leave
+      # a window in which the wrong bytes are downloadable. Same job output as
+      # `attest` compares against, so the published bytes and the attested bytes
+      # are provably the same artifact -- `publish` never re-packs (mcpb pack is
+      # not byte-reproducible, so a re-pack would silently break provenance).
+      - name: Verify downloaded bytes against pack's checksum
+        if: needs.gate.outputs.has_bundle == 'true'
+        env:
+          BUNDLE_NAME: ${{ needs.pack.outputs.bundle_name }}
+          EXPECTED_SHA256: ${{ needs.pack.outputs.sha256 }}
+        run: |
+          set -euo pipefail
+          actual=$(sha256sum "dist/$BUNDLE_NAME" | cut -d' ' -f1)
+          if [ "$actual" != "$EXPECTED_SHA256" ]; then
+            echo "::error::checksum mismatch for $BUNDLE_NAME: downloaded $actual, pack produced $EXPECTED_SHA256"
+            exit 1
+          fi
+          echo "Verified $BUNDLE_NAME sha256=$actual"
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
         with:
+          tag_name: ${{ github.ref_name }}
+          # Explicit, because with two independent version lines a release title
+          # of just the tag reads as a repo-wide version (D11).
+          name: ${{ needs.gate.outputs.plugin }} ${{ needs.gate.outputs.version }}
+          # No sane baseline once two tag namespaces interleave: establish what
+          # this produces on the first release and replace it with an explicit
+          # body if the result is wrong.
           generate_release_notes: true
-          make_latest: true
-
-      - name: Publish per-plugin tags for plugin dependency resolution
-        working-directory: .
-        env:
-          TAG: ${{ github.ref_name }}
-        run: |
-          set -euo pipefail
-          VERSION="${TAG#v}"
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          # actions/checkout fetches only the tag that triggered the workflow,
-          # so sibling per-plugin tags from previous releases won't be known
-          # locally. Fetch all tags so the rev-parse existence check below
-          # matches the remote state.
-          #
-          # `--force` is load-bearing, not defensive. actions/checkout leaves a
-          # *lightweight* local tag at the checked-out commit, so when the
-          # release tag is *annotated* the remote ref names a different object
-          # and a plain fetch refuses it ("would clobber existing tag"),
-          # failing the step under `bash -e` before a single per-plugin tag is
-          # created. Observed on v0.1.0, the first annotated release tag; every
-          # earlier release happened to use a lightweight tag and never hit it.
-          # Overwriting local tags is exactly what this fetch is for -- it
-          # exists only so the existence check below sees remote state.
-          echo "Fetching remote tags..."
-          git fetch --tags --force origin
-          # Claude Code resolves plugin dependencies through tags of the form
-          # {plugin-name}--v{version}. Push each tag independently so a failure
-          # on one plugin does not abort the rest, and every outcome is logged.
-          #
-          # Plugin versions are independent: tag ${TAG} releases only the
-          # plugins standing on ${VERSION}. Everything else is skipped with a
-          # log line -- stamping a per-plugin tag on an unchanged plugin would
-          # claim a release that never happened (that is how tags for long
-          # deleted plugins ended up in the tag history).
-          rc=0
-          while IFS=$'\t' read -r plugin plugin_version; do
-            if [ "${plugin_version}" != "${VERSION}" ]; then
-              echo "Skipping ${plugin}: not part of this release (version ${plugin_version}, tag ${VERSION})."
-              continue
-            fi
-            per_plugin_tag="${plugin}--${TAG}"
-            if git rev-parse -q --verify "refs/tags/${per_plugin_tag}" >/dev/null; then
-              echo "Tag ${per_plugin_tag} already exists locally — skipping."
-              continue
-            fi
-            echo "Creating ${per_plugin_tag}..."
-            if ! git tag -a "${per_plugin_tag}" -m "Release ${plugin} ${VERSION}"; then
-              echo "::error::Failed to create ${per_plugin_tag}" >&2
-              rc=1
-              continue
-            fi
-            echo "Pushing ${per_plugin_tag}..."
-            if git push origin "${per_plugin_tag}"; then
-              echo "Pushed ${per_plugin_tag}."
-            else
-              echo "::error::Failed to push ${per_plugin_tag}" >&2
-              rc=1
-            fi
-          done < <(jq -r '.plugins[] | [.name, .version] | @tsv' .claude-plugin/marketplace.json)
-          exit "$rc"
+          # NOT `true` (D11): "latest" is one repo-global pointer while the
+          # plugins version independently, so forcing it would hand a maven-mcp
+          # release to someone following a youtube-transcript link. `legacy`
+          # leaves GitHub's own date-based rule in place; the README links the
+          # plugin's tag namespace rather than /releases/latest.
+          make_latest: legacy
+          # Assets only when the plugin has a bundle. The empty string is not a
+          # guess: in the pinned revision, `parseInputFiles('')` yields `[]` and
+          # the upload path is guarded by `input_files.length > 0`
+          # (src/util.ts:82, src/main.ts:56), so a bundle-less release simply
+          # gets no assets. fail_on_unmatched_files therefore fires only when a
+          # bundle WAS expected and is missing.
+          files: ${{ needs.gate.outputs.has_bundle == 'true' && 'dist/*.mcpb,dist/*.mcpb.sha256' || '' }}
+          fail_on_unmatched_files: true
