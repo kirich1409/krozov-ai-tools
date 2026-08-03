@@ -29,10 +29,12 @@ _CALLER_REQUIREMENTS_NOTE = (
     "separate artifact alongside the verbatim one, listing what was changed; "
     "numbers, dates, scores, and proper nouns are never silently corrected. "
     "(2) Tell the user which track was used, naming `resolvedTrack.languageCode` "
-    "and `resolvedTrack.kind`. (3) If `alternativeTracks` is present and the user "
-    "did not pick a track, ask which one to use before continuing -- the same "
-    "language often has both a manual and an auto-generated track whose wording "
-    "differs. (4) On `status: \"language_unavailable\"`, repeat "
+    "and `resolvedTrack.kind`. (3) If `alternativeTracks` holds a track whose "
+    "`languageCode` matches `resolvedTrack.languageCode` and the user did not pick "
+    "a track, ask which one to use before continuing -- the same language often has "
+    "both a manual and an auto-generated track whose wording differs. Alternatives "
+    "in other languages need no such question: name them only if they are useful. "
+    "(4) On `status: \"language_unavailable\"`, repeat "
     "`availableLanguages` to the user rather than reporting only the failure."
 )
 

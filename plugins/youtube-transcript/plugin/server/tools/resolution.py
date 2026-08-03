@@ -38,15 +38,24 @@ class TrackSelection(NamedTuple):
     basis: str
 
 
-# AC-28's closed set, one value per AC-2 tier, in tier order. Named here (rather
-# than as bare string literals at each `return` site) so a test can assert the set
-# is total over the tiers and that no other value can reach the envelope.
+# AC-28's closed set, one value per AC-2 tier, in tier order. Each tier's value is
+# a named constant that `select_track()` below returns *and* `tools/get_transcript.py`
+# compares against -- deliberately not a bare string literal at each `return` site,
+# which would leave `SELECTION_BASES` unread by any product code and reduce the
+# closed-set test to comparing a constant with its own copy (a mutation adding a
+# sixth value to the wire survived that version of the test).
+BASIS_TRACK_ID = "track_id"
+BASIS_LANGUAGES = "languages"
+BASIS_DEFAULT_AUDIO_LANGUAGE = "default_audio_language"
+BASIS_UPSTREAM_DEFAULT = "upstream_default"
+BASIS_FALLBACK = "fallback"
+
 SELECTION_BASES: Tuple[str, ...] = (
-    "track_id",
-    "languages",
-    "default_audio_language",
-    "upstream_default",
-    "fallback",
+    BASIS_TRACK_ID,
+    BASIS_LANGUAGES,
+    BASIS_DEFAULT_AUDIO_LANGUAGE,
+    BASIS_UPSTREAM_DEFAULT,
+    BASIS_FALLBACK,
 )
 
 
@@ -135,7 +144,7 @@ def select_track(
         kind, language_code = parsed
         for track in listing.tracks:
             if track.kind == kind and track.language_code == language_code:
-                return TrackSelection(track, "track_id")
+                return TrackSelection(track, BASIS_TRACK_ID)
         return None
 
     sorted_tracks = sort_tracks(listing.tracks)
@@ -145,19 +154,19 @@ def select_track(
         # is a hard stop. A match returns immediately; a non-match returns
         # `None` immediately, without falling through to tiers 3-5 below.
         matched = _match_languages(sorted_tracks, languages)
-        return None if matched is None else TrackSelection(matched, "languages")
+        return None if matched is None else TrackSelection(matched, BASIS_LANGUAGES)
 
     if listing.default_audio_language is not None:
         for track in sorted_tracks:
             if track.language_code == listing.default_audio_language:
-                return TrackSelection(track, "default_audio_language")
+                return TrackSelection(track, BASIS_DEFAULT_AUDIO_LANGUAGE)
 
     for track in sorted_tracks:
         if track.is_default:
-            return TrackSelection(track, "upstream_default")
+            return TrackSelection(track, BASIS_UPSTREAM_DEFAULT)
 
     if sorted_tracks:
-        return TrackSelection(sorted_tracks[0], "fallback")
+        return TrackSelection(sorted_tracks[0], BASIS_FALLBACK)
     return None
 
 

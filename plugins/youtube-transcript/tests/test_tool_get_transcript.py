@@ -510,11 +510,12 @@ class TestAlternativeTracks(unittest.TestCase):
         args: Dict[str, Any],
         *,
         resolved_track_id: str,
+        default_audio_language: Optional[str] = None,
     ) -> domain.ToolOutcome:
         video_id_str = "dQw4w9WgXcQ"
         transcript = domain.Transcript(segments=make_segments(2))
         session = FakeSession(
-            _listing(tracks, default_audio_language=None),
+            _listing(tracks, default_audio_language=default_audio_language),
             transcripts={track.track_id: transcript for track in tracks},
         )
         provider = FakeProvider(normalize_result=domain.VideoId(video_id_str), session=session)
@@ -536,6 +537,42 @@ class TestAlternativeTracks(unittest.TestCase):
             [manual_ru, auto_ru], {"languages": ["ru"]}, resolved_track_id="manual:ru"
         )
         self.assertEqual(outcome.payload["alternative_tracks"], (auto_ru,))
+
+    def test_alternative_tracks_present_when_default_audio_language_resolved(self) -> None:
+        """AC-27 on tier 3 -- the tier the observed defect actually came in on: the
+        caller passed no `languages` at all, so the server picked the language, and
+        the list of what it did not pick is the only signal that it chose. Asserted
+        as presence-and-content, not just as `selectionBasis`: a suppression
+        condition widened to cover this tier leaves the basis correct and the list
+        gone."""
+        manual_ru = _track("ru", "manual")
+        manual_en = _track("en", "manual")
+        outcome = self._run(
+            [manual_ru, manual_en],
+            {},
+            resolved_track_id="manual:ru",
+            default_audio_language="ru",
+        )
+        self.assertEqual(outcome.payload["selectionBasis"], "default_audio_language")
+        self.assertEqual(outcome.payload["alternative_tracks"], (manual_en,))
+
+    def test_alternative_tracks_present_when_upstream_default_resolved(self) -> None:
+        """AC-27 on tier 4: upstream picked the track, the caller named nothing."""
+        manual_en = _track("en", "manual")
+        default_ru = _track("ru", "manual", is_default=True)
+        outcome = self._run([manual_en, default_ru], {}, resolved_track_id="manual:ru")
+        self.assertEqual(outcome.payload["selectionBasis"], "upstream_default")
+        self.assertEqual(outcome.payload["alternative_tracks"], (manual_en,))
+
+    def test_alternative_tracks_present_when_fallback_resolved(self) -> None:
+        """AC-27 on tier 5: nothing at all pointed at a language, so the first
+        sorted track won by default -- the weakest signal of the five, and the one
+        where naming the alternatives matters most."""
+        auto_zz = _track("zz", "auto")
+        manual_aa = _track("aa", "manual")
+        outcome = self._run([auto_zz, manual_aa], {}, resolved_track_id="manual:aa")
+        self.assertEqual(outcome.payload["selectionBasis"], "fallback")
+        self.assertEqual(outcome.payload["alternative_tracks"], (auto_zz,))
 
     def test_alternative_tracks_absent_for_explicit_track_id(self) -> None:
         """AC-27's first negative case: the caller already chose, so naming the
@@ -658,8 +695,12 @@ class TestSelectionBasis(unittest.TestCase):
         self.assertEqual(self._basis(tracks, {}), "fallback")
 
     def test_basis_values_are_the_declared_closed_set(self) -> None:
-        """Every value this module can emit is one `protocol/envelope.py` and the
-        spec both name -- no sixth string can appear on the wire."""
+        """The five constants `select_track()` returns are exactly the five values
+        AC-28 and the spec name -- no sixth string can appear on the wire. Load-
+        bearing only because every `return` site emits one of these constants
+        rather than its own literal: with bare literals at the return sites this
+        assertion compared the tuple with a copy of itself and survived a sixth
+        value reaching the wire."""
         self.assertEqual(
             set(resolution.SELECTION_BASES),
             {
@@ -670,6 +711,35 @@ class TestSelectionBasis(unittest.TestCase):
                 "fallback",
             },
         )
+
+
+class TestSelectionFieldsReachTheWire(unittest.TestCase):
+    """AC-27/AC-28 across the handler/envelope seam. `TestSelectionBasis` above
+    reads `outcome.payload` and `test_envelope.py` builds payloads by hand, so
+    neither notices if `_construct_wire_payload` stops passing the real basis
+    through -- a mutation hardcoding `wire["selectionBasis"] = "languages"` survived
+    both. This test is the only one that runs a real `handle()` result through
+    `envelope.build()`, and it deliberately uses a basis other than `languages`."""
+
+    def test_server_chosen_basis_and_alternatives_survive_build(self) -> None:
+        import protocol.envelope as envelope
+
+        video_id = domain.VideoId("dQw4w9WgXcQ")
+        auto_zz = _track("zz", "auto")
+        manual_aa = _track("aa", "manual")
+        transcript = domain.Transcript(segments=make_segments(2))
+        session = FakeSession(
+            _listing([auto_zz, manual_aa]),
+            transcripts={auto_zz.track_id: transcript, manual_aa.track_id: transcript},
+        )
+        provider = FakeProvider(normalize_result=video_id, session=session)
+
+        outcome = get_transcript.handle(provider, _deadline(), {"video": "dQw4w9WgXcQ"})
+        wire = envelope.build(outcome, video=video_id)
+
+        self.assertEqual(wire["selectionBasis"], "fallback")
+        self.assertEqual(wire["resolvedTrack"]["languageCode"], "aa")
+        self.assertEqual([entry["trackId"] for entry in wire["alternativeTracks"]], ["auto:zz"])
 
 
 if __name__ == "__main__":

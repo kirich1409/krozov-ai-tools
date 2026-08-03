@@ -45,11 +45,15 @@ from formats import FormatOptions, MAX_PAGE_CHARS, MAX_PAGES
 from providers.base import TranscriptProvider, UpstreamChanged
 from tools import cursor as tools_cursor
 from tools import outcome_from_error
-from tools.resolution import select_track, sort_tracks, validate_languages
+from tools.resolution import BASIS_TRACK_ID, select_track, sort_tracks, validate_languages
 
 # AC-3's cap, shared with AC-1: at most 50 entries in `availableLanguages` --
 # and, per AC-27, the same cap on `alternativeTracks` (deliberately the one
-# constant, not a second 50 that could drift away from this one).
+# constant, not a second 50 that could drift away from this one). Hitting the cap
+# is deliberately NOT signalled on either field: a caller cannot tell "these are
+# all of them" from "these are the first 50". Accepted -- a video with >51 caption
+# tracks is far outside the case AC-27 exists for, and a truncation flag would buy
+# a wire field that is `false` on effectively every real response.
 _MAX_AVAILABLE_LANGUAGES = 50
 
 # AC-4: `format` defaults to "text" when omitted -- and, since this server's own
@@ -131,6 +135,14 @@ def _handle_fresh(provider: TranscriptProvider, deadline: Deadline, args: Dict[s
 def _handle_with_cursor(
     provider: TranscriptProvider, deadline: Deadline, args: Dict[str, Any], cursor_raw: str
 ) -> ToolOutcome:
+    """AC-28 note on continuation calls: a cursor always carries a `trackId`
+    (`tools/cursor.py`'s five fields), so every page after the first resolves by
+    tier 1 and reports `selectionBasis: "track_id"` -- even when page 1's track was
+    picked by the server on tiers 3-5 and the caller chose nothing. `selectionBasis`
+    describes how *this* call resolved its track, not how the first page did; the
+    cursor format is a wire contract and deliberately does not carry the original
+    basis forward.
+    """
     # First-phase validation (shape, enum membership, MAX_SEGMENTS ceiling) --
     # raises CursorInvalid on any failure, caught by handle()'s blanket
     # `except DomainFailure` and mapped to upstream_changed.
@@ -213,7 +225,7 @@ def _resolve_and_paginate(
     # comparison, since `sort_tracks()` returns these very objects.
     alternative_tracks = (
         tuple(track for track in sort_tracks(listing.tracks) if track is not resolved)
-        if selection.basis != "track_id"
+        if selection.basis != BASIS_TRACK_ID
         else ()
     )
 

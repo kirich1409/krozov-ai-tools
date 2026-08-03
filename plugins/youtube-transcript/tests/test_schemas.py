@@ -69,6 +69,17 @@ class TestGetTranscriptCallerRequirements(unittest.TestCase):
         self.assertIn("alternativeTracks", self.description)
         self.assertIn("ask", self.description.lower())
 
+    def test_asking_is_scoped_to_a_same_language_alternative(self) -> None:
+        """AC-29(c): the question is owed only when an alternative is in the same
+        language as the resolved track. `alternativeTracks` lists every other
+        track, so a video with `en`/`ru`/`es` tracks makes the field present on
+        almost every call -- a requirement worded as "present -> ask" would spend
+        an interaction round asking about tracks in languages the user never
+        requested and could not have meant. Checked as wording, since that is the
+        whole of this control: the field itself is unconditional (AC-27)."""
+        self.assertIn("`languageCode` matches `resolvedTrack.languageCode`", self.description)
+        self.assertIn("in other languages need no such question", self.description)
+
     def test_requires_repeating_available_languages(self) -> None:
         self.assertIn("availableLanguages", self.description)
         self.assertIn("language_unavailable", self.description)
