@@ -96,7 +96,13 @@ def _handle_fresh(provider: TranscriptProvider, deadline: Deadline, args: Dict[s
     # presence, so the `isinstance` guard must run (and short-circuit) first.
     if not isinstance(fmt, str) or fmt not in FORMATS:
         fmt = _DEFAULT_FORMAT
-    include_timestamps = bool(args.get("includeTimestamps", False))
+    # `includeTimestamps` is untrusted JSON input (schema declares it a boolean,
+    # but `protocol/dispatch.py` never checks argument type, only presence) --
+    # `bool(...)` alone would truthiness-coerce a non-bool value (e.g. the string
+    # "false", or `1`) to `True` instead of treating it as the AC-4 default, so
+    # the type must be checked explicitly before use.
+    raw_include_timestamps = args.get("includeTimestamps", False)
+    include_timestamps = isinstance(raw_include_timestamps, bool) and raw_include_timestamps
 
     return _resolve_and_paginate(
         provider,

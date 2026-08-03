@@ -4,8 +4,13 @@ with derived `estimatedCharacters`, never fetching any track's actual content.
 `tools/` (`ALLOWED_EDGES`) may import `domain/`, `formats/`, and
 `providers/base.py` -- never `providers/innertube.py` directly. This module uses
 `domain/` (`ToolOutcome`, `Status`, `TrackDescriptor`, `DomainFailure`), `formats/`
-(`estimate_characters`), and `providers/base.py` only via the `TranscriptProvider`
-type already threaded in through `handle()`'s parameter -- no new edge needed.
+(`estimate_characters`), `providers/base.py` only via the `TranscriptProvider`
+type already threaded in through `handle()`'s parameter (no new edge needed), plus
+same-package `tools/get_transcript.py::_normalize_video` (the general
+same-package-imports-always-allowed rule) -- reused rather than re-implemented so
+the `isinstance(video_arg, str)` guard against a non-string `video` argument (schema
+declares it a string, but `protocol/dispatch.py` never enforces that) lives in one
+place.
 
 Stdlib only.
 """
@@ -16,6 +21,7 @@ from domain import Deadline, DomainFailure, Status, ToolOutcome, TrackDescriptor
 from formats import estimate_characters
 from providers.base import TranscriptProvider
 from tools import outcome_from_error
+from tools.get_transcript import _normalize_video
 from tools.resolution import sort_tracks
 
 # AC-1: at most 50 tracks returned, sorted manual-before-auto then alphabetically
@@ -28,7 +34,7 @@ def handle(provider: TranscriptProvider, deadline: Deadline, args: Dict[str, Any
     # -- both `provider.open(...)` and `formats.estimate_characters(...)` can raise
     # `DeadlineExpired`, and both must map to `status: transport_error` the same way.
     try:
-        video_id = provider.normalize_video_ref(args["video"])
+        video_id = _normalize_video(provider, args.get("video"))
         if video_id is None:
             # AC-6/AC-8: normalization runs, and fails, before any outbound
             # request -- `provider.open` must not be called at all here.

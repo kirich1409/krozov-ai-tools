@@ -277,6 +277,20 @@ class TestValidateLanguages(unittest.TestCase):
         languages = ["a" * 20] * 10
         self.assertEqual(validate_languages(languages), languages)
 
+    def test_non_sequence_rejected_without_raising(self) -> None:
+        # `languages` is untrusted JSON input (schema declares it a string
+        # array, but `protocol/dispatch.py` never checks argument type, only
+        # presence) -- this docstring's own "never raises" claim requires a
+        # non-sequence value to be rejected the same way as any other cap
+        # violation, not crash `isinstance`/`len()` with a raw `TypeError`.
+        self.assertEqual(validate_languages(42), [])  # type: ignore[arg-type]
+        self.assertEqual(validate_languages({"en": 1}), [])  # type: ignore[arg-type]
+
+    def test_non_string_entry_rejected_without_raising(self) -> None:
+        # A sequence containing a non-string element must not crash
+        # `len(language)` with a raw `TypeError` either.
+        self.assertEqual(validate_languages(["en", 42]), [])  # type: ignore[list-item]
+
 
 if __name__ == "__main__":
     unittest.main()

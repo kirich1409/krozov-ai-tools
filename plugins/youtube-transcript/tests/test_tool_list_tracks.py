@@ -73,6 +73,23 @@ class TestVideoNotFound(unittest.TestCase):
         outcome = list_tracks.handle(provider, _deadline(), {"video": "garbage"})
         self.assertEqual(outcome.status, domain.Status.VIDEO_NOT_FOUND)
 
+    def test_non_string_video_returns_not_found_without_opening(self) -> None:
+        """`video` is untrusted JSON input (schema declares it a string, but
+        `protocol/dispatch.py` never checks argument type, only presence) -- a
+        non-string value must resolve to `video_not_found` via the same
+        `isinstance(video_arg, str)` guard `get_transcript._normalize_video` uses,
+        not reach `provider.normalize_video_ref` at all. `normalize_result` is
+        configured to a real `VideoId` here (not `None`, unlike the two tests
+        above) specifically so this fails loudly if the guard were ever removed:
+        `FakeProvider.normalize_video_ref` ignores its argument's type and always
+        returns whatever `normalize_result` was configured to, so without the
+        guard this would resolve successfully instead of `video_not_found`."""
+        video_id = domain.VideoId("dQw4w9WgXcQ")
+        provider = FakeProvider(normalize_result=video_id)
+        outcome = list_tracks.handle(provider, _deadline(), {"video": [1, 2, 3]})
+        self.assertEqual(outcome.status, domain.Status.VIDEO_NOT_FOUND)
+        self.assertEqual(provider.open_calls, [])
+
 
 class TestOpenAndFetchCallCounts(unittest.TestCase):
     def test_open_called_once(self) -> None:

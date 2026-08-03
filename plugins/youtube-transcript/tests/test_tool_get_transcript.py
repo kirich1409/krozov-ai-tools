@@ -397,6 +397,26 @@ class TestUntypedArgumentsRejectedCleanly(unittest.TestCase):
 
         self.assertEqual(outcome.status, domain.Status.OK)
 
+    def test_non_bool_include_timestamps_resolves_to_false(self) -> None:
+        # `bool("false")` truthiness-coerces to `True` -- the fix under test
+        # rejects a non-bool `includeTimestamps` in favor of the AC-4 default
+        # (`False`) instead of coercing it, so a plain-text response (no "[")
+        # is proof `include_timestamps` actually resolved to `False`.
+        track = _track("en")
+        transcript = domain.Transcript(segments=make_segments(2))
+        session = FakeSession(_listing([track]), transcripts={track.track_id: transcript})
+        provider = FakeProvider(normalize_result=domain.VideoId("dQw4w9WgXcQ"), session=session)
+
+        outcome = get_transcript.handle(
+            provider,
+            _deadline(),
+            {"video": "dQw4w9WgXcQ", "includeTimestamps": "false"},
+        )
+
+        self.assertEqual(outcome.status, domain.Status.OK)
+        assert outcome.payload is not None
+        self.assertNotIn("[", outcome.payload["transcript"])
+
 
 class TestMaxPagesTruncation(unittest.TestCase):
     def test_max_pages_truncation_after_full_fetch(self) -> None:
