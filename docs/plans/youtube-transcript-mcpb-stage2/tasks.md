@@ -1,15 +1,38 @@
-# Tasks — Stage 2, release wiring
+# Tasks — Stage 2, release wiring (revision 2)
 
 Plan: `docs/plans/youtube-transcript-mcpb-stage2/plan.md`.
 Branch `feature/mcpb-release-wiring`, worktree `.worktrees/mcpb-release-wiring`.
 
-**Never** write a guard or an acceptance check as `! cmd` / `! cmd | grep -q .` — verified in Stage 1:
-bash exempts `!`-inverted commands from `set -e`, so the guard silently cannot fail.
+Revision 2 incorporates 40 findings from parallel devops and security reviews of revision 1, both of
+which returned BLOCK. Ordering below is load-bearing: T-0 must land on `main` before T-3 can run.
 
-**Never** assume a GitHub Actions `run:` block has `pipefail` — the default is `bash -e` without it.
-Every non-trivial block declares its own `set -euo pipefail`.
+**Never** write a guard as `! cmd` / `! cmd | grep -q .` — bash exempts `!`-inverted commands from
+`set -e`, so the guard silently cannot fail.
+
+**Never** assume a `run:` block has `pipefail` — the default is `bash -e` without it.
+
+**Never** interpolate `${{ }}` into script text for any value derived from a ref. Actions substitutes
+into the script *text* before bash sees it, so quoting cannot save it. Pass through `env:`.
 
 Do not touch `plugins/*/plugin/server/**`. Do not bump any version.
+
+---
+
+## T-0 — preparatory: dispatch trigger on `main`
+
+**files:** `.github/workflows/release.yml` (edit, minimal), own PR, merged before T-3
+
+**what:** `workflow_dispatch` is only dispatchable when declared on the default branch. Add it — with
+the `plugin` choice input and **no** `dry_run` input — plus the guard that makes it inert: every
+existing step gains `if: github.event_name == 'push'`, or the job does. A dispatch on today's
+workflow must do nothing observable.
+
+No other behaviour change. This exists solely to make T-3 possible.
+
+**acceptance:** GIVEN today's `release.yml` on `main` plus this change, WHEN dispatched, THEN it
+SHALL complete without creating a release, a tag, or an attestation.
+
+**check:** dispatch it on `main` after merge; record the run URL and per-step conclusions.
 
 ---
 
@@ -17,135 +40,165 @@ Do not touch `plugins/*/plugin/server/**`. Do not bump any version.
 
 **files:** `scripts/validate.sh` (edit)
 
-**what:** `--check-tag` currently takes a bare version and validates whichever plugins sit at it
-(`check_tag_versions`). Accept the per-plugin form as well: `--check-tag youtube-transcript--v0.1.0`
-validates that named plugin's three version locations against `0.1.0`.
+**what:** `--check-tag` currently takes a bare version and validates whichever plugins sit at it.
+Accept `--check-tag youtube-transcript--v0.1.0` as well, validating that named plugin's three version
+locations against `0.1.0`.
 
-Errors, each with a distinct message: tag does not parse as `<plugin>--v<semver>`; plugin absent from
-`marketplace.json`; named plugin's version differs from the tag's.
+Parsing follows D7: anchored `^([a-z0-9-]+)--v([0-9]+\.[0-9]+\.[0-9]+)$`, never a prefix strip.
+Distinct error messages for: unparseable tag; plugin absent from `marketplace.json`; version mismatch
+on the named plugin. Bare-version behaviour unchanged.
 
-The bare-version form keeps its current behaviour unchanged — humans and docs use it.
-
-**acceptance:** THE SYSTEM SHALL validate exactly the named plugin when given a per-plugin tag, AND
-SHALL fail with a distinct message for each of the three error classes, AND SHALL leave bare-version
-behaviour unchanged.
+**acceptance:** THE SYSTEM SHALL validate exactly the named plugin for a per-plugin tag, AND SHALL
+fail with a distinct message per error class, AND SHALL leave bare-version behaviour unchanged.
 
 **check:**
 ```
 bash scripts/validate.sh --check-tag youtube-transcript--v0.1.0   # passes
 bash scripts/validate.sh --check-tag youtube-transcript--v9.9.9   # fails: version mismatch
 bash scripts/validate.sh --check-tag nosuch--v1.0.0               # fails: unknown plugin
-bash scripts/validate.sh --check-tag not-a-tag                    # fails: unparseable
-bash scripts/validate.sh --check-tag 0.27.0                       # unchanged: maven-mcp only
+bash scripts/validate.sh --check-tag 'evil--v1.0.0;id'            # fails: unparseable
+bash scripts/validate.sh --check-tag 0.27.0                       # unchanged
 bash scripts/validate.sh                                          # green
 shellcheck scripts/validate.sh
 ```
 
 ---
 
-## T-2 — restructure `release.yml` into four jobs
+## T-2 — restructure `release.yml`
 
 **files:** `.github/workflows/release.yml` (rewrite)
 
-**what:** The plan's *Design* section is the specification: trigger, four jobs, permissions matrix,
-step→job mapping, ordering rule. Every one of the eight existing steps must land where the mapping
-table says, or be deleted only where the table says `deleted`.
+**what:** The plan's *Design* section is the specification. Every decision D1–D11 applies. Points that
+are non-obvious and were each a review finding:
 
-Required explicitly:
+- **D2's `publish` condition is adopted whole**, both halves. A condition that only restores the
+  skipped-plugin path ships unattested assets; one that only guards failure deletes the bundle-less
+  plugin's release.
+- `gate` resolves plugin/version per D6 — parse only on `push`, `choice` input plus
+  `marketplace.json` lookup on dispatch.
+- D7's anchored parse and `env:` passing throughout.
+- `pack` carries the toolchain and supply-chain steps from `ci.yml`'s `youtube-transcript-mcpb` job:
+  `setup-node`, `npm ci --ignore-scripts`, the npm audit gate, `setup-python`. These are controls, not
+  scaffolding.
+- `publish` verifies the checksum against `needs.pack.outputs.sha256` **before** the release step and
+  attaches both files via `files:`.
+- `attest` per D9 — verify before signing, or run inside `pack`.
+- `concurrency` group; `timeout-minutes` on every job; `persist-credentials: false` where no push
+  happens; `defaults.run.working-directory` dropped.
+- Pin `actions/attest-*` and `download-artifact` the way `softprops/action-gh-release` is pinned.
 
-- `permissions: {}` at workflow level; each job declares its own. `attest` restates `contents: read`
-  — job-level permissions replace rather than extend.
-- `gate` parses `github.ref_name` into `plugin`/`version` job outputs; unparseable tag or unknown
-  plugin is a hard error.
-- Ancestry check and `--check-tag` skipped on `workflow_dispatch`, everything else runs.
-- `pack`/`attest` gated on `plugins/<plugin>/mcpb/manifest.template.json` existing — data-driven,
-  never a hardcoded plugin name.
-- `attest` before `publish` (D2). Neither runs on a dry run.
-- `pack` exposes the checksum as a job output; `publish` verifies against it.
-- `defaults.run.working-directory` dropped (D5); `timeout-minutes` on every job.
-- The per-plugin tag creation step is deleted (D1).
-- `actions/attest-build-provenance` and `download-artifact` pinned like the existing
-  `softprops/action-gh-release` pin.
+**acceptance:** GIVEN a tag `<plugin>--v<version>` on a commit reachable from `main`, THEN the
+workflow SHALL gate, pack and attest when that plugin has a bundle, and publish in all cases; AND
+GIVEN a dispatch, it SHALL gate and pack and SHALL NOT attest or publish; AND GIVEN a tag naming an
+unknown plugin, it SHALL fail in `gate`; AND GIVEN a tag name containing shell metacharacters, no
+part of it SHALL reach a shell unquoted.
 
-**acceptance:** GIVEN a tag `<plugin>--v<version>` on a commit reachable from `main`, WHEN the
-workflow runs, THEN it SHALL gate, pack (when that plugin has a bundle), attest and publish in that
-order; AND GIVEN a `workflow_dispatch` dry run, it SHALL gate and pack and SHALL NOT attest or
-publish; AND GIVEN a tag naming an unknown plugin, it SHALL fail in `gate`.
-
-**check:** `actionlint .github/workflows/release.yml`; YAML parses; every step from the mapping table
-is present at its target job, verified by name.
+**check:** `actionlint` — noting that it provably does **not** catch D7's class, so additionally
+assert by grep that no `${{ github.ref_name }}` or `${{ needs.*.outputs.* }}` appears inside any
+`run:` body; every mapping-table step present at its target job, verified by name.
 
 ---
 
 ## T-3 — dry run on the real repository
 
-**files:** none (verification task)
+**files:** none (verification)
 
-**what:** Push the branch, then trigger the workflow via `workflow_dispatch` with `dry_run: true` for
-`youtube-transcript`, and again for `maven-mcp` (which has no bundle — `pack` must skip, not fail).
+**what:** Requires T-0 merged. Dispatch this branch's workflow for `youtube-transcript` (bundle
+present — `pack` must run) and for `maven-mcp` (no bundle — `pack` must skip, not fail). Neither may
+attest or publish.
 
-This is the acceptance item the whole stage exists for. It is not optional and cannot be replaced by
-reading the YAML.
+This is the acceptance item the stage exists for and cannot be replaced by reading YAML.
 
-**acceptance:** THE SYSTEM SHALL complete a dispatch dry run green for both plugins, with `pack`
-running for `youtube-transcript` and skipped for `maven-mcp`, and with `attest` and `publish` skipped
-in both.
+**acceptance:** THE SYSTEM SHALL complete a dispatch green for both plugins, with `pack` run for one
+and skipped for the other, and `attest`/`publish` skipped in both.
 
-**check:** run URLs and per-job conclusions recorded verbatim in the report. Establish while here —
-by observation, not assumption — whether `download-artifact@v4` needs `actions: read`.
+**check:** run URLs and per-job conclusions verbatim. Establish while here: whether
+`download-artifact@v4` needs `actions: read`, and whether the attest action requires
+`artifact-metadata: write`.
+
+**Stated limitation, to be repeated in the report:** the dry run exercises `gate` and `pack` only.
+`attest` and `publish` — the jobs holding the dangerous permissions — first execute on a real tag, by
+construction (D4). The first tag after this lands is a supervised release.
 
 ---
 
-## T-4 — README install section
+## T-4 — guard the retired tag form
 
-**files:** `README.md` (edit), `plugins/youtube-transcript/README.md` if one exists
+**files:** `.github/workflows/legacy-tag-guard.yml` (new)
 
-**what:** How to install the bundle: download the `.mcpb` from the release, verify, install by
-double-click. Present `gh attestation verify` (fully qualified `--signer-workflow`, exact command in
-the plan) as the authenticity control, and `shasum -a 256 -c` as corruption detection only. Do not
-present a co-located checksum as proof of origin.
+**what:** The documented procedure was `git tag v0.9.0 && git push origin v0.9.0`. After D1 that push
+triggers nothing — no run, no error — while the tag appears on GitHub and looks like a release
+happened. Every prior release used this form and it is in `docs/` and history, so future sessions will
+reach for it.
 
-`README.md` at repo root is exempt from the English rule (`CLAUDE.md`); match the file's existing
-language.
+A minimal workflow on `push: tags: ["v*"]` that fails immediately with a message naming the new
+procedure. `permissions: {}`.
+
+**acceptance:** GIVEN a `v*` tag push, THEN a run SHALL fail visibly and its message SHALL name the
+per-plugin tag form.
+
+---
+
+## T-5 — protect the tag namespace (D1a)
+
+**files:** none in-repo — a repository ruleset
+
+**what:** Verified during review: the repository has exactly one ruleset, `target: branch`. Tags in
+the distribution namespace can be created, force-updated and deleted by anyone with write access, and
+under D1 that tag is what consumers' `dependencies` ranges resolve to.
+
+Create a tag ruleset over `*--v*` forbidding deletion and non-fast-forward updates.
+
+**acceptance:** THE SYSTEM SHALL reject deletion and force-update of a `*--v*` tag.
+
+**check:** read the ruleset back from the API; attempt a force-update of a throwaway tag matching the
+pattern and record the rejection.
+
+---
+
+## T-6 — README install section
+
+**files:** `README.md` (edit)
+
+**what:** Download the `.mcpb` from the plugin's release, verify, install by double-click. Present
+provenance verification as the authenticity control with the fully-qualified `--signer-workflow`
+command from the plan, and `shasum -a 256 -c` as corruption detection only. State what verification
+does **not** prove — it pins the workflow path, not its ref.
+
+Link the plugin's tag namespace, not `/releases/latest`: with independent versions the newest release
+may belong to the other plugin (D11).
+
+Root `README.md` is exempt from the English rule; match the file's language.
 
 **acceptance:** THE SYSTEM SHALL document download, verification and installation, AND SHALL
 distinguish authenticity from corruption detection rather than conflating them.
 
 ---
 
-## T-5 — publishing documentation
+## T-7 — publishing documentation
 
-**files:** `CLAUDE.md` (edit), `AGENTS.md` (edit), `docs/PLUGIN-STANDARDS.md` (edit)
+**files:** `CLAUDE.md`, `AGENTS.md`, `docs/PLUGIN-STANDARDS.md` (edit)
 
-**what:** The release procedure changed shape: releases are triggered by `<plugin>--v<version>`,
-never by a unified `v*` tag.
+**what:** Releases are triggered by `<plugin>--v<version>`, never by a unified `v*` tag. Update the
+Publishing sections in **both** instruction files, identically where they were identical. §12 gains
+the release half promised in Stage 1 plus a recovery procedure written only from established
+behaviour of `softprops/action-gh-release` on an existing release — establish it in T-3 or state
+plainly that it is unknown. §10 gains the checklist item withheld in Stage 1: bundle job green for the
+release commit, and a green dispatch dry run before the first tag under a changed workflow.
 
-- `CLAUDE.md` and `AGENTS.md` Publishing sections — **both copies**, kept identical where they were
-  identical before.
-- `docs/PLUGIN-STANDARDS.md` §12 grows the release half it promised in Stage 1, plus a recovery
-  procedure for a partially failed release. Write recovery only from established behaviour of
-  `softprops/action-gh-release` on an existing release — establish it in T-3 or state plainly that it
-  is unknown.
-- §10 pre-release checklist gains the item Stage 1 deliberately withheld: the bundle job green for
-  the release commit, and a green dispatch dry run before the first tag under a changed workflow.
+Record the ancestry check honestly: it guards against maintainer accident, not against a party with
+push access, because the workflow that runs is the one at the tagged commit.
 
-`docs/**` and root-level docs are exempt from the English rule; match each file's existing language.
-
-**acceptance:** THE SYSTEM SHALL describe the per-plugin release procedure identically in both
-instruction files, AND SHALL document recovery only from established behaviour.
-
-**check:** `diff` the Publishing sections of `CLAUDE.md` and `AGENTS.md`; `bash scripts/validate.sh`.
+**check:** `diff` the Publishing sections of both files; `bash scripts/validate.sh`.
 
 ---
 
-## T-6 — reproducibility question, answered rather than assumed
+## T-8 — reproducibility, measured
 
 **files:** `docs/PLUGIN-STANDARDS.md` (edit)
 
-**what:** `mcpb pack` embeds mtimes, so two builds of identical inputs differ by SHA-256. Establish
-by running whether `SOURCE_DATE_EPOCH` or post-pack normalisation makes the bundle reproducible.
+**what:** `mcpb pack` embeds mtimes. Establish by running whether `SOURCE_DATE_EPOCH` or post-pack
+normalisation yields byte-identical rebuilds. Record the answer either way, with the command; if it
+does not, state what the checksum is therefore for.
 
-Record the answer either way. If it does not, say so and state what the checksum is therefore for —
-do not leave a reader to infer that a published checksum implies a rebuildable artifact.
-
-**acceptance:** THE SYSTEM SHALL record a measured answer, with the command that produced it.
+**acceptance:** THE SYSTEM SHALL record a measured answer with its command.
