@@ -82,8 +82,18 @@ jobs:
           # so sibling per-plugin tags from previous releases won't be known
           # locally. Fetch all tags so the rev-parse existence check below
           # matches the remote state.
+          #
+          # `--force` is load-bearing, not defensive. actions/checkout leaves a
+          # *lightweight* local tag at the checked-out commit, so when the
+          # release tag is *annotated* the remote ref names a different object
+          # and a plain fetch refuses it ("would clobber existing tag"),
+          # failing the step under `bash -e` before a single per-plugin tag is
+          # created. Observed on v0.1.0, the first annotated release tag; every
+          # earlier release happened to use a lightweight tag and never hit it.
+          # Overwriting local tags is exactly what this fetch is for -- it
+          # exists only so the existence check below sees remote state.
           echo "Fetching remote tags..."
-          git fetch --tags origin
+          git fetch --tags --force origin
           # Claude Code resolves plugin dependencies through tags of the form
           # {plugin-name}--v{version}. Push each tag independently so a failure
           # on one plugin does not abort the rest, and every outcome is logged.
