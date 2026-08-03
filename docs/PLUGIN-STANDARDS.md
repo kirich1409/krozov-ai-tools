@@ -25,7 +25,7 @@ Plugins with no plugin-specific invariants beyond the project root `CLAUDE.md` a
 Обязательное:
 
 - `name` — kebab-case, уникальный в пределах `marketplace.json`
-- `version` — валидный semver (`0.9.0`, `1.0.0`). В монорепо все плагины релизятся одной версией (unified versioning).
+- `version` — валидный semver (`0.9.0`, `1.0.0`). У каждого плагина своя версия: релиз одного плагина не двигает версии остальных.
 
 Обязательно рекомендуется (для самодостаточности плагина без опоры на marketplace):
 
@@ -112,20 +112,21 @@ Frontmatter:
 - Semver ranges: `^`, `~`, exact (`=`), range (`>=1.4.0`)
 - Для resolution нужны **git-теги формата `{plugin-name}--v{version}`** в release workflow
 - Cross-marketplace deps требуют allowlist в корневом `marketplace.json`
-- При unified versioning в монорепо — рекомендуется `^X.Y.0` (совместимость в рамках одной major-minor серии)
+- Версии плагинов независимы, поэтому range берётся от реальной версии плагина-зависимости, а не от версии репо; `^X.Y.0` — разумный дефолт
 
 ## 8. Marketplace (`marketplace.json`)
 
 - Один `marketplace.json` на репо (в `.claude-plugin/`)
 - Для каждого плагина entry: `name`, `source`, `description`, `version`, `author`, опционально `homepage`, `category`, `keywords`
-- `version` в marketplace entry **должна совпадать** с `version` в `plugin.json` (unified versioning)
+- `version` в marketplace entry **должна совпадать** с `version` в `plugin.json` того же плагина
 - `source: "./plugins/<name>"` — относительный path от корня репо
 
 ## 9. Versioning
 
-- **Unified versioning**: все плагины в репо релизятся одной версией при каждом релизе
+- **Независимые версии**: у каждого плагина своя версия, релиз одного не бампает остальные
 - Bump правила: MAJOR — breaking, MINOR — features/additions, PATCH — fixes
 - Tag format: корневой `vX.Y.Z` + per-plugin `{plugin-name}--vX.Y.Z` (для semver resolution в `dependencies`)
+- Тег `vX.Y.Z` выпускает те плагины, чья версия равна `X.Y.Z`; per-plugin теги создаются только им. Тег, не совпавший ни с одним плагином, — ошибка
 - `CHANGELOG.md` на уровне репо (если нужно — per-plugin)
 
 ## 10. Pre-release checklist
@@ -134,7 +135,8 @@ Frontmatter:
 
 - [ ] `bash validate.sh` — зелёный
 - [ ] `plugin-dev:plugin-validator` agent на каждом плагине — PASS или только Minor
-- [ ] Версии в `plugin.json` каждого плагина и в `marketplace.json` — синхронизированы
+- [ ] У каждого плагина три его места версии (`plugin.json`, entry в `marketplace.json`, `SERVER_VERSION` в bundled server) — синхронизированы между собой; версии разных плагинов совпадать не обязаны
+- [ ] Версия выпускаемого плагина равна версии тега; плагины на других версиях этим релизом не выпускаются — `validate.sh --check-tag X.Y.Z` печатает по ним `SKIP:`
 - [ ] Нет `.DS_Store`, `*-workspace/` runtime-папок в коммитах
 - [ ] Все shell-скрипты executable (`find plugins -name "*.sh" ! -executable`)
 - [ ] Описания skills (`description` frontmatter) ≤ 1024 символа

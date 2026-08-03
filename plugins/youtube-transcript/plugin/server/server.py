@@ -35,7 +35,7 @@ from protocol.schemas import TOOL_SCHEMAS
 # `User-Agent` header sent to YouTube's InnerTube API, T-10 -- a completely
 # separate string this module has no `ALLOWED_EDGES` route to and no reason to
 # reference).
-SERVER_VERSION = "0.27.0"
+SERVER_VERSION = "0.1.0"
 USER_AGENT = f"youtube-transcript/{SERVER_VERSION}"
 
 _SCHEMAS_BY_NAME: Dict[str, Dict[str, Any]] = {schema["name"]: schema for schema in TOOL_SCHEMAS}

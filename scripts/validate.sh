@@ -3,7 +3,9 @@
 #
 # Usage:
 #   bash scripts/validate.sh                    # full validation
-#   bash scripts/validate.sh --check-tag 1.2.3  # + verify all versions match tag
+#   bash scripts/validate.sh --check-tag 1.2.3  # + verify the plugins released by
+#                                               #   tag v1.2.3 (those standing on
+#                                               #   that version) are consistent
 #
 # Exit code: 0 if all checks pass, 1 if any error found.
 set -uo pipefail
@@ -109,7 +111,7 @@ check_name_consistency() {
   done < <(jq -r '.plugins[] | [.name, .source] | @tsv' "$MARKETPLACE")
 }
 
-# ---------- L4: Unified versioning ----------
+# ---------- L4: Versioning ----------
 
 check_version_consistency() {
   echo "--- L4: Versions consistent (marketplace.json ↔ plugin.json) ---"
@@ -145,16 +147,36 @@ check_semver() {
   done < <(jq -r '.plugins[] | [.name, .version, .source] | @tsv' "$MARKETPLACE")
 }
 
+# Plugin versions are independent: a tag vX.Y.Z releases exactly those plugins
+# whose marketplace.json version equals X.Y.Z. Plugins on another version are
+# not part of this release and are skipped -- loudly, because a silent skip is
+# indistinguishable from a forgotten version bump. A tag matching no plugin at
+# all releases nothing and is treated as a typo in the tag.
 check_tag_versions() {
   local version="$1"
-  echo "--- L4: All versions match tag v${version} ---"
+  echo "--- L4: Plugins released by tag v${version} ---"
   SEMVER='^[0-9]+\.[0-9]+\.[0-9]+$'
   if ! echo "$version" | grep -qE "$SEMVER"; then
     fail "Tag version is not semver: $version"
     return
   fi
 
-  # All plugin.json files — data-driven from marketplace.json
+  local matched=0
+  while IFS=$'\t' read -r name mkt_version; do
+    if [ "$mkt_version" != "$version" ]; then
+      echo "SKIP: '$name' not part of this release (version $mkt_version)"
+      continue
+    fi
+    matched=$((matched + 1))
+    ok "marketplace.json '$name' version $mkt_version"
+  done < <(jq -r '.plugins[] | [.name, .version] | @tsv' "$MARKETPLACE")
+
+  if [ "$matched" -eq 0 ]; then
+    fail "tag v${version} matches no plugin in $MARKETPLACE — it would release nothing"
+    return
+  fi
+
+  # plugin.json of the released plugins — data-driven from marketplace.json
   while IFS=$'\t' read -r name source; do
     plugin_json="${source}/.claude-plugin/plugin.json"
     if [ ! -f "$plugin_json" ]; then
@@ -167,16 +189,7 @@ check_tag_versions() {
     else
       ok "'$name' plugin.json version $plugin_version"
     fi
-  done < <(jq -r '.plugins[] | [.name, .source] | @tsv' "$MARKETPLACE")
-
-  # marketplace.json plugin versions
-  while IFS=$'\t' read -r name mkt_version; do
-    if [ "$mkt_version" != "$version" ]; then
-      fail "marketplace.json plugin '$name' version \"$mkt_version\" does not match tag v${version}"
-    else
-      ok "marketplace.json '$name' version $mkt_version"
-    fi
-  done < <(jq -r '.plugins[] | [.name, .version] | @tsv' "$MARKETPLACE")
+  done < <(jq -r --arg v "$version" '.plugins[] | select(.version == $v) | [.name, .source] | @tsv' "$MARKETPLACE")
 
   # Bundled MCP server scripts — version constants must track the tag.
   # The script path is derived from each plugin.json mcpServers entry
@@ -209,7 +222,7 @@ check_tag_versions() {
       | select(.value.command | test("^python"))
       | .value.args[]? | select(test("\\.py$"))
     ' "$plugin_json")
-  done < <(jq -r '.plugins[] | [.name, .source] | @tsv' "$MARKETPLACE")
+  done < <(jq -r --arg v "$version" '.plugins[] | select(.version == $v) | [.name, .source] | @tsv' "$MARKETPLACE")
 }
 
 # ---------- L5: plugin.json component paths ----------

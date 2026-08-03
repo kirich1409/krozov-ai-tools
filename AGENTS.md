@@ -7,7 +7,7 @@ Instructions for AI coding agents (Cursor Agent and others) working in this repo
 Rules that are not open for discussion. Violating these is an error, not a judgment call.
 
 - **Never run `npm publish` locally.** Publishing is exclusively via GitHub Actions — prevents partial releases and version skew.
-- **All 3 version locations must stay in sync.** A version bump touches `plugin.json`, `marketplace.json`, and the bundled server `server.py` (`SERVER_VERSION` + `USER_AGENT`) simultaneously — see Publishing for the list.
+- **All 3 version locations of a plugin must stay in sync.** Each plugin carries its version in three places, and a bump touches all three of *that plugin* simultaneously — the other plugin is not touched. See Publishing for the per-plugin list.
 - **Critical or Major violations of PLUGIN-STANDARDS.md block the release.** Fix first, release later.
 - **All extension content is written in English.** Skills (`SKILL.md`, references, evals), agents (`agents/*.md`), hooks, MCP servers, plugin manifests (`plugin.json`, `marketplace.json`), and any prompt/instruction text shipped inside `plugins/` must be in English. User-facing chat in any language is fine; the shipped extension content itself targets an international audience and must not contain non-English prose. Code identifiers and external API field names keep their original form regardless of language. **Excluded:** repository documentation under `docs/` and top-level `README.md` — these are maintainer-facing and may be in any language. Do not "fix" them to English.
 
@@ -46,16 +46,22 @@ Always work on changes in a separate branch using a worktree (`.worktrees/`). Cr
 
 ## Publishing
 
-All plugins use **unified versioning** — every release bumps all plugins to the same version.
+**Plugin versions are independent.** Each plugin moves on its own version line; a release does not drag the others along.
 
-To release a new version:
-1. Bump the version in all three of these locations to the new version:
-   - `plugins/maven-mcp/plugin/.claude-plugin/plugin.json` (`version`)
-   - `.claude-plugin/marketplace.json` (`version`)
-   - `plugins/maven-mcp/plugin/server/server.py` (`SERVER_VERSION` and `USER_AGENT`)
+Each plugin's version lives in three places:
+
+| Plugin | Locations |
+|--------|-----------|
+| maven-mcp | `plugins/maven-mcp/plugin/.claude-plugin/plugin.json` (`version`), `.claude-plugin/marketplace.json` (its entry's `version`), `plugins/maven-mcp/plugin/server/server.py` (`SERVER_VERSION`, `USER_AGENT` derives from it) |
+| youtube-transcript | `plugins/youtube-transcript/plugin/.claude-plugin/plugin.json` (`version`), `.claude-plugin/marketplace.json` (its entry's `version`), `plugins/youtube-transcript/plugin/server/server.py` (`SERVER_VERSION`, `USER_AGENT` derives from it) |
+
+To release:
+1. Bump all three locations of the plugin(s) you are releasing to the new version. Plugins that are not being released keep their current version.
 2. Merge to `main`.
-3. Push a git tag matching the version: `git tag v0.9.0 && git push origin v0.9.0`.
-4. GitHub Actions (`.github/workflows/release.yml`) triggers on `v*` tags: verifies all versions match the tag (`validate.sh --check-tag`), runs the Python test suite, **then creates one per-plugin tag `{plugin-name}--v{version}` for each plugin in `marketplace.json`**. These per-plugin tags are what Claude Code uses to resolve `dependencies` semver ranges.
+3. Push a git tag matching that version: `git tag v0.9.0 && git push origin v0.9.0`.
+4. GitHub Actions (`.github/workflows/release.yml`) triggers on `v*` tags. **Tag `vX.Y.Z` releases exactly the plugins whose version is `X.Y.Z`**: `validate.sh --check-tag` verifies those plugins' three locations and logs a `SKIP:` line for every plugin on another version (a tag matching no plugin at all is an error), the Python suites of all plugins run, and a per-plugin tag `{plugin-name}--v{version}` is created **only for the released plugins**. Those per-plugin tags are what Claude Code uses to resolve `dependencies` semver ranges.
+
+Consequence: two plugins can only be released under the same tag when they happen to stand on the same version. Making the per-plugin tag (`youtube-transcript--v0.1.0`) the release trigger itself is the next step; it is deferred until the `workflow_dispatch` dry-run exists, because that path cannot be tested before a tag is pushed.
 
 ## Worktrees
 
