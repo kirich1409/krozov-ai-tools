@@ -13,7 +13,7 @@ for the full acceptance list this file's `check` list is drawn from.
 """
 
 import unittest
-from typing import Optional
+from typing import Any, Dict, List, Optional, Sequence
 from unittest import mock
 
 import _helpers  # type: ignore[import-not-found]  # noqa: F401
@@ -27,6 +27,7 @@ import domain
 import formats
 import tools.cursor as cursor
 import tools.get_transcript as get_transcript
+import tools.resolution as resolution
 
 
 def _track(
@@ -456,6 +457,11 @@ class TestMaxPagesTruncation(unittest.TestCase):
         self.assertIsNone(outcome.payload["nextCursor"])
         # The ceiling response is reached only after a full fetch+decode.
         self.assertEqual(len(session.fetch_calls), 1)
+        # AC-27/AC-28: this early return is a `Status.OK` response too, so it
+        # carries the same selection fields as the normal one -- a cursor always
+        # resolves by `trackId`, so `alternativeTracks` is absent here.
+        self.assertEqual(outcome.payload["selectionBasis"], "track_id")
+        self.assertNotIn("alternative_tracks", outcome.payload)
 
 
 class TestDeadlineExpiredMapping(unittest.TestCase):
@@ -492,6 +498,178 @@ class TestDeadlineExpiredMapping(unittest.TestCase):
             outcome = get_transcript.handle(provider, _deadline(), {"video": "dQw4w9WgXcQ"})
 
         self.assertEqual(outcome.status, domain.Status.TRANSPORT_ERROR)
+
+
+class TestAlternativeTracks(unittest.TestCase):
+    """AC-27: the tracks this call did not pick, surfaced whenever the caller did
+    not name one itself."""
+
+    def _run(
+        self,
+        tracks: Sequence[domain.TrackDescriptor],
+        args: Dict[str, Any],
+        *,
+        resolved_track_id: str,
+    ) -> domain.ToolOutcome:
+        video_id_str = "dQw4w9WgXcQ"
+        transcript = domain.Transcript(segments=make_segments(2))
+        session = FakeSession(
+            _listing(tracks, default_audio_language=None),
+            transcripts={track.track_id: transcript for track in tracks},
+        )
+        provider = FakeProvider(normalize_result=domain.VideoId(video_id_str), session=session)
+        outcome = get_transcript.handle(
+            provider, _deadline(), dict({"video": video_id_str}, **args)
+        )
+        self.assertEqual(outcome.status, domain.Status.OK)
+        self.assertEqual(outcome.payload["resolved_track"].track_id, resolved_track_id)
+        return outcome
+
+    def test_alternative_tracks_present_when_language_resolved(self) -> None:
+        """The observed defect this AC exists to close: a video with both a
+        manual and an auto-generated track in the same language resolved the
+        manual one (correctly) while the response gave no hint the auto one
+        existed at all."""
+        manual_ru = _track("ru", "manual")
+        auto_ru = _track("ru", "auto")
+        outcome = self._run(
+            [manual_ru, auto_ru], {"languages": ["ru"]}, resolved_track_id="manual:ru"
+        )
+        self.assertEqual(outcome.payload["alternative_tracks"], (auto_ru,))
+
+    def test_alternative_tracks_absent_for_explicit_track_id(self) -> None:
+        """AC-27's first negative case: the caller already chose, so naming the
+        rest is noise."""
+        manual_ru = _track("ru", "manual")
+        auto_ru = _track("ru", "auto")
+        outcome = self._run(
+            [manual_ru, auto_ru], {"trackId": "auto:ru"}, resolved_track_id="auto:ru"
+        )
+        self.assertNotIn("alternative_tracks", outcome.payload)
+
+    def test_alternative_tracks_absent_for_single_track(self) -> None:
+        """AC-27's second negative case: there is no other track to name."""
+        only = _track("ru", "auto")
+        outcome = self._run([only], {}, resolved_track_id="auto:ru")
+        self.assertNotIn("alternative_tracks", outcome.payload)
+
+    def test_alternative_tracks_use_sort_tracks_order(self) -> None:
+        """AC-27: `sort_tracks()`'s order (manual before auto, then alphabetical
+        by languageCode), not the listing's arrival order."""
+        auto_aa = _track("aa", "auto")
+        manual_zz = _track("zz", "manual")
+        manual_bb = _track("bb", "manual")
+        outcome = self._run(
+            [auto_aa, manual_zz, manual_bb],
+            {"languages": ["zz"]},
+            resolved_track_id="manual:zz",
+        )
+        self.assertEqual(outcome.payload["alternative_tracks"], (manual_bb, auto_aa))
+
+    def test_alternative_tracks_capped_at_fifty(self) -> None:
+        """AC-27: the same size cap `availableLanguages` uses (AC-1's 50)."""
+        tracks: List[domain.TrackDescriptor] = [
+            _track(f"a{index:02d}", "manual") for index in range(60)
+        ]
+        outcome = self._run(tracks, {"languages": ["a00"]}, resolved_track_id="manual:a00")
+        self.assertEqual(len(outcome.payload["alternative_tracks"]), 50)
+        # The cap slices the sorted remainder, so it keeps the first 50 of the 59
+        # non-resolved tracks rather than an arbitrary subset.
+        self.assertEqual(outcome.payload["alternative_tracks"][0].language_code, "a01")
+
+    def test_alternative_tracks_absent_on_cursor_continuation(self) -> None:
+        """A continuation call carries a `trackId` inside its cursor, so it takes
+        AC-27's explicit-choice branch -- no per-page repetition of the list."""
+        video_id_str = "dQw4w9WgXcQ"
+        manual_ru = _track("ru", "manual")
+        auto_ru = _track("ru", "auto")
+        transcript = domain.Transcript(segments=make_segments(2))
+        session = FakeSession(
+            _listing([manual_ru, auto_ru]),
+            transcripts={manual_ru.track_id: transcript, auto_ru.track_id: transcript},
+        )
+        provider = FakeProvider(normalize_result=domain.VideoId(video_id_str), session=session)
+        raw_cursor = cursor.encode(
+            cursor.CursorFields(
+                video_id=video_id_str,
+                track_id=manual_ru.track_id,
+                format="text",
+                include_timestamps=False,
+                segment_index=0,
+            )
+        )
+
+        outcome = get_transcript.handle(
+            provider, _deadline(), {"video": video_id_str, "cursor": raw_cursor}
+        )
+
+        self.assertEqual(outcome.status, domain.Status.OK)
+        self.assertNotIn("alternative_tracks", outcome.payload)
+        self.assertEqual(outcome.payload["selectionBasis"], "track_id")
+
+
+class TestSelectionBasis(unittest.TestCase):
+    """AC-28: one case per AC-2 tier, exercised through the handler rather than
+    only through `select_track()` -- the point of the field is that it reaches the
+    response."""
+
+    def _basis(
+        self,
+        tracks: Sequence[domain.TrackDescriptor],
+        args: Dict[str, Any],
+        *,
+        default_audio_language: Optional[str] = None,
+    ) -> str:
+        video_id_str = "dQw4w9WgXcQ"
+        transcript = domain.Transcript(segments=make_segments(2))
+        session = FakeSession(
+            _listing(tracks, default_audio_language=default_audio_language),
+            transcripts={track.track_id: transcript for track in tracks},
+        )
+        provider = FakeProvider(normalize_result=domain.VideoId(video_id_str), session=session)
+        outcome = get_transcript.handle(
+            provider, _deadline(), dict({"video": video_id_str}, **args)
+        )
+        self.assertEqual(outcome.status, domain.Status.OK)
+        return outcome.payload["selectionBasis"]
+
+    def test_tier1_track_id(self) -> None:
+        tracks = [_track("en"), _track("fr", "auto")]
+        self.assertEqual(self._basis(tracks, {"trackId": "auto:fr"}), "track_id")
+
+    def test_tier2_languages(self) -> None:
+        tracks = [_track("en"), _track("fr")]
+        self.assertEqual(self._basis(tracks, {"languages": ["fr"]}), "languages")
+
+    def test_tier3_default_audio_language(self) -> None:
+        """The case the user hit: no `languages` parameter was passed at all, so
+        the language was chosen for them from the video's audio language."""
+        tracks = [_track("en"), _track("ru")]
+        self.assertEqual(
+            self._basis(tracks, {}, default_audio_language="ru"), "default_audio_language"
+        )
+
+    def test_tier4_upstream_default(self) -> None:
+        tracks = [_track("en"), _track("ru", "manual", is_default=True)]
+        self.assertEqual(self._basis(tracks, {}), "upstream_default")
+
+    def test_tier5_fallback(self) -> None:
+        tracks = [_track("zz", "auto"), _track("aa", "manual")]
+        self.assertEqual(self._basis(tracks, {}), "fallback")
+
+    def test_basis_values_are_the_declared_closed_set(self) -> None:
+        """Every value this module can emit is one `protocol/envelope.py` and the
+        spec both name -- no sixth string can appear on the wire."""
+        self.assertEqual(
+            set(resolution.SELECTION_BASES),
+            {
+                "track_id",
+                "languages",
+                "default_audio_language",
+                "upstream_default",
+                "fallback",
+            },
+        )
 
 
 if __name__ == "__main__":

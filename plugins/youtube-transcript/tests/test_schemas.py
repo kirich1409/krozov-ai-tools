@@ -42,5 +42,44 @@ class TestAnnotationsAndUntrustedContentDescription(unittest.TestCase):
         self.assertNotIn("maxItems", languages_schema)
 
 
+class TestGetTranscriptCallerRequirements(unittest.TestCase):
+    """AC-29: the description is the only lever this server has over what the
+    caller does with the transcript after it leaves the process (the plugin never
+    writes files), so its four requirements are asserted, not assumed."""
+
+    def setUp(self) -> None:
+        self.description = next(
+            entry["description"]
+            for entry in schemas.TOOL_SCHEMAS
+            if entry["name"] == "get_transcript"
+        )
+
+    def test_requires_verbatim_reproduction(self) -> None:
+        lowered = self.description.lower()
+        self.assertIn("verbatim", lowered)
+        for token in ("numbers", "dates", "proper nouns"):
+            with self.subTest(token=token):
+                self.assertIn(token, lowered)
+
+    def test_requires_naming_the_resolved_track(self) -> None:
+        self.assertIn("resolvedTrack.languageCode", self.description)
+        self.assertIn("resolvedTrack.kind", self.description)
+
+    def test_requires_asking_when_alternatives_exist(self) -> None:
+        self.assertIn("alternativeTracks", self.description)
+        self.assertIn("ask", self.description.lower())
+
+    def test_requires_repeating_available_languages(self) -> None:
+        self.assertIn("availableLanguages", self.description)
+        self.assertIn("language_unavailable", self.description)
+
+    def test_untrusted_content_warning_survives_verbatim(self) -> None:
+        """AC-29 adds to the description; it must not displace the delimiter /
+        untrusted-content warning already there, which is about a different
+        threat."""
+        self.assertIn(schemas._UNTRUSTED_CONTENT_NOTE, self.description)
+        self.assertIn("contentNotice", self.description)
+
+
 if __name__ == "__main__":
     unittest.main()

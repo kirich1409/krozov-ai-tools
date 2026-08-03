@@ -114,6 +114,8 @@ FIELDS_BY_STATUS: Dict[Status, FrozenSet[str]] = {
             "transcript",
             "contentNotice",
             "resolvedTrack",
+            "alternativeTracks",
+            "selectionBasis",
             "nextCursor",
             "truncated",
         }
@@ -184,6 +186,20 @@ def _track_wire(track: TrackDescriptor) -> Dict[str, Any]:
     }
 
 
+def _alternative_track_wire(track: TrackDescriptor) -> Dict[str, Any]:
+    # AC-27's four fields exactly -- deliberately neither `_track_wire`'s shape
+    # (its `estimatedCharacters` is never populated on a `get_transcript`-resolved
+    # listing, which would trip that function's ValueError) nor
+    # `_resolved_track_wire`'s (a caller needs the `trackId` here, since naming an
+    # alternative it cannot then request would be useless).
+    return {
+        "trackId": track.track_id,
+        "languageCode": track.language_code,
+        "languageName": track.language_name,
+        "kind": track.kind,
+    }
+
+
 def _resolved_track_wire(track: TrackDescriptor) -> Dict[str, Any]:
     # `estimated_characters` is deliberately not checked here (unlike `_track_wire`
     # above) -- the resolved track's source `TrackDescriptor` never carries it by
@@ -201,9 +217,10 @@ def _resolved_track_wire(track: TrackDescriptor) -> Dict[str, Any]:
 # `outcome.payload`'s domain-level key convention (established here, since this is
 # the consumer contract T-11/T-12 must satisfy): keys that pass through unchanged
 # reuse the exact wire-facing camelCase name (`tracks`, `videoDurationSeconds`,
-# `availableLanguages`, `nextCursor`, `truncated`, and the pre-wrap `transcript`
-# text) -- keys needing domain-object construction use a distinct snake_case name
-# (`resolved_track`) since they are not a direct pass-through.
+# `availableLanguages`, `nextCursor`, `truncated`, `selectionBasis`, and the
+# pre-wrap `transcript` text) -- keys needing domain-object construction use a
+# distinct snake_case name (`resolved_track`, `alternative_tracks`) since they are
+# not a direct pass-through.
 def _construct_wire_payload(payload: Mapping[str, Any]) -> Dict[str, Any]:
     wire: Dict[str, Any] = {}
 
@@ -222,8 +239,16 @@ def _construct_wire_payload(payload: Mapping[str, Any]) -> Dict[str, Any]:
     if "truncated" in payload:
         wire["truncated"] = payload["truncated"]
 
+    if "selectionBasis" in payload:
+        wire["selectionBasis"] = payload["selectionBasis"]
+
     if "resolved_track" in payload:
         wire["resolvedTrack"] = _resolved_track_wire(payload["resolved_track"])
+
+    if "alternative_tracks" in payload:
+        wire["alternativeTracks"] = [
+            _alternative_track_wire(track) for track in payload["alternative_tracks"]
+        ]
 
     if "transcript" in payload:
         # generate_content_boundary() is called here, and only here -- exactly once
