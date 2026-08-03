@@ -52,9 +52,10 @@ jobs:
         working-directory: .
         run: python3 -m unittest discover -s plugins/maven-mcp/tests
 
-      # Unified versioning releases every plugin in marketplace.json together
-      # under one tag, so the gate must run every plugin's suite, not just
-      # maven-mcp's. working-directory: . overrides the job's
+      # The release gate runs every plugin's suite, not just maven-mcp's: the
+      # tag ships one commit of the whole repo, so a break in any plugin is a
+      # break in what the release publishes, released plugin or not.
+      # working-directory: . overrides the job's
       # defaults.run.working-directory (plugins/maven-mcp) for the same reason
       # as the step above: without it, the -s path would resolve relative to
       # plugins/maven-mcp instead of the repo root.
@@ -86,15 +87,25 @@ jobs:
           # Claude Code resolves plugin dependencies through tags of the form
           # {plugin-name}--v{version}. Push each tag independently so a failure
           # on one plugin does not abort the rest, and every outcome is logged.
+          #
+          # Plugin versions are independent: tag ${TAG} releases only the
+          # plugins standing on ${VERSION}. Everything else is skipped with a
+          # log line -- stamping a per-plugin tag on an unchanged plugin would
+          # claim a release that never happened (that is how tags for long
+          # deleted plugins ended up in the tag history).
           rc=0
-          while IFS= read -r plugin; do
+          while IFS=$'\t' read -r plugin plugin_version; do
+            if [ "${plugin_version}" != "${VERSION}" ]; then
+              echo "Skipping ${plugin}: not part of this release (version ${plugin_version}, tag ${VERSION})."
+              continue
+            fi
             per_plugin_tag="${plugin}--${TAG}"
             if git rev-parse -q --verify "refs/tags/${per_plugin_tag}" >/dev/null; then
               echo "Tag ${per_plugin_tag} already exists locally — skipping."
               continue
             fi
             echo "Creating ${per_plugin_tag}..."
-            if ! git tag -a "${per_plugin_tag}" -m "Release ${plugin} ${VERSION} (unified release ${TAG})"; then
+            if ! git tag -a "${per_plugin_tag}" -m "Release ${plugin} ${VERSION}"; then
               echo "::error::Failed to create ${per_plugin_tag}" >&2
               rc=1
               continue
@@ -106,5 +117,5 @@ jobs:
               echo "::error::Failed to push ${per_plugin_tag}" >&2
               rc=1
             fi
-          done < <(jq -r '.plugins[].name' .claude-plugin/marketplace.json)
+          done < <(jq -r '.plugins[] | [.name, .version] | @tsv' .claude-plugin/marketplace.json)
           exit "$rc"

@@ -1,6 +1,6 @@
 {
   "name": "youtube-transcript",
-  "version": "0.27.0",
+  "version": "0.1.0",
   "description": "Fetches existing YouTube subtitles (manual or auto-generated) via the InnerTube API and returns them as plain text, SRT, or VTT. Does not perform speech-to-text or video/audio download — only retrieves captions YouTube already publishes.",
   "author": {
     "name": "kirich1409"
