@@ -106,14 +106,22 @@ jobs:
           YOUTUBE_TRANSCRIPT_LIVE_CANARY: "1"
         run: python3 -m unittest discover -s plugins/youtube-transcript/tests -p test_live_canary.py -v
 
+      # Both values reach bash through `env:` and are referenced as "$VAR":
+      # an Actions expression inside a `run:` body is substituted into the
+      # script TEXT before bash parses it, so quoting on this side cannot make
+      # it safe. PREV_COUNT below sits inside an arithmetic expansion, which is
+      # where a textual substitution would be evaluated as an expression.
       - name: Update counter
+        env:
+          CANARY_OUTCOME: ${{ steps.run-canary.outcome }}
+          PREV_COUNT: ${{ steps.counter.outputs.count }}
         run: |
           set -euo pipefail
-          if [ "${{ steps.run-canary.outcome }}" = "success" ]; then
+          if [ "$CANARY_OUTCOME" = "success" ]; then
             echo "Canary passed -- resetting counter to 0."
             echo 0 > canary-counter.txt
           else
-            NEW_COUNT=$(( ${{ steps.counter.outputs.count }} + 1 ))
+            NEW_COUNT=$(( PREV_COUNT + 1 ))
             echo "Canary failed -- consecutive-failure count now $NEW_COUNT."
             echo "$NEW_COUNT" > canary-counter.txt
           fi
@@ -129,6 +137,8 @@ jobs:
           key: youtube-transcript-canary-counter-${{ github.run_id }}
 
       - name: Fail loud at 3 consecutive failures
+        env:
+          CANARY_OUTCOME: ${{ steps.run-canary.outcome }}
         run: |
           set -euo pipefail
           COUNT=$(cat canary-counter.txt)
@@ -136,6 +146,6 @@ jobs:
             echo "::error::youtube-transcript live canary has failed $COUNT consecutive times -- treating as a real regression, not a transient flake."
             exit 1
           fi
-          if [ "${{ steps.run-canary.outcome }}" != "success" ]; then
+          if [ "$CANARY_OUTCOME" != "success" ]; then
             echo "::warning::youtube-transcript live canary failed (consecutive count: $COUNT), below the 3-failure escalation threshold -- not failing the workflow yet."
           fi

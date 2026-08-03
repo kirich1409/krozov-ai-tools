@@ -564,7 +564,11 @@ jobs:
 
       - if: steps.changes.outputs.mcpb == 'true'
         name: Smoke test bundle
-        run: bash scripts/smoke-mcpb.sh --require-checksum "${{ steps.pack.outputs.mcpb_path }}"
+        # Through env:, like release.yml's equivalent step -- an expression in a
+        # run: body is substituted into the script text before bash parses it.
+        env:
+          MCPB_PATH: ${{ steps.pack.outputs.mcpb_path }}
+        run: bash scripts/smoke-mcpb.sh --require-checksum "$MCPB_PATH"
 
       # Installable artifact for repository branches only. On a pull request
       # from a fork the bundle is still built and smoke-tested above, but it is

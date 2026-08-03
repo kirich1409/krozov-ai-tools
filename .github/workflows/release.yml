@@ -62,7 +62,7 @@ jobs:
       # Full history so the ancestry check below is meaningful (a shallow
       # tag-only checkout would make merge-base checks vacuous).
       # persist-credentials: false -- this job pushes nothing.
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           fetch-depth: 0
           persist-credentials: false
@@ -139,6 +139,21 @@ jobs:
             has_bundle=false
           fi
 
+          # The pairing the two halves above do NOT enforce on their own: this
+          # detection is generic, `scripts/pack-mcpb.sh` is not (it hardcodes
+          # youtube-transcript's plugin root, template and output name). Without
+          # this assertion, the day a second plugin gains an mcpb template its
+          # tag would pack, checksum, ATTEST and publish a youtube-transcript
+          # bundle -- and every automated control would agree, because
+          # `--expect-version` only fires while the two plugins' versions
+          # differ, and versions are independent hence free to coincide.
+          # Delete this assertion when, and only when, pack-mcpb.sh takes the
+          # plugin as a parameter instead of hardcoding it.
+          if [ "$has_bundle" = "true" ] && [ "$plugin" != "youtube-transcript" ]; then
+            echo "::error::plugin '$plugin' declares plugins/$plugin/mcpb/manifest.template.json, but scripts/pack-mcpb.sh only builds youtube-transcript -- parameterize the packer before releasing a second bundled plugin"
+            exit 1
+          fi
+
           {
             printf 'plugin=%s\n' "$plugin"
             printf 'version=%s\n' "$version"
@@ -156,7 +171,12 @@ jobs:
         if: github.event_name == 'push'
         run: |
           set -euo pipefail
-          git fetch origin main
+          # No `git fetch` here: checkout with fetch-depth: 0 already fetched
+          # +refs/heads/*:refs/remotes/origin/* (getRefSpecForAllHistory), so
+          # origin/main exists and is as fresh as the run's start. A fetch would
+          # also be an ANONYMOUS network call under persist-credentials: false,
+          # first executed on a real tag -- it would break the moment the
+          # repository went private, and read as a network error in the log.
           if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
             echo "::error::Tag ${GITHUB_REF_NAME} points at ${GITHUB_SHA}, which is not an ancestor of origin/main. Refuse to release an unreviewed branch commit."
             exit 1
@@ -185,7 +205,7 @@ jobs:
       # already matrices 3.9+3.13; the release gate must also pin 3.9 so a
       # 3.9-only break cannot ship behind a system-python green check (#358).
       - name: Setup Python 3.9
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: "3.9"
 
@@ -224,12 +244,12 @@ jobs:
       # commit (`git ls-files -s`), never from history or the working tree.
       # persist-credentials: false is load-bearing here rather than tidy -- this
       # job executes third-party npm code and has no reason to hold a token.
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           persist-credentials: false
 
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: "22"
           cache: npm
@@ -238,7 +258,7 @@ jobs:
       # Pinned rather than inherited from the runner image: the smoke test
       # launches the bundle's server, and the bundle targets 3.9.
       - name: Setup Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: "3.9"
 
@@ -318,7 +338,7 @@ jobs:
           echo "Packed $bundle_name sha256=$sha256"
 
       - name: Upload bundle artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: mcpb-bundle
           path: |
@@ -349,8 +369,12 @@ jobs:
     # artifact storage record (documented in its README alongside id-token and
     # attestations); T-3's dry run does not exercise this job, so the first real
     # tag is the first execution of these scopes.
+    # No `contents: read` on purpose: this job never checks out and touches no
+    # repository content, while everything running inside it can sign arbitrary
+    # bytes. Needing a checkout here is a signal to move that work into `pack`
+    # -- not to widen these scopes. If actions/attest ever does need the scope,
+    # it fails closed rather than silently over-privileged.
     permissions:
-      contents: read
       id-token: write
       attestations: write
       artifact-metadata: write

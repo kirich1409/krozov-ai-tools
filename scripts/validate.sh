@@ -441,6 +441,61 @@ check_workflow_permissions() {
   done
 }
 
+# ---------- L10: No Actions expressions inside run: bodies ----------
+#
+# An Actions expression inside a `run:` body is substituted into the script
+# TEXT before bash ever parses it, so quoting on the author's side cannot make
+# it safe -- a value containing a quote or a command substitution becomes
+# script source. Every workflow-controlled value must reach bash through `env:`
+# and be referenced as "$VAR".
+#
+# This check is the control, not the linter: measured during review, actionlint
+# flags `github.event.issue.title` in a run body but NOT `github.ref_name` in
+# the identical position, so the rule holds only as far as it is mechanised
+# here.
+#
+# Detection is indentation-based rather than a full YAML parse (this repo ships
+# no YAML library): a `run:` whose value starts with a block indicator opens a
+# body, and every deeper-indented line belongs to it. An inline `run:` value is
+# scanned directly.
+
+check_run_interpolation() {
+  echo "--- L10: No Actions expressions inside run: bodies ---"
+  local dir=".github/workflows"
+  [ -d "$dir" ] || return
+  local wf hits
+  for wf in "$dir"/*.yml "$dir"/*.yaml; do
+    [ -f "$wf" ] || continue
+    hits=$(awk '
+      {
+        if (in_block) {
+          if ($0 ~ /^[[:space:]]*$/) next
+          match($0, /^[[:space:]]*/)
+          if (RLENGTH > base) {
+            if (index($0, "${{")) print FILENAME ":" FNR ":" $0
+            next
+          }
+          in_block = 0
+        }
+        if ($0 ~ /^[[:space:]]*#/) next
+        if ($0 ~ /^[[:space:]]*(-[[:space:]]+)?run:([[:space:]]|$)/) {
+          match($0, /^[[:space:]]*/); base = RLENGTH
+          rest = substr($0, index($0, "run:") + 4)
+          sub(/^[[:space:]]+/, "", rest)
+          if (rest ~ /^[|>]/) { in_block = 1; next }
+          if (index(rest, "${{")) print FILENAME ":" FNR ":" $0
+        }
+      }
+    ' "$wf")
+    if [ -z "$hits" ]; then
+      ok "$wf has no Actions expressions in run: bodies"
+    else
+      echo "$hits" >&2
+      fail "$wf interpolates an Actions expression into a run: body -- pass the value through env: and reference it as \"\$VAR\""
+    fi
+  done
+}
+
 # ---------- Entry point ----------
 
 main() {
@@ -469,6 +524,7 @@ main() {
   check_frontmatter
   check_field_types
   check_workflow_permissions
+  check_run_interpolation
 
   # Two anchored patterns, tried in order; anything else is a hard error. Never
   # a prefix strip: `${TAG#v}` on an attacker-chosen tag name yields whatever is

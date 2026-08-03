@@ -50,17 +50,19 @@ Besides the marketplace install above, `youtube-transcript` is published as an `
 
 **1. Download.** Releases of this repository interleave two independent version lines, so the newest release may belong to `maven-mcp`. Pick a release from the plugin's own tag namespace — [releases tagged `youtube-transcript--v*`](https://github.com/kirich1409/krozov-ai-tools/releases?q=youtube-transcript) — not from `/releases/latest`. Each release that carries a bundle attaches two files: `youtube-transcript-<version>.mcpb` and `youtube-transcript-<version>.mcpb.sha256`.
 
-**2. Verify authenticity — build provenance.** The bundle is attested during the release run. Verify before installing:
+**2. Verify authenticity — build provenance.** Installing an `.mcpb` makes the Claude desktop app run the bundled Python server on your machine, with your own privileges and no sandbox — an unverified bundle is arbitrary code execution, not just a file. **Verification is blocking: if any of the commands below fails, do not install the bundle.** Report it as a security issue instead.
 
 ```
 gh attestation verify youtube-transcript-<version>.mcpb \
   --repo kirich1409/krozov-ai-tools \
-  --signer-workflow kirich1409/krozov-ai-tools/.github/workflows/release.yml
+  --signer-workflow kirich1409/krozov-ai-tools/.github/workflows/release.yml \
+  --source-ref refs/tags/youtube-transcript--v<version> \
+  --deny-self-hosted-runners
 ```
 
 The fully-qualified `--signer-workflow` is load-bearing: `--repo` alone accepts an attestation minted by *any* workflow in the repository.
 
-What this proves: these exact bytes were produced by that workflow file in that repository. What it does **not** prove: it pins the workflow's *path*, not its ref or the source commit — an attestation minted by that same file on any branch or commit satisfies it. To pin those too, add `--source-ref refs/tags/youtube-transcript--v<version>` and/or `--source-digest <commit sha>`.
+What this proves: these exact bytes were produced by that workflow file in that repository, at that tag, on a GitHub-hosted runner. What it does **not** prove: `--signer-workflow` pins the workflow's *path*, not the source commit — add `--source-digest <commit sha>` to pin that too. Provenance also says nothing about whether anyone reviewed the release; it says where the bytes came from.
 
 **3. Checksum — corruption detection only.**
 

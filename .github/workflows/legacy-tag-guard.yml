@@ -15,9 +15,14 @@ name: Legacy tag guard
 # release. Guessing which plugin a bare `v*` tag meant is exactly the ambiguity
 # that per-plugin tags removed.
 
+# `v[0-9]*`, not `v*`: the pattern matches the WHOLE tag name, so `v*` would
+# also match a future per-plugin tag like `video-tool--v1.0.0` and hang a
+# permanently red "this published nothing" check on a release that did publish.
+# The whole procedure rests on a red check meaning the release did not happen.
+# (`tags` and `tags-ignore` cannot be combined in one push trigger.)
 on:
   push:
-    tags: ["v*"]
+    tags: ["v[0-9]*"]
 
 permissions: {}
 
