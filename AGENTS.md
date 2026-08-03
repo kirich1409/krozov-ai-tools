@@ -13,17 +13,19 @@ Rules that are not open for discussion. Violating these is an error, not a judgm
 
 ## Project
 
-Monorepo for Claude Code plugins by krozov. Contains one plugin:
+Monorepo for Claude Code plugins by krozov. Contains two plugins:
 
 | Plugin | Directory | Description |
 |--------|-----------|-------------|
 | maven-mcp | `plugins/maven-mcp/` | MCP server for Maven dependency intelligence |
+| youtube-transcript | `plugins/youtube-transcript/` | MCP server that fetches existing YouTube subtitles via the InnerTube API |
 
 ## Structure
 
 ```
 plugins/
   maven-mcp/                    # Python MCP server (stdlib only, zero pip deps)
+  youtube-transcript/           # Python MCP server (stdlib only, zero pip deps)
 ```
 
 See the plugin's own `AGENTS.md` for plugin-specific instructions.
@@ -33,7 +35,7 @@ See the plugin's own `AGENTS.md` for plugin-specific instructions.
 All plugins must comply with [`docs/PLUGIN-STANDARDS.md`](docs/PLUGIN-STANDARDS.md). Before every release:
 
 1. Run `bash scripts/validate.sh` — must be green
-2. Validate each plugin listed in `.claude-plugin/marketplace.json` (currently maven-mcp) against PLUGIN-STANDARDS.md — must be PASS or only Minor findings. Claude Code users: run the `plugin-dev:plugin-validator` agent.
+2. Validate each plugin listed in `.claude-plugin/marketplace.json` (currently maven-mcp, youtube-transcript) against PLUGIN-STANDARDS.md — must be PASS or only Minor findings. Claude Code users: run the `plugin-dev:plugin-validator` agent.
 3. Go through the pre-release checklist in `docs/PLUGIN-STANDARDS.md` section 10
 
 Any Critical or Major violations block the release — fix first, release later.

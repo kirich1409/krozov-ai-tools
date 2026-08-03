@@ -38,6 +38,12 @@ Maven dependency intelligence for JVM projects. Auto-registers an MCP server tha
 
 See [`plugins/maven-mcp/`](plugins/maven-mcp/) for full documentation.
 
+### youtube-transcript
+
+Fetches existing YouTube subtitles (manual or auto-generated) via the InnerTube API. Auto-registers an MCP server that returns transcript text — no speech-to-text, no video/audio download, only captions YouTube already publishes.
+
+See [`plugins/youtube-transcript/`](plugins/youtube-transcript/) for full documentation.
+
 ## License
 
 MIT
