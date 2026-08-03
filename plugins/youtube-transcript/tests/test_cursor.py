@@ -76,6 +76,18 @@ class TestBase64Validation(unittest.TestCase):
             cursor.decode(garbage)
 
 
+class TestNonStringRawRejectedCleanly(unittest.TestCase):
+    def test_non_string_raw_rejected_cleanly(self) -> None:
+        # `decode()`'s `raw` parameter is untrusted, JSON-decoded `tools/call`
+        # input (schema declares it a string, but `protocol/dispatch.py` never
+        # checks argument type, only presence) -- a JSON array/object/int/bool
+        # reaching here must raise `CursorInvalid`, not a raw `AttributeError`/
+        # `TypeError` escaping from `raw.encode("ascii")`.
+        for bad_raw in ([1, 2, 3], {"a": 1}, 42, True, None):
+            with self.subTest(bad_raw=bad_raw), self.assertRaises(domain.CursorInvalid):
+                cursor.decode(bad_raw)  # type: ignore[arg-type]
+
+
 class TestExactlyFiveKeys(unittest.TestCase):
     def test_exactly_five_keys(self) -> None:
         # A JSON value that isn't even a dict.

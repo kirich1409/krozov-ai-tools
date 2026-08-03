@@ -163,6 +163,16 @@ class TestVideoIdValidation(unittest.TestCase):
         self.assertTrue(domain.VIDEO_ID_PATTERN.match("dQw4w9WgXcQ"))
         self.assertIsNone(domain.VIDEO_ID_PATTERN.match("short"))
 
+    def test_trailing_newline_rejected(self) -> None:
+        # Python's `re` module's `$` anchor matches at end-of-string OR
+        # immediately before a trailing `\n` -- `re.compile(r'^[A-Za-z0-9_-]{11}$')`
+        # would wrongly accept "dQw4w9WgXcQ\n" (11 valid chars + trailing
+        # newline). `VIDEO_ID_PATTERN` must use `\Z` (true end-of-string only),
+        # both directly and via `VideoId.__post_init__`.
+        self.assertIsNone(domain.VIDEO_ID_PATTERN.match("dQw4w9WgXcQ\n"))
+        with self.assertRaises(domain.TrackFieldInvalid):
+            domain.VideoId("dQw4w9WgXcQ\n")
+
 
 class TestEncodeReserveDerivation(unittest.TestCase):
     def test_encode_reserve_is_derived_in_domain(self) -> None:

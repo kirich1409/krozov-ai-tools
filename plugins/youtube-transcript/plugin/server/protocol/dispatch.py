@@ -139,11 +139,12 @@ def handle_message(registry: Registry, msg: Any) -> Optional[Dict[str, Any]]:
         return _error_response(None, -32600, "Invalid Request: expected a JSON object")
 
     method = msg.get("method", "")
-    msg_id = msg.get("id")
     params = msg.get("params") or {}
 
-    if msg_id is None:
-        return None  # notification -- no response
+    if "id" not in msg:
+        return None  # notification -- no `id` key at all, no response
+
+    msg_id = msg["id"]  # may legitimately be `null`/None -- still gets a reply per JSON-RPC 2.0
 
     if not isinstance(params, dict):
         return _error_response(msg_id, -32602, "Invalid params: expected an object")

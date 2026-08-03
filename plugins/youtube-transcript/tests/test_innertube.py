@@ -230,6 +230,37 @@ class TestNonOkPlayabilityRaisesSpecificSubclass(unittest.TestCase):
         innertube._enforce_playability_gate("OK", None)
 
 
+class TestAgeReasonMarkerDoesNotFalsePositiveOnUnrelatedSubstring(unittest.TestCase):
+    """`_reason_matches`'s `_AGE_REASON_MARKERS = ("age",)` previously did a bare
+    substring test (`"age" in lowered`), so any `LOGIN_REQUIRED` reason string
+    containing "age" as a substring of an unrelated word -- "language", "storage",
+    "usage" -- was misclassified as `AgeRestricted` instead of the correct
+    `VideoUnavailable`. This is a synthetic, not-empirically-observed discriminator
+    (`_enforce_playability_gate`'s own docstring) -- these reason strings are
+    illustrative, not real reason text this project ever saw."""
+
+    def test_language_substring_does_not_trigger_age_restricted(self) -> None:
+        with self.assertRaises(providers_base.VideoUnavailable):
+            innertube._enforce_playability_gate(
+                "LOGIN_REQUIRED", "This video is not available in your language"
+            )
+
+    def test_storage_substring_does_not_trigger_age_restricted(self) -> None:
+        with self.assertRaises(providers_base.VideoUnavailable):
+            innertube._enforce_playability_gate("LOGIN_REQUIRED", "storage error")
+
+    def test_usage_substring_does_not_trigger_age_restricted(self) -> None:
+        with self.assertRaises(providers_base.VideoUnavailable):
+            innertube._enforce_playability_gate("LOGIN_REQUIRED", "usage limit exceeded")
+
+    def test_real_age_word_still_triggers_age_restricted(self) -> None:
+        # Contrast case, so the fix above can't pass by vacuously rejecting
+        # everything -- a reason where "age" really is its own word must still
+        # raise AgeRestricted.
+        with self.assertRaises(providers_base.AgeRestricted):
+            innertube._enforce_playability_gate("LOGIN_REQUIRED", "Sign in to confirm your age")
+
+
 class TestPlayabilityReasonReadViaGetNotSwallowed(unittest.TestCase):
     def test_playability_reason_read_via_get_not_swallowed_by_json_wrapper(self) -> None:
         # `reason` genuinely absent (not merely `None`) -- if the discrimination

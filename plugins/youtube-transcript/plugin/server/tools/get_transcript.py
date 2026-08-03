@@ -90,7 +90,11 @@ def _handle_fresh(provider: TranscriptProvider, deadline: Deadline, args: Dict[s
     languages_capped = isinstance(raw_languages, (list, tuple)) and len(raw_languages) > 0 and not languages
     track_id = args.get("trackId")
     fmt = args.get("format")
-    if fmt not in FORMATS:
+    # `fmt not in FORMATS` alone would raise `TypeError: unhashable type` for a
+    # non-str, unhashable `format` (e.g. a JSON array/object) -- `args` is
+    # untrusted JSON that `protocol/dispatch.py` never type-checks beyond
+    # presence, so the `isinstance` guard must run (and short-circuit) first.
+    if not isinstance(fmt, str) or fmt not in FORMATS:
         fmt = _DEFAULT_FORMAT
     include_timestamps = bool(args.get("includeTimestamps", False))
 

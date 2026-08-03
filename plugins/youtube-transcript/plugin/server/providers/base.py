@@ -124,7 +124,7 @@ class TransportError(ProviderError):
 # `domain.TrackDescriptor.__post_init__` both apply, restated here since this is the
 # single place a caller-supplied (or cursor-decoded) `trackId` string is parsed back
 # into its two constituent fields.
-_TRACK_ID_PATTERN = re.compile(r"^(manual|auto):([A-Za-z0-9-]{1,20})$")
+_TRACK_ID_PATTERN = re.compile(r"^(manual|auto):([A-Za-z0-9-]{1,20})\Z")
 
 
 def encode_track_id(kind: str, language_code: str) -> str:
@@ -135,7 +135,14 @@ def parse_track_id(value: str) -> Optional[Tuple[str, str]]:
     """Returns `(kind, language_code)`, or `None` if `value` does not match
     `^(manual|auto):[A-Za-z0-9-]{1,20}$` (AC-18) -- never raises on malformed input,
     since a caller-supplied `trackId` (AC-5) or a cursor-decoded one (AC-11) is
-    exactly the kind of untrusted input this function exists to reject cleanly."""
+    exactly the kind of untrusted input this function exists to reject cleanly.
+    A non-`str` `value` (e.g. `tools/get_transcript.py`'s `args.get("trackId")`,
+    read from untrusted JSON without a type check upstream) is likewise treated
+    as "does not match" rather than raising -- `re.Pattern.match` on a non-
+    string/bytes object raises a raw `TypeError`, which is exactly the kind of
+    escape this function's own docstring promises never happens."""
+    if not isinstance(value, str):
+        return None
     match = _TRACK_ID_PATTERN.match(value)
     if match is None:
         return None

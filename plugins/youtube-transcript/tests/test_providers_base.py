@@ -41,6 +41,22 @@ class TestTrackIdCodec(unittest.TestCase):
             with self.subTest(bad=bad):
                 self.assertIsNone(providers_base.parse_track_id(bad))
 
+    def test_parse_track_id_non_string_rejected_cleanly(self) -> None:
+        # `trackId` (AC-5) is untrusted, JSON-decoded `tools/call` input --
+        # `tools/get_transcript.py` reads `args.get("trackId")` without a type
+        # check upstream, so a JSON array/object/int/bool must be treated as
+        # "does not match" (returns `None`), not raise a raw `TypeError` from
+        # `re.Pattern.match` on a non-string/bytes object.
+        for bad in ([1, 2, 3], {"a": 1}, 42, True, None):
+            with self.subTest(bad=bad):
+                self.assertIsNone(providers_base.parse_track_id(bad))  # type: ignore[arg-type]
+
+    def test_track_id_pattern_rejects_trailing_newline(self) -> None:
+        # `$` matches at end-of-string OR immediately before a trailing `\n` in
+        # Python's `re` module -- `\Z` (true end-of-string only) is required for
+        # this AC-18 shape check, same class of defect as AC-6's video-ID pattern.
+        self.assertIsNone(providers_base.parse_track_id("manual:en\n"))
+
 
 class TestProviderErrorHierarchy(unittest.TestCase):
     def test_provider_error_is_domain_failure(self) -> None:

@@ -81,6 +81,35 @@ def fit_page(
     return count
 
 
+def count_pages(
+    segments: Sequence[Segment],
+    target_index: int,
+    max_chars: int,
+    fixed_overhead: int,
+    segment_length: Callable[[int], int],
+    deadline: Deadline,
+) -> int:
+    """Replays `fit_page()` from `segmentIndex = 0` up to (but not including) `target_index`,
+    counting how many page boundaries precede it. This is the loop previously copy-pasted
+    identically across `text.py`/`srt.py`/`vtt.py`'s own `count_pages_to()` -- the three call
+    sites differed only in the `fixed_overhead`/`segment_length` values already threaded
+    through to `fit_page()` here, exactly the kind of `encode()`/`count_pages_to()`
+    boundary-drift this module's own docstring above says this task's review history kept
+    finding. A single `DeadlineStride` instance is created once and threaded through every
+    `fit_page()` call in the pass, same cumulative-stride invariant as before.
+    """
+    stride = DeadlineStride()
+    index = 0
+    pages = 0
+    while index < target_index:
+        count = fit_page(segments, index, max_chars, fixed_overhead, segment_length, deadline, stride)
+        if count == 0:
+            break
+        index += count
+        pages += 1
+    return pages
+
+
 def format_timecode(total_ms: int, decimal_separator: str) -> str:
     """`HH:MM:SS<sep>mmm`, e.g. `00:01:02,500` (srt, `sep=","`) or `00:01:02.500` (vtt/
     text, `sep="."`). No hour cap -- unrealistic for a real video, not worth a ceiling."""

@@ -144,9 +144,17 @@ def validate_languages(languages: Optional[Sequence[str]]) -> List[str]:
     """
     if languages is None:
         return []
+    # `languages` is untrusted, JSON-decoded `tools/call` input (schema declares
+    # it a string array, but `protocol/dispatch.py` never checks argument type,
+    # only presence) -- a non-list/tuple value, or a list containing a non-str
+    # entry, must be rejected the same way as any other cap violation (this
+    # docstring's own framing) rather than crashing `len()`/`len(language)` with
+    # a raw `TypeError`.
+    if not isinstance(languages, (list, tuple)):
+        return []
     if len(languages) > _MAX_LANGUAGES:
         return []
     for language in languages:
-        if len(language) > _MAX_LANGUAGE_LENGTH:
+        if not isinstance(language, str) or len(language) > _MAX_LANGUAGE_LENGTH:
             return []
     return list(languages)

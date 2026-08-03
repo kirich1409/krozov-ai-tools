@@ -77,6 +77,14 @@ def encode(fields: CursorFields) -> str:
 
 
 def decode(raw: str) -> CursorFields:
+    # 0. Type check first -- `raw` is untrusted, JSON-decoded `tools/call` input
+    # (schema declares it a string, but `protocol/dispatch.py` only validates
+    # argument *presence*, never type). A non-str `raw` (e.g. a JSON array) must
+    # not reach step 2's `raw.encode("ascii")`, which would raise a raw
+    # `AttributeError` instead of this module's own `CursorInvalid`.
+    if not isinstance(raw, str):
+        raise CursorInvalid("cursor is not a string")
+
     # 1. Size cap, before any decode work at all (AC-11).
     if len(raw) > MAX_CURSOR_CHARS:
         raise CursorInvalid(f"cursor exceeds {MAX_CURSOR_CHARS} characters")

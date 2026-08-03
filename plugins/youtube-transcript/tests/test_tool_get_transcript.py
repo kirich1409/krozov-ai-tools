@@ -338,6 +338,66 @@ class TestCursorValidation(unittest.TestCase):
         self.assertEqual(len(session.fetch_calls), 1)
 
 
+class TestUntypedArgumentsRejectedCleanly(unittest.TestCase):
+    """`protocol/dispatch.py` only validates that required `tools/call` arguments
+    are *present*, never their JSON *type* -- so every type-unchecked read of
+    `cursor`/`trackId`/`languages`/`format` out of `args` in this module (or a
+    helper it calls) must turn a wrong-typed value into a clean domain outcome,
+    never let a raw `TypeError`/`AttributeError` escape uncaught (which would
+    otherwise only be caught by `protocol/dispatch.py`'s outer bare
+    `except Exception`, turning it into a generic, unhelpful `-32603`)."""
+
+    def test_cursor_as_json_array_maps_to_upstream_changed(self) -> None:
+        provider = FakeProvider(normalize_result=domain.VideoId("dQw4w9WgXcQ"))
+
+        outcome = get_transcript.handle(
+            provider, _deadline(), {"video": "dQw4w9WgXcQ", "cursor": [1, 2, 3]}
+        )
+
+        self.assertEqual(outcome.status, domain.Status.UPSTREAM_CHANGED)
+        self.assertEqual(provider.open_calls, [])
+
+    def test_track_id_as_json_array_maps_to_language_unavailable(self) -> None:
+        track = _track("en")
+        transcript = domain.Transcript(segments=make_segments(2))
+        session = FakeSession(_listing([track]), transcripts={track.track_id: transcript})
+        provider = FakeProvider(normalize_result=domain.VideoId("dQw4w9WgXcQ"), session=session)
+
+        outcome = get_transcript.handle(
+            provider, _deadline(), {"video": "dQw4w9WgXcQ", "trackId": [1, 2, 3]}
+        )
+
+        self.assertEqual(outcome.status, domain.Status.LANGUAGE_UNAVAILABLE)
+
+    def test_languages_with_non_string_entries_maps_to_language_unavailable(self) -> None:
+        track = _track("en")
+        transcript = domain.Transcript(segments=make_segments(2))
+        session = FakeSession(_listing([track]), transcripts={track.track_id: transcript})
+        provider = FakeProvider(normalize_result=domain.VideoId("dQw4w9WgXcQ"), session=session)
+
+        outcome = get_transcript.handle(
+            provider, _deadline(), {"video": "dQw4w9WgXcQ", "languages": [1, 2, 3]}
+        )
+
+        self.assertEqual(outcome.status, domain.Status.LANGUAGE_UNAVAILABLE)
+
+    def test_format_as_json_array_falls_back_to_default_format(self) -> None:
+        # Same treatment as any other out-of-`FORMATS`-enum `format` value
+        # (`_DEFAULT_FORMAT` fallback, this module's own comment on that
+        # constant) -- must not raise `TypeError: unhashable type` from
+        # `fmt not in FORMATS` on an unhashable `fmt`.
+        track = _track("en")
+        transcript = domain.Transcript(segments=make_segments(2))
+        session = FakeSession(_listing([track]), transcripts={track.track_id: transcript})
+        provider = FakeProvider(normalize_result=domain.VideoId("dQw4w9WgXcQ"), session=session)
+
+        outcome = get_transcript.handle(
+            provider, _deadline(), {"video": "dQw4w9WgXcQ", "format": [1, 2, 3]}
+        )
+
+        self.assertEqual(outcome.status, domain.Status.OK)
+
+
 class TestMaxPagesTruncation(unittest.TestCase):
     def test_max_pages_truncation_after_full_fetch(self) -> None:
         """AC-11's derived page-counting: a cursor whose segmentIndex sits past

@@ -20,6 +20,7 @@ import time
 import unicodedata
 from dataclasses import dataclass, field
 from enum import Enum
+from functools import lru_cache
 from typing import Any, Callable, Dict, FrozenSet, Mapping, Optional, Tuple
 from urllib.parse import urlsplit
 
@@ -105,7 +106,7 @@ class Transcript:
 # T-3) -- both patterns are pinned here since `TrackDescriptor.__post_init__` is the
 # single point every `TrackDescriptor` -- provider-constructed or response-only -- is
 # validated at, with no way to bypass it.
-_LANGUAGE_CODE_PATTERN = re.compile(r"^[A-Za-z0-9-]{1,20}$")
+_LANGUAGE_CODE_PATTERN = re.compile(r"^[A-Za-z0-9-]{1,20}\Z")
 _VALID_KINDS = frozenset({"manual", "auto"})
 _LANGUAGE_NAME_MAX_LENGTH = 100
 
@@ -156,7 +157,7 @@ class TrackListing:
 # duplication) -- consolidated here (acceptance-fix pass, security-expert finding)
 # so the AC-6 pattern has exactly one source of truth instead of three modules
 # needing to stay in sync by convention.
-VIDEO_ID_PATTERN = re.compile(r"^[A-Za-z0-9_-]{11}$")
+VIDEO_ID_PATTERN = re.compile(r"^[A-Za-z0-9_-]{11}\Z")
 
 
 @dataclass(frozen=True)
@@ -311,9 +312,16 @@ HOST_TIMEOUT_MARGIN = 30
 # in favor of `generate_content_boundary()`'s per-call random values (see above). This
 # function is exactly what its name says: control-character stripping, nothing else.
 #
-# The translation table is built once, at import time, as a module-level constant --
-# not reconstructed per call.
-def _build_sanitize_translation_table() -> Dict[int, None]:
+# The translation table is built lazily, on first `sanitize_text()` call, and cached
+# from then on -- not at import time. Iterating all 0x110000 Unicode codepoints via
+# `unicodedata.category()` measures ~150ms; since this MCP server process starts
+# fresh per session, an eager module-level build paid that cost before the first
+# `tools/list`/`tools/call` could be answered at all, even on a call path that never
+# reaches `sanitize_text()`. `lru_cache(maxsize=None)` on a zero-arg builder gives the
+# same "build once, reuse forever" behavior as the former module-level constant, just
+# deferred to first use -- `sanitize_text()`'s observable output is unchanged.
+@lru_cache(maxsize=None)
+def _sanitize_translation_table() -> Dict[int, None]:
     preserved = {0x09, 0x0A}  # \t, \n
     extra_strip = {0x2028, 0x2029}
     strip_categories = {"Cc", "Cf", "Cs"}
@@ -326,11 +334,8 @@ def _build_sanitize_translation_table() -> Dict[int, None]:
     return table
 
 
-_SANITIZE_TRANSLATION_TABLE = _build_sanitize_translation_table()
-
-
 def sanitize_text(s: str) -> str:
-    return s.translate(_SANITIZE_TRANSLATION_TABLE)
+    return s.translate(_sanitize_translation_table())
 
 
 # --- URL redaction -------------------------------------------------------------

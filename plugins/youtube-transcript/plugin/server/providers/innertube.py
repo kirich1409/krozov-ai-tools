@@ -212,10 +212,16 @@ def _looks_blocked_by_body(status: int, body: bytes) -> bool:
 
 
 def _reason_matches(reason: Optional[str], markers: Tuple[str, ...]) -> bool:
+    # Word-boundary match, not a bare substring test -- a plain `marker in
+    # lowered` false-positives on any reason string that happens to contain a
+    # short marker as a substring of an unrelated word (e.g. `_AGE_REASON_
+    # MARKERS`'s "age" matching inside "not available in your language" or
+    # "storage error"), misclassifying it under the wrong `ProviderError`
+    # subclass. `\b` anchors each marker to real word boundaries on both sides.
     if not reason:
         return False
     lowered = reason.lower()
-    return any(marker in lowered for marker in markers)
+    return any(re.search(rf"\b{re.escape(marker)}\b", lowered) for marker in markers)
 
 
 # --- net/ NetError -> ProviderError translation (structural totality target) -----

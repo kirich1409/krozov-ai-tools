@@ -177,11 +177,22 @@ class TestProtocolShape(unittest.TestCase):
         assert arguments_not_object is not None
         self.assertEqual(arguments_not_object["error"]["code"], -32602)
 
-        # A notification (no "id") gets no response at all.
+        # A notification (no "id" key at all) gets no response at all.
         notification_response = dispatch.handle_message(
             reg, {"jsonrpc": "2.0", "method": "ping", "params": {}}
         )
         self.assertIsNone(notification_response)
+
+        # A Request with "id": null present (not absent) is NOT a notification per
+        # JSON-RPC 2.0 -- it MUST get a real response, distinctly from the notification
+        # case above which has no "id" key at all. Regression for the bug where
+        # `msg.get("id") is None` treated "id" present-but-null identically to "id"
+        # absent, silently dropping the reply and hanging the client.
+        explicit_null_id_response = dispatch.handle_message(
+            reg, {"jsonrpc": "2.0", "id": None, "method": "ping", "params": {}}
+        )
+        assert explicit_null_id_response is not None
+        self.assertEqual(explicit_null_id_response, {"jsonrpc": "2.0", "id": None, "result": {}})
 
 
 # --- Named check #2: DomainFailure caught as safety net, NOT -32603 --------------

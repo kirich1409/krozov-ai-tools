@@ -19,7 +19,7 @@ produce (the byte-exact-concat property).
 from domain import Deadline, Segment, Transcript
 
 from formats import FormatOptions, MAX_PAGE_CHARS, Page
-from formats._paging import DeadlineStride, fit_page, format_timecode
+from formats._paging import DeadlineStride, count_pages, fit_page, format_timecode
 
 
 def _render_segment(segment: Segment, options: FormatOptions) -> str:
@@ -62,21 +62,11 @@ def count_pages_to(
     deadline: Deadline,
 ) -> int:
     segments = transcript.segments
-    stride = DeadlineStride()
-    index = 0
-    pages = 0
-    while index < target_index:
-        count = fit_page(
-            segments,
-            index,
-            max_chars,
-            0,
-            lambda i: len(_render_segment(segments[i], options)),
-            deadline,
-            stride,
-        )
-        if count == 0:
-            break
-        index += count
-        pages += 1
-    return pages
+    return count_pages(
+        segments,
+        target_index,
+        max_chars,
+        0,
+        lambda i: len(_render_segment(segments[i], options)),
+        deadline,
+    )
