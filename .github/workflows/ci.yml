@@ -447,3 +447,150 @@ jobs:
       - if: steps.changes.outputs.youtube_transcript == 'true'
         name: Coverage report (floor enforced via fail_under in pyproject.toml)
         run: coverage report --rcfile=plugins/youtube-transcript/pyproject.toml
+
+  # MCPB bundle build + smoke test. Same job-always-runs / steps-path-gated
+  # shape as the other youtube-transcript-* jobs, but the watched paths cover
+  # the bundling toolchain (tools/mcpb/**, scripts/pack-mcpb.sh,
+  # scripts/smoke-mcpb.sh, scripts/tests/test-smoke-negatives.sh) in addition
+  # to the plugin itself, since a change to the packer or its lockfile should
+  # gate this job even when plugins/youtube-transcript/ is untouched.
+  # Uploads the built bundle as an artifact so it can be downloaded and
+  # installed into the desktop app for the mandatory L5 manual check before
+  # merge -- Stage 1 does not publish the bundle anywhere else.
+  #
+  # Precondition for that L5 step: the artifact is only produced for branches
+  # of this repository, and only the diff-reviewed build may be installed. An
+  # .mcpb runs `python3 <bundle>/server/server.py` unsandboxed with the
+  # installing user's privileges, so a bundle built from a fork PR's code must
+  # never be installed -- the upload step below is gated accordingly. Build and
+  # smoke still run on forks; that is where their value as a gate lies.
+  youtube-transcript-mcpb:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Detect changes
+        id: changes
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT_NAME" != "pull_request" ]; then
+            echo "Push event - run all steps."
+            echo "mcpb=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # Pull request: three-dot diff (merge-base..head) so we see only
+          # commits introduced by the PR, not unrelated changes that landed
+          # on main between fork-point and head.
+          CHANGED=$(git diff --name-only "$BASE_SHA...$HEAD_SHA" -- \
+            'plugins/youtube-transcript/**' 'scripts/pack-mcpb.sh' \
+            'scripts/smoke-mcpb.sh' 'scripts/tests/test-smoke-negatives.sh' \
+            'tools/mcpb/**' '.github/workflows/ci.yml' 'LICENSE.md')
+          if [ -n "$CHANGED" ]; then
+            echo "mcpb-relevant changes:"
+            echo "$CHANGED"
+            echo "mcpb=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "No mcpb-relevant changes - skipping build steps."
+            echo "mcpb=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Setup Node
+        if: steps.changes.outputs.mcpb == 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: tools/mcpb/package-lock.json
+
+      - name: Setup Python
+        if: steps.changes.outputs.mcpb == 'true'
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.9"
+
+      - if: steps.changes.outputs.mcpb == 'true'
+        name: Install mcpb toolchain
+        working-directory: tools/mcpb
+        run: npm ci --ignore-scripts
+
+      # Audit gate for the pinned mcpb toolchain. `set -euo pipefail` and the
+      # report-shape assertion below are load-bearing, not cosmetic: a `run:`
+      # block is `bash -e` WITHOUT pipefail by default, so on a registry
+      # outage `jq` dies with "Cannot iterate over null", the pipeline's exit
+      # status is taken from `sort` (0), found.txt ends up empty, and the step
+      # reports success -- verified by forcing a registry outage
+      # (--registry=http://127.0.0.1:9/) and observing exactly this false
+      # green. `--audit-level` is deliberately not used: it only changes the
+      # exit code, not the JSON, so severity filtering happens in jq instead.
+      - if: steps.changes.outputs.mcpb == 'true'
+        name: Audit pinned toolchain
+        working-directory: tools/mcpb          # allowlist path is relative to this
+        run: |
+          set -euo pipefail
+          npm audit --json > audit.json || true   # exits non-zero whenever findings exist
+          jq -e 'has("vulnerabilities")' audit.json > /dev/null \
+            || { echo "::error::npm audit produced no usable report"; exit 1; }
+          # LC_ALL=C on both inputs: `comm` compares byte-wise, so both sides
+          # must be sorted byte-wise too (same convention as smoke-mcpb.sh).
+          jq -r '[.vulnerabilities[].via[]? | select(type=="object")
+                  | select(.severity=="high" or .severity=="critical")
+                  | .url | split("/")[-1]] | unique[]' audit.json | LC_ALL=C sort -u > found.txt
+          # Anchored at line start: the declared format is one id per line with
+          # free-form prose after it, so an unanchored match would also pick up
+          # ids merely *mentioned* in a rationale and allowlist them silently.
+          # `|| true` because an empty allowlist is legitimate (nothing accepted
+          # yet): grep exits 1 on no match, and under set -e + pipefail that
+          # aborts the step before the diagnostic below can name the offenders.
+          grep -oE '^GHSA-[a-z0-9-]+' audit-allowlist.txt | LC_ALL=C sort -u > allowed.txt || true
+          UNEXPECTED=$(comm -23 found.txt allowed.txt)
+          [ -z "$UNEXPECTED" ] || { echo "::error::unallowlisted advisories: $UNEXPECTED"; exit 1; }
+          # Reverse difference: an entry whose advisory was fixed upstream would
+          # otherwise stay accepted forever. Warning, not error -- an upstream
+          # fix must not turn an unrelated PR red.
+          STALE=$(comm -13 found.txt allowed.txt)
+          [ -z "$STALE" ] || echo "::warning::allowlist entries no longer reported (remove them): $STALE"
+
+      - if: steps.changes.outputs.mcpb == 'true'
+        name: Pack MCPB bundle
+        id: pack
+        run: bash scripts/pack-mcpb.sh
+
+      - if: steps.changes.outputs.mcpb == 'true'
+        name: Smoke test bundle
+        run: bash scripts/smoke-mcpb.sh --require-checksum "${{ steps.pack.outputs.mcpb_path }}"
+
+      # Installable artifact for repository branches only. On a pull request
+      # from a fork the bundle is still built and smoke-tested above, but it is
+      # not published for download: see the job header for why installing a
+      # fork-built .mcpb is arbitrary code execution on the maintainer's
+      # machine.
+      - if: >-
+          steps.changes.outputs.mcpb == 'true' &&
+          (github.event_name != 'pull_request' ||
+           github.event.pull_request.head.repo.full_name == github.repository)
+        name: Upload bundle artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: mcpb-bundle
+          path: |
+            ${{ steps.pack.outputs.mcpb_path }}
+            ${{ steps.pack.outputs.mcpb_sha256_path }}
+          retention-days: 14
+          if-no-files-found: error
+
+      - if: steps.changes.outputs.mcpb == 'true'
+        name: Smoke test negative cases
+        run: bash scripts/tests/test-smoke-negatives.sh
+
+      # Ungated: cheap, zero external deps, and shouldn't be skipped just
+      # because no watched path changed (same rationale as python-tests'
+      # shellcheck step, which is likewise unconditional).
+      - name: Shellcheck
+        run: shellcheck scripts/*.sh scripts/tests/*.sh

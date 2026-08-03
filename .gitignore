@@ -15,6 +15,13 @@ __pycache__/
 .remember/
 firebase-debug.log
 package-lock.json
+!tools/mcpb/package-lock.json
+
+# Scratch output of the mcpb audit gate, produced by running the extraction
+# documented in tools/mcpb/audit-allowlist.txt locally.
+tools/mcpb/audit.json
+tools/mcpb/found.txt
+tools/mcpb/allowed.txt
 
 # Claude Code - local only
 .claude/settings.local.json

@@ -1,0 +1,9 @@
+# Advisories accepted for tools/mcpb build-time toolchain.
+# Generated from: npm audit --json | jq (see brief T-2 / plan.md for the exact
+# extraction command). Regenerate this file by rerunning that extraction, do
+# not hand-edit ids.
+#
+# Format read by CI (T-5): one GitHub Security Advisory id per line; the rest
+# of each line is free-form prose (severity and a reachability rationale).
+
+GHSA-ph9p-34f9-6g65 high — tmp <0.2.6, path traversal via unsanitized prefix/postfix (CWE-22). Reachability: @anthropic-ai/mcpb -> @inquirer/prompts -> @inquirer/editor -> external-editor -> tmp. mcpb's CLI (pack.js, init.js) imports only `confirm`, `input`, `select` from @inquirer/prompts; it never imports or calls the `editor` prompt, which is the sole consumer of tmp's vulnerable dir-creation path. The build pipeline (T-3) invokes `mcpb pack`/`mcpb validate` non-interactively and never `mcpb init`, so this code path does not execute in CI or locally. No fix available upstream (fixAvailable: false) at time of writing.

@@ -1,0 +1,13 @@
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /tools/mcpb
+    schedule:
+      interval: weekly
+  # Workflows pin first-party actions by floating major tag (checkout@v4,
+  # setup-node@v4, setup-python@v5, upload-artifact@v4); without this block
+  # nothing ever updates them.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
