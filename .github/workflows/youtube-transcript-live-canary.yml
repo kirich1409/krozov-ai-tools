@@ -69,7 +69,7 @@ jobs:
       # expired), which the next step already treats as count=0 via the
       # missing-file branch.
       - name: Restore consecutive-failure counter
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v6
         with:
           path: canary-counter.txt
           key: youtube-transcript-canary-counter-${{ github.run_id }}
@@ -131,7 +131,7 @@ jobs:
       # `if: always()` keeps the counter durable if a future edit adds one).
       - name: Save consecutive-failure counter
         if: always()
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@v6
         with:
           path: canary-counter.txt
           key: youtube-transcript-canary-counter-${{ github.run_id }}
