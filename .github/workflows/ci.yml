@@ -73,7 +73,7 @@ jobs:
 
       - name: Setup Python ${{ matrix.python-version }}
         if: steps.changes.outputs.maven_mcp == 'true'
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
           python-version: ${{ matrix.python-version }}
 
@@ -129,7 +129,7 @@ jobs:
 
       - name: Setup Python
         if: steps.changes.outputs.maven_mcp == 'true'
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
           python-version: "3.13"
 
@@ -176,7 +176,7 @@ jobs:
 
       - name: Setup Python
         if: steps.changes.outputs.maven_mcp == 'true'
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
           python-version: "3.13"
 
@@ -226,7 +226,7 @@ jobs:
 
       - name: Setup Python
         if: steps.changes.outputs.maven_mcp == 'true'
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
           python-version: "3.13"
 
@@ -293,7 +293,7 @@ jobs:
 
       - name: Setup Python ${{ matrix.python-version }}
         if: steps.changes.outputs.youtube_transcript == 'true'
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
           python-version: ${{ matrix.python-version }}
 
@@ -338,7 +338,7 @@ jobs:
 
       - name: Setup Python
         if: steps.changes.outputs.youtube_transcript == 'true'
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
           python-version: "3.13"
 
@@ -385,7 +385,7 @@ jobs:
 
       - name: Setup Python
         if: steps.changes.outputs.youtube_transcript == 'true'
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
           python-version: "3.13"
 
@@ -433,7 +433,7 @@ jobs:
 
       - name: Setup Python
         if: steps.changes.outputs.youtube_transcript == 'true'
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
           python-version: "3.13"
 
@@ -513,7 +513,7 @@ jobs:
 
       - name: Setup Python
         if: steps.changes.outputs.mcpb == 'true'
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
           python-version: "3.9"
 
