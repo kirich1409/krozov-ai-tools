@@ -72,7 +72,20 @@ shasum -a 256 -c youtube-transcript-<version>.mcpb.sha256
 
 This catches a truncated or corrupted download. It is **not** an authenticity control: both files are published together by the same job, so anyone able to replace the bundle on the release can replace the checksum with it. Authenticity is step 2's job, not this one.
 
-The bundle *is* byte-reproducible: `scripts/pack-mcpb.sh` normalizes the archive's metadata before checksumming it (`mcpb pack` itself embeds file mtimes and ignores `SOURCE_DATE_EPOCH`). So building the released tag locally with the same `mcpb` CLI reproduces the published digest, and you can compare it yourself — see `docs/PLUGIN-STANDARDS.md` §12. That is still a rebuild-and-compare check, not an authenticity control; authenticity is step 2's job.
+The bundle *is* byte-reproducible: `scripts/pack-mcpb.sh` normalizes the archive's metadata before checksumming it (`mcpb pack` itself embeds file mtimes and ignores `SOURCE_DATE_EPOCH`) and stores entries uncompressed, so the digest does not depend on your Python version, platform, or zlib build. The one precondition is the `mcpb` CLI version, and the repository pins it — `npm ci` in `tools/mcpb` installs exactly the version the release used.
+
+Rebuild the released tag and compare:
+
+```
+git clone https://github.com/kirich1409/krozov-ai-tools
+cd krozov-ai-tools
+git checkout youtube-transcript--v<version>
+(cd tools/mcpb && npm ci --ignore-scripts)
+bash scripts/pack-mcpb.sh
+shasum -a 256 dist/youtube-transcript-<version>.mcpb
+```
+
+The digest must equal the one in the published `.mcpb.sha256`. Requires `node`, `npm`, `jq`, `git`, and `python3`. That is still a rebuild-and-compare check, not an authenticity control; authenticity is step 2's job. Scope and known limits — `docs/PLUGIN-STANDARDS.md` §12.
 
 **4. Install.** Double-click the verified `.mcpb`; the Claude desktop app installs it as an extension.
 

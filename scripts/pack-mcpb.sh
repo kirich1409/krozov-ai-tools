@@ -81,6 +81,11 @@ if [ ! -f "$NORMALIZER" ]; then
   exit 1
 fi
 
+if ! command -v python3 >/dev/null 2>&1; then
+  echo "::error::python3 not found — required by $NORMALIZER (step 11a)" >&2
+  exit 1
+fi
+
 if [ ! -f "$PLUGIN_JSON" ]; then
   echo "::error::plugin.json not found at $PLUGIN_JSON" >&2
   exit 1
@@ -248,6 +253,12 @@ BUNDLE_NAME="youtube-transcript-$VERSION.mcpb"
 # digests. Still inside OUT_TMP: the swap into dist/ below stays the only
 # externally visible write, and a normalizer failure leaves the previous
 # artifact intact.
+#
+# Any future `mcpb sign` step MUST run AFTER this line: an MCPB signature is a
+# PKCS#7 block appended past the zip EOCD (see @anthropic-ai/mcpb
+# dist/node/sign.js), and rebuilding the archive here would discard it. The
+# normalizer refuses such an archive rather than silently unsigning it, so the
+# wrong order fails the build instead of shipping.
 python3 "$NORMALIZER" "$OUT_TMP/$BUNDLE_NAME" "$OUT_TMP/$BUNDLE_NAME.norm"
 mv "$OUT_TMP/$BUNDLE_NAME.norm" "$OUT_TMP/$BUNDLE_NAME"
 

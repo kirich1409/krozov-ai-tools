@@ -12,7 +12,8 @@
 # "prove the gate can actually fail" scripts.
 #
 # Cost: two full pack runs (~1 s each locally, plus mcpb CLI startup). The
-# archive is ~78 kB and the tree ~27 files, so this is negligible next to the
+# archive is ~194 kB (entries are stored, not deflated -- see
+# docs/PLUGIN-STANDARDS.md §12) and the tree ~27 files, so this is negligible next to the
 # npm install the job already pays for.
 set -euo pipefail
 
