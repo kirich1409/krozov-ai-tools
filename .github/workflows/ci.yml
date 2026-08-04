@@ -490,7 +490,9 @@ jobs:
           # on main between fork-point and head.
           CHANGED=$(git diff --name-only "$BASE_SHA...$HEAD_SHA" -- \
             'plugins/youtube-transcript/**' 'scripts/pack-mcpb.sh' \
-            'scripts/smoke-mcpb.sh' 'scripts/tests/test-smoke-negatives.sh' \
+            'scripts/normalize-mcpb.py' 'scripts/smoke-mcpb.sh' \
+            'scripts/tests/test-smoke-negatives.sh' \
+            'scripts/tests/test-mcpb-reproducible.sh' \
             'tools/mcpb/**' '.github/workflows/ci.yml' 'LICENSE.md')
           if [ -n "$CHANGED" ]; then
             echo "mcpb-relevant changes:"
@@ -592,6 +594,14 @@ jobs:
       - if: steps.changes.outputs.mcpb == 'true'
         name: Smoke test negative cases
         run: bash scripts/tests/test-smoke-negatives.sh
+
+      # Placed after the upload: it rebuilds into dist/ twice. The bytes are
+      # deterministic (that is the assertion), so the artifact is unaffected --
+      # but running before the upload would make the uploaded file depend on a
+      # step whose whole purpose is to fail when that assumption breaks.
+      - if: steps.changes.outputs.mcpb == 'true'
+        name: Bundle is byte-reproducible
+        run: bash scripts/tests/test-mcpb-reproducible.sh
 
       # Ungated: cheap, zero external deps, and shouldn't be skipped just
       # because no watched path changed (same rationale as python-tests'
