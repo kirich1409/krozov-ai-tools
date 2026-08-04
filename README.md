@@ -72,7 +72,7 @@ shasum -a 256 -c youtube-transcript-<version>.mcpb.sha256
 
 This catches a truncated or corrupted download. It is **not** an authenticity control: both files are published together by the same job, so anyone able to replace the bundle on the release can replace the checksum with it. Authenticity is step 2's job, not this one.
 
-Note also that `mcpb pack` embeds file mtimes, so the bundle is not byte-reproducible — the checksum cannot be used to confirm the bundle was built from a given source tree.
+The bundle *is* byte-reproducible: `scripts/pack-mcpb.sh` normalizes the archive's metadata before checksumming it (`mcpb pack` itself embeds file mtimes and ignores `SOURCE_DATE_EPOCH`). So building the released tag locally with the same `mcpb` CLI reproduces the published digest, and you can compare it yourself — see `docs/PLUGIN-STANDARDS.md` §12. That is still a rebuild-and-compare check, not an authenticity control; authenticity is step 2's job.
 
 **4. Install.** Double-click the verified `.mcpb`; the Claude desktop app installs it as an extension.
 

@@ -21,6 +21,7 @@ PLUGIN_JSON="$PLUGIN_ROOT/.claude-plugin/plugin.json"
 SERVER_DIR="$PLUGIN_ROOT/server"
 TEMPLATE="plugins/youtube-transcript/mcpb/manifest.template.json"
 MCPB_BIN="tools/mcpb/node_modules/.bin/mcpb"
+NORMALIZER="scripts/normalize-mcpb.py"
 
 EXPECT_VERSION=""
 EXPECT_VERSION_SET=0
@@ -72,6 +73,11 @@ cd "$(git rev-parse --show-toplevel)"
 # "No such file or directory", having already removed the previous artifact.
 if [ ! -x "$MCPB_BIN" ]; then
   echo "::error::mcpb CLI not found at $MCPB_BIN — run: (cd tools/mcpb && npm ci --ignore-scripts)" >&2
+  exit 1
+fi
+
+if [ ! -f "$NORMALIZER" ]; then
+  echo "::error::normalizer not found at $NORMALIZER" >&2
   exit 1
 fi
 
@@ -234,6 +240,16 @@ BAD=$(find "$STAGE" -mindepth 1 \( -type l -o \( ! -type f -a ! -type d \) \) -p
 OUT_TMP=$(mktemp -d)
 BUNDLE_NAME="youtube-transcript-$VERSION.mcpb"
 "$MCPB_BIN" pack "$STAGE" "$OUT_TMP/$BUNDLE_NAME"
+
+# 11a. Normalize the archive into a byte-deterministic form BEFORE the checksum
+# is taken, so the published .sha256 describes the shipped bytes. `mcpb pack`
+# embeds file mtimes and does not honour SOURCE_DATE_EPOCH (measured -- see
+# docs/PLUGIN-STANDARDS.md §12), so identical sources otherwise yield different
+# digests. Still inside OUT_TMP: the swap into dist/ below stays the only
+# externally visible write, and a normalizer failure leaves the previous
+# artifact intact.
+python3 "$NORMALIZER" "$OUT_TMP/$BUNDLE_NAME" "$OUT_TMP/$BUNDLE_NAME.norm"
+mv "$OUT_TMP/$BUNDLE_NAME.norm" "$OUT_TMP/$BUNDLE_NAME"
 
 # 12. Checksum with cwd set to the file's directory so it holds a bare
 # basename. smoke-mcpb.sh repeats the same tool-selection logic independently:
