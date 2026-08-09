@@ -404,7 +404,7 @@ jobs:
       # implementations directed here. Provenance mode is the default (no
       # predicate or sbom input). Pinned by commit SHA, like the release action.
       - name: Attest build provenance
-        uses: actions/attest@508db95dd578ae2727ebd6217d5ba78e4fbda05d # v4.2.1
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
         with:
           subject-path: dist/${{ needs.pack.outputs.bundle_name }}
 
