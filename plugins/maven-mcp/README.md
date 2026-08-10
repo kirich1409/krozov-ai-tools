@@ -1,12 +1,12 @@
 # maven-mcp
 
-Claude Code plugin that provides Maven dependency intelligence via an MCP server — query artifact versions, scan projects for outdated dependencies, check for vulnerabilities, and fetch changelogs.
+Claude Code / Grok Build plugin that provides Maven dependency intelligence via an MCP server — query artifact versions, scan projects for outdated dependencies, check for vulnerabilities, and fetch changelogs.
 
 ## How it works
 
-The plugin bundles a single-file Python 3 MCP server (`plugin/server/server.py`) that speaks MCP over stdio (JSON-RPC 2.0 on stdin/stdout) or over a stateless Streamable HTTP endpoint. It uses the Python standard library only — zero pip dependencies. The plugin manifest registers it with `command: python3`, so it runs the same way in Claude cloud and local environments with no extra runtime setup. The server can also be run standalone and connected to any MCP-compatible agent — see [Use with any MCP client](#use-with-any-mcp-client).
+The plugin bundles a single-file Python 3 MCP server (`plugin/server/server.py`) that speaks MCP over stdio (JSON-RPC 2.0 on stdin/stdout) or over a stateless Streamable HTTP endpoint. It uses the Python standard library only — zero pip dependencies. The plugin registers the server via `.mcp.json` (`command: python3`), so it installs the same way in Claude Code and Grok Build with no extra runtime setup. The server can also be run standalone and connected to any MCP-compatible agent — see [Use with any MCP client](#use-with-any-mcp-client).
 
-The server registers tools that Claude can call during a conversation. It queries Maven Central, Google Maven, Gradle Plugin Portal, and routes each artifact to the appropriate repository by group-prefix.
+The server registers tools that the host agent can call during a conversation. It queries Maven Central, Google Maven, Gradle Plugin Portal, and routes each artifact to the appropriate repository by group-prefix.
 
 ### Tools
 
@@ -109,11 +109,33 @@ Repositories are selected by static group-prefix routing (Gradle Plugin Portal f
 
 ## Installation
 
-```bash
-claude plugin add /path/to/maven-mcp/plugin
+### Claude Code (marketplace)
+
+```
+/plugin marketplace add kirich1409/krozov-ai-tools
+/plugin install maven-mcp@krozov-ai-tools
 ```
 
-The plugin manifest registers the bundled server automatically; no separate install or build step is required.
+### Grok Build (marketplace)
+
+```bash
+grok plugin marketplace add kirich1409/krozov-ai-tools
+grok plugin install maven-mcp --trust
+```
+
+`--trust` is required for the bundled MCP server and write-guard hooks to run. Reload plugins (`r` in the Plugins tab) or start a new session after install.
+
+### Local path (development)
+
+```bash
+# Claude Code
+claude plugin add /path/to/maven-mcp/plugin
+
+# Grok Build
+grok plugin install /path/to/maven-mcp/plugin --trust
+```
+
+The plugin registers the bundled server via `.mcp.json` automatically; no separate install or build step is required.
 
 ## Use with any MCP client
 
@@ -184,7 +206,7 @@ The MCP endpoint is `http://<host>:<port>/mcp` (single `POST` endpoint, JSON res
 
 ### PreToolUse write-time guard (`pre-edit-deps.sh`)
 
-Fires before `Edit`, `Write`, or `MultiEdit` on build files (`build.gradle[.kts]`, `settings.gradle[.kts]`, `pom.xml`, `libs.versions.toml`). It extracts Maven coordinates from the new content and runs two checks:
+Fires before Claude Code `Edit` / `Write` / `MultiEdit` or Grok Build `search_replace` / `write` on build files (`build.gradle[.kts]`, `settings.gradle[.kts]`, `pom.xml`, `libs.versions.toml`). It extracts Maven coordinates from the new content and runs two checks:
 
 1. **Existence check** via `verify_coordinates` — flags coordinates that are absent from all resolved repositories AND are likely hallucinated (high similarity to a real name) or have did-you-mean candidates on Maven Central. The decision is `deny` with suggested candidates when actionable, `allow` otherwise. Bare absence with no signal (e.g. private or non-Central coordinates with no similar names) is always allowed.
 2. **Vulnerability check** via `get_dependency_vulnerabilities` — for versioned coordinates only, flags CRITICAL or HIGH CVEs as `ask` (advisory prompt).

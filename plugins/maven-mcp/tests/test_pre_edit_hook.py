@@ -1621,5 +1621,99 @@ class CompatAskTest(unittest.TestCase):
         )
 
 
+def _grok_search_replace_stdin(filename, new_string):
+    """Grok Build camelCase PreToolUse payload for search_replace."""
+    return {
+        "toolName": "search_replace",
+        "toolInput": {
+            "file_path": f"/project/{filename}",
+            "new_string": new_string,
+        },
+    }
+
+
+def _grok_write_stdin(filename, content):
+    """Grok Build camelCase PreToolUse payload for write."""
+    return {
+        "toolName": "write",
+        "toolInput": {
+            "file_path": f"/project/{filename}",
+            "content": content,
+        },
+    }
+
+
+@_require_jq_and_timeout()
+class GrokEnvelopeTest(unittest.TestCase):
+    """Grok camelCase envelopes must reach the same verify path as Claude."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def test_search_replace_camelcase_invokes_verify(self):
+        _make_fixture(self.tmp, {
+            1: {"results": [_verify_entry("exists", "com.example", "lib")]},
+        })
+        proc = _run_hook(
+            self.tmp,
+            _grok_search_replace_stdin(
+                "build.gradle.kts",
+                'implementation("com.example:lib:1.0.0")',
+            ),
+        )
+        self.assertEqual(proc.returncode, 0)
+        args = _stub_args(self.tmp)
+        self.assertGreaterEqual(
+            len(args), 1, "Grok search_replace envelope must invoke verify"
+        )
+        deps = args[0]["arguments"].get("dependencies", [])
+        found = [d for d in deps if d.get("groupId") == "com.example"]
+        self.assertGreaterEqual(len(found), 1)
+
+    def test_write_camelcase_invokes_verify(self):
+        _make_fixture(self.tmp, {
+            1: {"results": [_verify_entry("exists", "com.example", "lib")]},
+        })
+        proc = _run_hook(
+            self.tmp,
+            _grok_write_stdin(
+                "build.gradle",
+                'implementation "com.example:lib:1.0.0"\n',
+            ),
+        )
+        self.assertEqual(proc.returncode, 0)
+        args = _stub_args(self.tmp)
+        self.assertGreaterEqual(
+            len(args), 1, "Grok write envelope must invoke verify"
+        )
+        deps = args[0]["arguments"].get("dependencies", [])
+        found = [d for d in deps if d.get("groupId") == "com.example"]
+        self.assertGreaterEqual(len(found), 1)
+
+    def test_search_replace_absent_hallucinated_denies(self):
+        absent = _verify_entry(
+            "absent", "com.fake", "nonexistent",
+            hallucination=True,
+            suggestions=[{"groupId": "com.real", "artifactId": "real-lib",
+                          "score": 0.92, "versionCount": 100}],
+        )
+        _make_fixture(self.tmp, {1: {"results": [absent]}})
+        proc = _run_hook(
+            self.tmp,
+            _grok_search_replace_stdin(
+                "build.gradle",
+                'implementation "com.fake:nonexistent:9.9"\n',
+            ),
+        )
+        decision = _parse_decision(proc.stdout)
+        self.assertIsNotNone(decision, "Grok envelope should produce deny")
+        hook_out = decision["hookSpecificOutput"]
+        self.assertEqual(hook_out["permissionDecision"], "deny")
+        self.assertIn("com.fake", hook_out["permissionDecisionReason"])
+
+
 if __name__ == "__main__":
     unittest.main()

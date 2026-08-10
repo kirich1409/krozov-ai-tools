@@ -1,7 +1,7 @@
 {
   "name": "maven-mcp",
-  "version": "0.27.0",
-  "description": "Maven dependency intelligence — dependency updates, vulnerability and license scanning, transitive dependency graphs, version compatibility checks, artifact search, and version-catalog management, exposed as Claude Code skills. Works in Claude cloud and local without any NPM setup.",
+  "version": "0.27.2",
+  "description": "Maven dependency intelligence — dependency updates, vulnerability and license scanning, transitive dependency graphs, version compatibility checks, artifact search, and version-catalog management, exposed as skills and an MCP server. Works in Claude Code and Grok Build without any NPM setup.",
   "author": {
     "name": "kirich1409"
   },
@@ -15,12 +15,5 @@
     "dependencies",
     "android"
   ],
-  "mcpServers": {
-    "maven-mcp": {
-      "command": "python3",
-      "args": [
-        "${CLAUDE_PLUGIN_ROOT}/server/server.py"
-      ]
-    }
-  }
+  "mcpServers": "./.mcp.json"
 }

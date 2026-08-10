@@ -19,16 +19,17 @@ HOOK_INPUT=""
 HOOK_INPUT=$(cat) || HOOK_INPUT=""
 
 TOOL_NAME=""
-TOOL_NAME=$(printf '%s' "$HOOK_INPUT" | jq -r '.tool_name // empty' 2>/dev/null) || TOOL_NAME=""
+# Claude Code: tool_name / tool_input (snake_case). Grok Build: toolName / toolInput (camelCase).
+TOOL_NAME=$(printf '%s' "$HOOK_INPUT" | jq -r '.tool_name // .toolName // empty' 2>/dev/null) || TOOL_NAME=""
 
-# ── Fast gate: only Edit, Write, MultiEdit on build files ────────────────────
+# ── Fast gate: Claude Edit/Write/MultiEdit and Grok search_replace/write ─────
 case "$TOOL_NAME" in
-  Edit|Write|MultiEdit) ;;
+  Edit|Write|MultiEdit|search_replace|write) ;;
   *) exit 0 ;;
 esac
 
 FILE_PATH=""
-FILE_PATH=$(printf '%s' "$HOOK_INPUT" | jq -r '.tool_input.file_path // empty' 2>/dev/null) || FILE_PATH=""
+FILE_PATH=$(printf '%s' "$HOOK_INPUT" | jq -r '.tool_input.file_path // .toolInput.file_path // empty' 2>/dev/null) || FILE_PATH=""
 BASENAME=""
 BASENAME=$(basename "$FILE_PATH" 2>/dev/null) || BASENAME=""
 
@@ -38,17 +39,18 @@ case "$BASENAME" in
 esac
 
 # ── Extract new content from the tool payload ─────────────────────────────────
-# Edit → new_string; Write → content; MultiEdit → concatenate edits[].new_string
+# Edit/search_replace → new_string; Write/write → content;
+# MultiEdit → concatenate edits[].new_string
 NEW_CONTENT=""
 case "$TOOL_NAME" in
-  Edit)
-    NEW_CONTENT=$(printf '%s' "$HOOK_INPUT" | jq -r '.tool_input.new_string // empty' 2>/dev/null) || NEW_CONTENT=""
+  Edit|search_replace)
+    NEW_CONTENT=$(printf '%s' "$HOOK_INPUT" | jq -r '.tool_input.new_string // .toolInput.new_string // empty' 2>/dev/null) || NEW_CONTENT=""
     ;;
-  Write)
-    NEW_CONTENT=$(printf '%s' "$HOOK_INPUT" | jq -r '.tool_input.content // empty' 2>/dev/null) || NEW_CONTENT=""
+  Write|write)
+    NEW_CONTENT=$(printf '%s' "$HOOK_INPUT" | jq -r '.tool_input.content // .toolInput.content // empty' 2>/dev/null) || NEW_CONTENT=""
     ;;
   MultiEdit)
-    NEW_CONTENT=$(printf '%s' "$HOOK_INPUT" | jq -r '[.tool_input.edits[]?.new_string // empty] | join("\n")' 2>/dev/null) || NEW_CONTENT=""
+    NEW_CONTENT=$(printf '%s' "$HOOK_INPUT" | jq -r '[((.tool_input.edits // .toolInput.edits // [])[]?.new_string // empty)] | join("\n")' 2>/dev/null) || NEW_CONTENT=""
     ;;
 esac
 

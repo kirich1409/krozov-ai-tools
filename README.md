@@ -4,11 +4,13 @@
 [![npm](https://img.shields.io/npm/v/@krozov/maven-central-mcp)](https://www.npmjs.com/package/@krozov/maven-central-mcp)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE.md)
 
-Claude Code plugin marketplace by Kirill Rozov.
+Plugin marketplace by Kirill Rozov — Claude Code and Grok Build.
 
 ## Installation
 
-Add the marketplace to Claude Code:
+### Claude Code
+
+Add the marketplace:
 
 ```
 /plugin marketplace add kirich1409/krozov-ai-tools
@@ -19,6 +21,17 @@ Install a plugin:
 ```
 /plugin install maven-mcp@krozov-ai-tools
 ```
+
+### Grok Build
+
+Add the marketplace, then install with trust so MCP servers and hooks activate:
+
+```bash
+grok plugin marketplace add kirich1409/krozov-ai-tools
+grok plugin install maven-mcp --trust
+```
+
+Requires Python 3.9+ on `PATH` (`python3`). Reload plugins (`r` in the Plugins tab) or start a new session after install.
 
 ## Plugins
 

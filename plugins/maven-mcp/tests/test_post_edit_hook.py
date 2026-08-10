@@ -222,7 +222,7 @@ class TestPostEditFailOpen(unittest.TestCase):
 
 
 class TestPostEditHooksJson(unittest.TestCase):
-    """hooks.json PostToolUse matcher includes MultiEdit."""
+    """hooks.json PostToolUse matcher includes MultiEdit and Grok tools."""
 
     def test_post_tool_use_matcher_includes_multiedit(self):
         with open(_HOOKS_JSON, encoding="utf-8") as f:
@@ -239,6 +239,48 @@ class TestPostEditHooksJson(unittest.TestCase):
             any("Edit" in m and "Write" in m for m in matchers),
             f"PostToolUse matchers missing Edit|Write: {matchers!r}",
         )
+        self.assertTrue(
+            any("search_replace" in m and "write" in m for m in matchers),
+            f"PostToolUse matchers missing Grok tools: {matchers!r}",
+        )
+
+
+@_require_jq()
+class TestPostEditGrokEnvelope(unittest.TestCase):
+    """Grok Build camelCase envelope + native tool names still emit reminders."""
+
+    def test_search_replace_camelcase_emits_reminder(self):
+        result = _run_hook(
+            {
+                "toolName": "search_replace",
+                "toolInput": {
+                    "file_path": "/proj/build.gradle.kts",
+                    "new_string": 'implementation("com.example:lib:1.2.3")',
+                },
+            }
+        )
+        self.assertEqual(result.returncode, 0)
+        out = _parse_stdout(result.stdout)
+        self.assertIsNotNone(out)
+        self.assertEqual(out.get("systemMessage"), _REMINDER_MSG)
+
+    def test_write_camelcase_emits_reminder(self):
+        result = _run_hook(
+            {
+                "toolName": "write",
+                "toolInput": {
+                    "file_path": "/proj/pom.xml",
+                    "content": (
+                        "<dependency><groupId>com.example</groupId>"
+                        "<artifactId>lib</artifactId></dependency>"
+                    ),
+                },
+            }
+        )
+        self.assertEqual(result.returncode, 0)
+        out = _parse_stdout(result.stdout)
+        self.assertIsNotNone(out)
+        self.assertEqual(out.get("systemMessage"), _REMINDER_MSG)
 
 
 if __name__ == "__main__":
