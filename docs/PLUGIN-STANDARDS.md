@@ -45,8 +45,15 @@ Plugins with no plugin-specific invariants beyond the project root `CLAUDE.md` a
 - Пути к компонентам (`skills`, `agents`, `commands`, `hooks`, `mcpServers`, `outputStyles`, `monitors`, `lspServers`) в `plugin.json` **резолвятся от корня плагина**, не от `.claude-plugin/`. Корректно: `"./skills/"`, `"./agents/"`, `"./custom/tool.md"`.
 - **Auto-discovery**: если директория лежит в корне плагина со стандартным именем (`skills/`, `agents/`, `commands/`, `hooks/`, `output-styles/`, `monitors/`) — поле **можно не указывать вообще**. Это дефолтный и предпочтительный путь, убирает лишний источник ошибок.
 - **Никаких `../`**: путь не может выходить за корень плагина. Claude Code при установке копирует в cache только содержимое корня плагина (`~/.claude/plugins/cache/...`), `../` ссылается наружу и ломает плагин после установки. Частая ошибка — написать `"../skills"` из уверенности, что пути резолвятся относительно `.claude-plugin/`. Это не так, раньше так было, сейчас — нет.
-- В скриптах хуков и в references используй `${CLAUDE_PLUGIN_ROOT}` вместо абсолютных или `dirname $0`. Это кросс-платформенно и стабильно при symlink-резолюции.
+- В скриптах хуков и в references используй `${CLAUDE_PLUGIN_ROOT}` вместо абсолютных или `dirname $0`. Это кросс-платформенно и стабильно при symlink-резолюции. Grok Build выставляет тот же `${CLAUDE_PLUGIN_ROOT}` (алиас к `GROK_PLUGIN_ROOT`).
 - В SKILL.md и агентах ссылайся на `references/` через `${CLAUDE_PLUGIN_ROOT}/agents/references/foo.md`.
+
+### MCP servers (Claude Code + Grok Build)
+
+- **Источник истины — `.mcp.json` в корне плагина** (flat map: имя сервера → `{ command, args, … }`). Grok Build подключает plugin MCP **только** из `.mcp.json`; inline `mcpServers` в `plugin.json` для Grok **недостаточно**.
+- В `plugin.json` указывай `"mcpServers": "./.mcp.json"` (path reference), чтобы Claude Code и validate.sh не дублировали конфиг.
+- Stdio Python-серверы: `command: python3`, `args: ["${CLAUDE_PLUGIN_ROOT}/server/server.py"]`.
+- `scripts/validate.sh` (L5b) требует `.mcp.json` у любого плагина с `server/server.py`.
 
 ## 3. Skills (`SKILL.md`)
 

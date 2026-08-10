@@ -15,12 +15,5 @@
     "subtitles",
     "captions"
   ],
-  "mcpServers": {
-    "youtube-transcript": {
-      "command": "python3",
-      "args": [
-        "${CLAUDE_PLUGIN_ROOT}/server/server.py"
-      ]
-    }
-  }
+  "mcpServers": "./.mcp.json"
 }

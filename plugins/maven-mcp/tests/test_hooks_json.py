@@ -15,9 +15,9 @@ _HOOKS_JSON = os.path.join(_HOOKS_DIR, "hooks.json")
 _PRE_EDIT = os.path.join(_HOOKS_DIR, "pre-edit-deps.sh")
 _POST_EDIT = os.path.join(_HOOKS_DIR, "post-edit-deps.sh")
 
-_EXPECTED_MATCHER = "Edit|Write|MultiEdit"
+_EXPECTED_MATCHER = "Edit|Write|MultiEdit|search_replace|write"
 _TOOL_GATE_RE = re.compile(
-    r'case\s+"\$TOOL_NAME"\s+in\s*\n\s*Edit\|Write\|MultiEdit\)\s*;;',
+    r'case\s+"\$TOOL_NAME"\s+in\s*\n\s*Edit\|Write\|MultiEdit\|search_replace\|write\)\s*;;',
     re.MULTILINE,
 )
 

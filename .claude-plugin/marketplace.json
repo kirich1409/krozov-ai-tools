@@ -8,7 +8,7 @@
   "plugins": [
     {
       "name": "maven-mcp",
-      "description": "Maven dependency intelligence \u2014 dependency updates, vulnerability and license scanning, transitive dependency graphs, version compatibility checks, artifact search, and version-catalog management, exposed as Claude Code skills. Works in Claude cloud and local without any NPM setup.",
+      "description": "Maven dependency intelligence \u2014 dependency updates, vulnerability and license scanning, transitive dependency graphs, version compatibility checks, artifact search, and version-catalog management, exposed as skills and an MCP server. Works in Claude Code and Grok Build without any NPM setup.",
       "author": {
         "name": "kirich1409"
       },

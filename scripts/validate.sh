@@ -50,6 +50,14 @@ check_json_syntax() {
     else
       ok "$plugin_json ('$name') is valid JSON"
     fi
+    mcp_json="${source}/.mcp.json"
+    if [ -f "$mcp_json" ]; then
+      if ! jq empty "$mcp_json" 2>/dev/null; then
+        fail "$mcp_json ('$name') is not valid JSON"
+      else
+        ok "$mcp_json ('$name') is valid JSON"
+      fi
+    fi
   done < <(jq -r '.plugins[] | [.name, .source] | @tsv' "$MARKETPLACE")
 }
 
@@ -179,16 +187,66 @@ _check_tag_plugin_json() {
   fi
 }
 
+# Emit .py script paths from an MCP config document (flat or mcpServers-wrapped).
+# Args are used as-is (caller expands ${CLAUDE_PLUGIN_ROOT}).
+_emit_mcp_python_script_args() {
+  local config_json="$1"
+  [ -f "$config_json" ] || return 0
+  jq -r '
+    (if (.mcpServers | type) == "object" then .mcpServers else . end) // {}
+    | to_entries[]
+    | select((.value | type) == "object")
+    | select((.value.command | type) == "string" and (.value.command | test("^python")))
+    | .value.args[]? | select(type == "string" and test("\\.py$"))
+  ' "$config_json" 2>/dev/null
+}
+
+# Resolve MCP config file for a plugin source dir.
+# Prefer .mcp.json (required by Grok Build; also Claude auto-discovery).
+# Else follow plugin.json mcpServers when it is a path string, or use plugin.json
+# itself when mcpServers is an inline object.
+_resolve_mcp_config() {
+  local source="$1"
+  local plugin_json="${source}/.claude-plugin/plugin.json"
+  local mcp_file="${source}/.mcp.json"
+
+  if [ -f "$mcp_file" ]; then
+    printf '%s\n' "$mcp_file"
+    return 0
+  fi
+  [ -f "$plugin_json" ] || return 1
+
+  local mcp_type
+  mcp_type=$(jq -r '.mcpServers | type // "null"' "$plugin_json" 2>/dev/null) || mcp_type="null"
+  case "$mcp_type" in
+    string)
+      local ref abs
+      ref=$(jq -r '.mcpServers' "$plugin_json")
+      case "$ref" in
+        ./*) abs=$(python3 -c "import os; print(os.path.normpath(os.path.join('${source}', '${ref}')))") ;;
+        *) return 1 ;;
+      esac
+      [ -f "$abs" ] || return 1
+      printf '%s\n' "$abs"
+      ;;
+    object)
+      printf '%s\n' "$plugin_json"
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
 # Location 3: bundled MCP server scripts — version constants must track the tag.
-# The script path is derived from each plugin.json mcpServers entry
+# The script path is derived from .mcp.json (preferred) or plugin.json mcpServers
 # (${CLAUDE_PLUGIN_ROOT} resolves to the plugin source dir). This is the
 # runtime that actually ships, so a stale SERVER_VERSION/USER_AGENT here is
 # silent version skew that the manifest checks cannot catch.
 _check_tag_server_constants() {
   local name="$1" source="$2" version="$3" tag_label="$4"
-  local plugin_json="${source}/.claude-plugin/plugin.json"
-  [ -f "$plugin_json" ] || return
-  local arg script found sver
+  local config_json arg script found sver
+  config_json=$(_resolve_mcp_config "$source") || return 0
   while IFS= read -r arg; do
     [ -n "$arg" ] || continue
     script=$(printf '%s' "$arg" | sed "s|\${CLAUDE_PLUGIN_ROOT}|${source}|g")
@@ -206,12 +264,7 @@ _check_tag_server_constants() {
     if [ "$found" -eq 0 ]; then
       fail "'$name' $script has no SERVER_VERSION/USER_AGENT version constant to verify against tag ${tag_label}"
     fi
-  done < <(jq -r '
-    .mcpServers // {}
-    | to_entries[]
-    | select(.value.command | test("^python"))
-    | .value.args[]? | select(test("\\.py$"))
-  ' "$plugin_json")
+  done < <(_emit_mcp_python_script_args "$config_json")
 }
 
 # Per-plugin tag `<plugin>--v<version>` (the release trigger). Exactly one plugin
@@ -352,6 +405,42 @@ check_component_paths() {
         fi
       done < <(_emit_paths "$plugin_json" "$field")
     done
+  done < <(jq -r '.plugins[] | [.name, .source] | @tsv' "$MARKETPLACE")
+}
+
+# Grok Build only attaches plugin MCP servers from .mcp.json (not from inline
+# plugin.json mcpServers). Any plugin that ships a stdio Python server under
+# server/server.py must therefore publish .mcp.json with a python* command
+# whose args include that script.
+check_mcp_json_for_stdio_servers() {
+  echo "--- L5b: .mcp.json present for bundled Python MCP servers ---"
+  while IFS=$'\t' read -r name source; do
+    local server_py="${source}/server/server.py"
+    [ -f "$server_py" ] || continue
+
+    local mcp_file="${source}/.mcp.json"
+    if [ ! -f "$mcp_file" ]; then
+      fail "'$name' ships $server_py but has no .mcp.json (required for Grok Build plugin MCP)"
+      continue
+    fi
+    if ! jq empty "$mcp_file" 2>/dev/null; then
+      fail "'$name' .mcp.json is not valid JSON"
+      continue
+    fi
+
+    local hit
+    hit=$(jq -r '
+      (if (.mcpServers | type) == "object" then .mcpServers else . end) // {}
+      | to_entries[]
+      | select((.value | type) == "object")
+      | select((.value.command | type) == "string" and (.value.command | test("^python")))
+      | .value.args[]? | select(type == "string" and test("server\\.py$"))
+    ' "$mcp_file" 2>/dev/null | head -n 1)
+    if [ -z "$hit" ]; then
+      fail "'$name' .mcp.json has no python* stdio entry whose args reference server.py"
+    else
+      ok "'$name' .mcp.json declares python MCP server ($hit)"
+    fi
   done < <(jq -r '.plugins[] | [.name, .source] | @tsv' "$MARKETPLACE")
 }
 
@@ -520,6 +609,7 @@ main() {
   check_version_consistency
   check_semver
   check_component_paths
+  check_mcp_json_for_stdio_servers
   check_hook_scripts
   check_frontmatter
   check_field_types
