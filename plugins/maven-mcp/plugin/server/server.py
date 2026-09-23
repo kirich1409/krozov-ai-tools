@@ -8179,7 +8179,15 @@ _gradle_run = subprocess.run
 
 
 def _find_gradle_wrapper(project_root: str) -> Optional[str]:
-    for name in ("gradlew", "gradlew.bat"):
+    """Return the wrapper to invoke for this platform.
+
+    A ``gradle wrapper`` project ships both files. Only one of them is
+    executable per platform: Windows cannot exec the POSIX shell script
+    (``WinError 193``), and POSIX cannot exec the ``.bat``. Probe the
+    platform's own form first, since the other one may also exist.
+    """
+    names = ("gradlew.bat", "gradlew") if os.name == "nt" else ("gradlew", "gradlew.bat")
+    for name in names:
         path = os.path.join(project_root, name)
         if os.path.isfile(path):
             return path
@@ -8210,6 +8218,10 @@ def _run_gradle_command(
         )
     except subprocess.TimeoutExpired:
         return 124, "", f"Gradle command timed out after {timeout}s"
+    except OSError as exc:
+        # e.g. WinError 193 exec'ing a POSIX ``gradlew`` on Windows. Surface the
+        # wrapper path so an unusable wrapper is diagnosable from the message.
+        return 127, "", f"Cannot execute Gradle wrapper {gradlew!r}: {exc}"
     return result.returncode, result.stdout or "", result.stderr or ""
 
 

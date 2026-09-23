@@ -342,6 +342,58 @@ class TestRunGradleCommand(unittest.TestCase):
         self.assertNotIn("ghsecret", stdout)
         self.assertIn("TOKEN=[][]", stdout)
 
+    def test_oserror_returns_127_with_wrapper_path(self):
+        # #457: exec'ing the wrong wrapper form raises OSError (WinError 193 for
+        # a POSIX ``gradlew`` on Windows). It must degrade to a diagnosable
+        # result naming the wrapper, not escape as a bare loader message.
+        def _raise_osexerror(*_args, **_kwargs):
+            raise OSError(193, "%1 is not a valid Win32 application")
+
+        with unittest.mock.patch.object(server, "_gradle_run", side_effect=_raise_osexerror):
+            code, stdout, stderr = server._run_gradle_command("/tmp", "/tmp/gradlew", ["-q", "help"])
+        self.assertEqual(code, 127)
+        self.assertEqual(stdout, "")
+        self.assertIn("/tmp/gradlew", stderr)
+        self.assertIn("Cannot execute Gradle wrapper", stderr)
+
+
+class TestFindGradleWrapper(unittest.TestCase):
+    """#457: a `gradle wrapper` project ships BOTH files, but only one is
+    executable per platform — Windows cannot exec the POSIX shell script
+    (WinError 193), POSIX cannot exec the .bat. Selection must be
+    platform-aware, and the probes are mocked by `os.name` so the Windows
+    branch is exercised on the Linux CI runner too."""
+
+    def test_windows_prefers_bat_when_both_present(self):
+        with temp_project({"gradlew": "", "gradlew.bat": ""}) as root:
+            with unittest.mock.patch.object(os, "name", "nt"):
+                found = server._find_gradle_wrapper(root)
+        self.assertEqual(found, os.path.join(root, "gradlew.bat"))
+
+    def test_posix_prefers_shell_script_when_both_present(self):
+        with temp_project({"gradlew": "", "gradlew.bat": ""}) as root:
+            with unittest.mock.patch.object(os, "name", "posix"):
+                found = server._find_gradle_wrapper(root)
+        self.assertEqual(found, os.path.join(root, "gradlew"))
+
+    def test_windows_falls_back_to_shell_script_when_bat_absent(self):
+        # A wrapper shipped without the .bat still has to resolve — the
+        # platform's own form is preferred, not required.
+        with temp_project({"gradlew": ""}) as root:
+            with unittest.mock.patch.object(os, "name", "nt"):
+                found = server._find_gradle_wrapper(root)
+        self.assertEqual(found, os.path.join(root, "gradlew"))
+
+    def test_posix_falls_back_to_bat_when_shell_script_absent(self):
+        with temp_project({"gradlew.bat": ""}) as root:
+            with unittest.mock.patch.object(os, "name", "posix"):
+                found = server._find_gradle_wrapper(root)
+        self.assertEqual(found, os.path.join(root, "gradlew.bat"))
+
+    def test_missing_wrapper_returns_none(self):
+        with temp_project({}) as root:
+            self.assertIsNone(server._find_gradle_wrapper(root))
+
 
 class TestMergeGradleWithProvenance(unittest.TestCase):
     def test_provenance_only_plugin_included(self):
