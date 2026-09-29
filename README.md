@@ -19,8 +19,10 @@ Add the marketplace:
 Install a plugin:
 
 ```
-/plugin install maven-mcp@krozov-ai-tools
+/plugin install youtube-transcript@krozov-ai-tools
 ```
+
+`maven-mcp` is not in this marketplace. Install it from [kirich1409/maven-mcp](https://github.com/kirich1409/maven-mcp).
 
 ### Grok Build
 
@@ -28,7 +30,7 @@ Add the marketplace, then install with trust so MCP servers and hooks activate:
 
 ```bash
 grok plugin marketplace add kirich1409/krozov-ai-tools
-grok plugin install maven-mcp --trust
+grok plugin install youtube-transcript --trust
 ```
 
 Requires Python 3.9+ on `PATH` (`python3`). Reload plugins (`r` in the Plugins tab) or start a new session after install.
@@ -37,19 +39,7 @@ Requires Python 3.9+ on `PATH` (`python3`). Reload plugins (`r` in the Plugins t
 
 ### maven-mcp
 
-Maven dependency intelligence for JVM projects. Auto-registers an MCP server that provides tools for version lookup, dependency auditing, vulnerability checking, and changelog tracking across Maven Central, Google Maven, and custom repositories. The server also runs standalone (stdio or HTTP) and can be connected to any MCP-compatible agent — see [Use with any MCP client](plugins/maven-mcp/README.md#use-with-any-mcp-client).
-
-**Features:**
-- Version intelligence — stability-aware selection, upgrade type classification
-- Project scanning — Gradle, Maven, version catalogs
-- Repository auto-discovery from build files
-- Vulnerability checking via [OSV.dev](https://osv.dev/)
-- Changelog tracking — GitHub releases, AndroidX, AGP, Firebase release notes
-- Artifact search across Maven Central
-
-**Skills:** `/check-deps`, `/latest-version`, `/dependency-changes`
-
-See [`plugins/maven-mcp/`](plugins/maven-mcp/) for full documentation.
+Moved to [kirich1409/maven-mcp](https://github.com/kirich1409/maven-mcp). This repository does not ship that plugin and its marketplace entry cannot install it.
 
 ### youtube-transcript
 

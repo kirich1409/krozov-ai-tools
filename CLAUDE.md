@@ -13,18 +13,16 @@ Rules that are not open for discussion. Violating these is an error, not a judgm
 
 ## Project
 
-Monorepo for Claude Code plugins by krozov. Contains two plugins:
+Monorepo for Claude Code plugins by krozov. Contains one plugin. `maven-mcp` moved to https://github.com/kirich1409/maven-mcp and is not installed from this repository.
 
 | Plugin | Directory | Description |
 |--------|-----------|-------------|
-| maven-mcp | `plugins/maven-mcp/` | MCP server for Maven dependency intelligence |
 | youtube-transcript | `plugins/youtube-transcript/` | MCP server that fetches existing YouTube subtitles via the InnerTube API |
 
 ## Structure
 
 ```
 plugins/
-  maven-mcp/                    # Python MCP server (stdlib only, zero pip deps)
   youtube-transcript/           # Python MCP server (stdlib only, zero pip deps)
 ```
 
@@ -37,7 +35,7 @@ See the plugin's own `CLAUDE.md` for plugin-specific instructions.
 All plugins must comply with [`docs/PLUGIN-STANDARDS.md`](docs/PLUGIN-STANDARDS.md). Before every release:
 
 1. Run `bash scripts/validate.sh` — must be green
-2. Run `plugin-dev:plugin-validator` agent on each plugin listed in `.claude-plugin/marketplace.json` (currently maven-mcp, youtube-transcript) — must be PASS or only Minor findings
+2. Run `plugin-dev:plugin-validator` agent on each plugin listed in `.claude-plugin/marketplace.json` (currently youtube-transcript) — must be PASS or only Minor findings
 3. Go through the pre-release checklist in `docs/PLUGIN-STANDARDS.md` section 10
 
 Any Critical or Major violations block the release — fix first, release later.
@@ -54,7 +52,6 @@ Each plugin's version lives in three places:
 
 | Plugin | Locations |
 |--------|-----------|
-| maven-mcp | `plugins/maven-mcp/plugin/.claude-plugin/plugin.json` (`version`), `.claude-plugin/marketplace.json` (its entry's `version`), `plugins/maven-mcp/plugin/server/server.py` (`SERVER_VERSION`, `USER_AGENT` derives from it) |
 | youtube-transcript | `plugins/youtube-transcript/plugin/.claude-plugin/plugin.json` (`version`), `.claude-plugin/marketplace.json` (its entry's `version`), `plugins/youtube-transcript/plugin/server/server.py` (`SERVER_VERSION`, `USER_AGENT` derives from it) |
 
 **The release trigger is the per-plugin tag `<plugin>--v<version>`.** A unified `vX.Y.Z` tag releases nothing: `.github/workflows/release.yml` triggers on `*--v*` only, and `.github/workflows/legacy-tag-guard.yml` makes a `v*` push fail loudly instead of silently doing nothing. Historical `v*` tags stay as history.

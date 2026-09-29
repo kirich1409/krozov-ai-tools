@@ -48,7 +48,7 @@ Point your agent's MCP config at that command (use the absolute path to `server.
 }
 ```
 
-This works for Kimi Code (`~/.kimi-code/mcp.json`), Cursor (`~/.cursor/mcp.json`), Claude Desktop (`claude_desktop_config.json`) — same shape as above. For Gemini CLI (`~/.gemini/settings.json`) and Codex (`~/.codex/config.toml`), see `plugins/maven-mcp/README.md`'s *Use with any MCP client* section for the exact per-client key names; this server's `command`/`args` value is identical, only the tool name changes.
+This works for Kimi Code (`~/.kimi-code/mcp.json`), Cursor (`~/.cursor/mcp.json`), and Claude Desktop (`claude_desktop_config.json`) — same shape as above. Gemini CLI uses `~/.gemini/settings.json` (`mcpServers`). Codex uses `~/.codex/config.toml` (`[mcp_servers.youtube-transcript]` with `command` and `args`). The command and args stay the ones above.
 
 There is no HTTP transport in v1 — stdio only (see *Out of scope* in `docs/specs/2026-08-01-youtube-transcript.md` if that's needed later).
 

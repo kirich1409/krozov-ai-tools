@@ -24,7 +24,6 @@ on:
         type: choice
         options:
           - youtube-transcript
-          - maven-mcp
 
 # Least privilege by default; every job restates exactly what it needs. Job-level
 # `permissions:` REPLACES this rather than extending it, so a job that checks out
@@ -201,20 +200,16 @@ jobs:
       - name: Validate marketplace and plugin configs
         run: bash scripts/validate.sh
 
-      # Oldest supported runtime (3.9 per plugins/maven-mcp/AGENTS.md). CI
-      # already matrices 3.9+3.13; the release gate must also pin 3.9 so a
-      # 3.9-only break cannot ship behind a system-python green check (#358).
+      # Oldest supported runtime (3.9). CI already matrices 3.9+3.13; the
+      # release gate must also pin 3.9 so a 3.9-only break cannot ship behind
+      # a system-python green check (#358).
       - name: Setup Python 3.9
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.9"
 
-      - name: Run Python tests
-        run: python3 -m unittest discover -s plugins/maven-mcp/tests
-
-      # The release gate runs every plugin's suite, not just the released
-      # plugin's: the tag ships one commit of the whole repo, so a break in any
-      # plugin is a break in what the release publishes.
+      # The release gate runs every plugin suite still in this repo. maven-mcp
+      # moved to https://github.com/kirich1409/maven-mcp and is not tested here.
       - name: Run Python tests (youtube-transcript)
         run: python3 -m unittest discover -s plugins/youtube-transcript/tests
 
