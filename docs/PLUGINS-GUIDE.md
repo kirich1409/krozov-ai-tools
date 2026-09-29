@@ -1,6 +1,8 @@
 # krozov-ai-tools: Руководство по плагинам
 
-Монорепозиторий Claude Code плагинов от krozov. Все плагины используют единую версионность — каждый релиз обновляет все плагины до одной версии.
+`maven-mcp` переехал в https://github.com/kirich1409/maven-mcp. Этот репозиторий его не ставит.
+
+Монорепозиторий Claude Code плагинов от krozov. Версии плагинов независимы.
 
 Репозиторий: [github.com/kirich1409/krozov-ai-tools](https://github.com/kirich1409/krozov-ai-tools)
 
@@ -20,19 +22,22 @@
 ```mermaid
 graph TB
     subgraph repo["krozov-ai-tools"]
-        maven["maven-mcp<br/><i>MCP server</i>"]
+        yt["youtube-transcript<br/><i>MCP server</i>"]
     end
 
-    style maven fill:#4a9eff,color:#fff
+    style yt fill:#4a9eff,color:#fff
 ```
 
 | Плагин | Тип | Назначение |
 |--------|-----|------------|
-| maven-mcp | MCP server + skills + hook | Анализ Maven-зависимостей |
+| youtube-transcript | MCP server | Субтитры YouTube |
+| maven-mcp | переехал | https://github.com/kirich1409/maven-mcp — из этого репозитория не ставится |
 
 ---
 
 ## maven-mcp
+
+Плагин переехал в https://github.com/kirich1409/maven-mcp и из этого репозитория не ставится. Ниже — прежнее описание инструментов.
 
 Maven dependency intelligence. MCP-сервер для запросов к Maven Central, Google Maven и custom-репозиториям. Распространяется как npm-пакет `@krozov/maven-central-mcp`.
 
@@ -131,5 +136,7 @@ flowchart LR
 ### Отдельные плагины
 
 ```
-/plugin install maven-mcp@krozov-ai-tools
+/plugin install youtube-transcript@krozov-ai-tools
 ```
+
+`maven-mcp` ставится из https://github.com/kirich1409/maven-mcp, не из этого marketplace.

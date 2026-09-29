@@ -7,7 +7,7 @@ body:
     attributes:
       label: Plugin
       options:
-        - maven-mcp
+        - youtube-transcript
     validations:
       required: true
 
