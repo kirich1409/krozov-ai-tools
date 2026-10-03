@@ -28,26 +28,9 @@ jobs:
       - name: Validate marketplace and plugin configs
         run: bash scripts/validate.sh
 
-  # Ruleset Main still requires the contexts "python-tests (3.9)" and
-  # "python-tests (3.13)". maven-mcp moved to
-  # https://github.com/kirich1409/maven-mcp, so these jobs only report the
-  # name. A job-level if:/paths skip would leave the checks "expected" and
-  # block merges. ruff, mypy, and coverage are not in that ruleset.
-  python-tests:
-    runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        python-version: ["3.9", "3.13"]
-
-    steps:
-      - name: maven-mcp moved
-        env:
-          PY: ${{ matrix.python-version }}
-        run: echo "maven-mcp lives at https://github.com/kirich1409/maven-mcp (Python $PY check name retained)"
-
   # --- youtube-transcript ---------------------------------------------------
-  # Job always runs; test steps are path-gated. The youtube-transcript-* ids
-  # are required status checks and must stay distinct from python-tests.
+  # Job always runs; test steps are path-gated. These job ids are the
+  # required status checks on main.
   youtube-transcript-tests:
     runs-on: ubuntu-latest
     timeout-minutes: 10
