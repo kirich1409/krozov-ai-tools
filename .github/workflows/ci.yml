@@ -28,10 +28,11 @@ jobs:
       - name: Validate marketplace and plugin configs
         run: bash scripts/validate.sh
 
-  # maven-mcp moved to https://github.com/kirich1409/maven-mcp. These job
-  # names stay so the required checks python-tests (3.9) and python-tests
-  # (3.13) still report. A job-level if:/paths skip would leave them
-  # "expected" and block merges. The steps do not look at plugins/maven-mcp.
+  # Ruleset Main still requires the contexts "python-tests (3.9)" and
+  # "python-tests (3.13)". maven-mcp moved to
+  # https://github.com/kirich1409/maven-mcp, so these jobs only report the
+  # name. A job-level if:/paths skip would leave the checks "expected" and
+  # block merges. ruff, mypy, and coverage are not in that ruleset.
   python-tests:
     runs-on: ubuntu-latest
     strategy:
@@ -44,30 +45,9 @@ jobs:
           PY: ${{ matrix.python-version }}
         run: echo "maven-mcp lives at https://github.com/kirich1409/maven-mcp (Python $PY check name retained)"
 
-  # Same job names as before the move. They are not the required checks, but
-  # they still report success so a ruleset that names them does not hang.
-  ruff:
-    runs-on: ubuntu-latest
-    steps:
-      - name: maven-mcp moved
-        run: echo "maven-mcp lint runs in https://github.com/kirich1409/maven-mcp"
-
-  mypy:
-    runs-on: ubuntu-latest
-    steps:
-      - name: maven-mcp moved
-        run: echo "maven-mcp typecheck runs in https://github.com/kirich1409/maven-mcp"
-
-  coverage:
-    runs-on: ubuntu-latest
-    steps:
-      - name: maven-mcp moved
-        run: echo "maven-mcp coverage runs in https://github.com/kirich1409/maven-mcp"
-
   # --- youtube-transcript ---------------------------------------------------
-  # Job-always-runs / steps-path-gated. Job IDs stay prefixed
-  # (youtube-transcript-*) because the unprefixed python-tests/ruff/mypy/coverage
-  # names are the checks retained after maven-mcp left this repository.
+  # Job always runs; test steps are path-gated. The youtube-transcript-* ids
+  # are required status checks and must stay distinct from python-tests.
   youtube-transcript-tests:
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -419,9 +399,8 @@ jobs:
         name: Bundle is byte-reproducible
         run: bash scripts/tests/test-mcpb-reproducible.sh
 
-      # Ungated: cheap, zero external deps, and shouldn't be skipped just
-      # because no watched path changed (same rationale as python-tests'
-      # shellcheck step, which is likewise unconditional).
+      # Ungated: cheap, zero external deps, and not skipped when no watched
+      # path changed.
       - name: Shellcheck
         run: shellcheck scripts/*.sh scripts/tests/*.sh
 
